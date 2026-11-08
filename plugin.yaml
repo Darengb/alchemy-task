@@ -1,0 +1,65 @@
+name: alchemy-task
+version: "0.1.0"
+description: "Turns messy operator work into tracked, researched, finished tasks: Markdown tasks with stable IDs, Git delivery, background research and work-session checkpoints."
+author: "Daren Broxmeyer"
+license: MIT
+requires_hermes: ">=0.22.5"
+provides_tools:
+  - task_create
+  - task_update
+  - task_find
+python_dependencies:
+  - "PyYAML>=6.0,<7"
+config_schema:
+  workspace_root:
+    type: str
+    default: ""
+    label: "Task workspace"
+    description: "Absolute path of the folder (a Git repository) that holds your tasks. Set during setup."
+  task_dir:
+    type: str
+    default: "areas/{area}/tasks"
+    label: "Task folder pattern"
+    description: "Where each area's task files live, relative to the workspace."
+  areas:
+    type: list
+    default: []
+    description: "Area names (for example work, home). Empty means use the existing area folders."
+  default_area:
+    type: str
+    default: ""
+    description: "Area to use when none is given and it cannot be inferred."
+  timezone:
+    type: str
+    default: ""
+    description: "IANA timezone for dates (for example America/New_York). Empty uses Hermes's timezone."
+  research_by_default:
+    type: bool
+    default: true
+    description: "Research every new task automatically unless the user says no research is needed."
+  git_transport:
+    type: str
+    choices: [system, deploy_key, token, none]
+    default: system
+    label: "Git push method"
+    description: "system: your own Git/SSH setup. deploy_key: a key Alchemy Task generates. token: a fine-grained token. none: local commits only."
+  git_remote:
+    type: str
+    default: "origin"
+  git_branch:
+    type: str
+    default: ""
+    description: "Branch to push. Empty uses the current branch."
+  git_run_hooks:
+    type: bool
+    default: true
+    description: "Run the repository's Git hooks when committing."
+  git_allow_repo_programs:
+    type: bool
+    default: false
+    description: "Allow pushing when the repository's own Git config names transport programs (off is safer)."
+  git_token:
+    type: secret
+    env: ALCHEMY_TASK_GIT_TOKEN
+    label: "Git token"
+    description: "Only for the token push method: a fine-grained token limited to the task repository (Contents read/write)."
