@@ -13,6 +13,7 @@ HELP = """Alchemy Task
 /task validate    check task files (add `apply` to assign missing IDs)
 /task push        retry pushing committed task changes
 /task teardown    remove Alchemy Task's scheduled jobs (task files are kept)
+/task ios         sync with Apple Reminders (optional; keep the Hermes app open on your iPhone)
 Everyday use needs no commands: tell your agent what to do and it uses the task tools."""
 
 
@@ -30,6 +31,14 @@ def task_command(raw_args: str = "", **_: Any) -> str:
         if sub == "status":
             text = sf.receipt_text(sf.status(rt))
             return text if not rt.settings.configured else text + "\n\n" + _status(rt)
+        if sub == "ios":
+            from . import ios_sync
+            try:
+                out = ios_sync.sync(rt)
+            except ios_sync.SyncError as exc:
+                return str(exc)
+            lines = [out["message"]] + [f"• {p}" for p in out.get("problems", [])[:5]]
+            return "\n".join(lines)
         if sub == "teardown":
             out = sf.teardown(rt)
             return (f"Removed {len(out['removed_jobs'])} scheduled job(s) and {len(out['removed_scripts'])} "

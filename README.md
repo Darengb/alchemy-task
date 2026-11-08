@@ -47,6 +47,11 @@ researches it in the background, and keeps it current while you work on it.
   which sources were checked; reply "1 and 3" and those become tasks, with their source recorded and the
   usual research. Nothing becomes a task without your reply, a message is never suggested twice (across
   streams too), and items already covered by an open task are skipped.
+- **Apple Reminders (optional, beta):** with the Hermes mobile app on your iPhone, say "sync reminders" or run
+  `/task ios`. Open tasks from the areas you choose appear in your default Reminders list (or another list you
+  name); title, due date and the checkbox stay in sync both ways each time you sync, and everything else stays
+  in the task file. Checking a reminder off marks the task done. Only open tasks get a new reminder, and not
+  ones more than 14 days overdue. Your own reminders are never touched.
 - **Validator:** `/task validate` checks hand-edited files, reports problems and assigns missing IDs with
   one-line edits that keep your comments and formatting.
 
@@ -174,6 +179,13 @@ Setup fills them in for you.
   your existing tools and connectors; the plugin itself connects to nothing. Digests are written into the
   chat where the stream was created (`deliver: origin`). Suggestions and their source IDs are kept in plugin
   state for 7 and 60 days to avoid repeats.
+- **Apple Reminders sync (only if you turn it on):** runs only when you ask (`/task ios`, "sync reminders").
+  It calls the Hermes mobile connector's tools (`mobile_devices`, `mobile_reminders_list`,
+  `mobile_reminder_create`, `mobile_reminder_update`, `mobile_reminder_complete`, `mobile_request_result`) on
+  the paired phone you choose, reads only the list you choose, and writes only reminders it created. Each new
+  reminder's notes hold a short marker with the task's ID. Mappings and pending phone requests are stored in
+  plugin data. The phone answers only while the Hermes app is open; there is no background sync. Requires the
+  Hermes mobile app (beta) and its device-access connector.
 - **Setup writes:** plugin settings through Hermes's plugin settings API; Hermes's own `timezone` only if you
   agree during setup; a new workspace folder and Git repository if you start fresh; a
   `.alchemy-task-owner` marker in the workspace (listed in `.git/info/exclude`) so two installs do not

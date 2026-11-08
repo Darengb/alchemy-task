@@ -368,14 +368,20 @@ class TaskStore:
 
     # ------------------------------------------------------------ update
 
-    def update(self, ref: str, changes: dict[str, Any]) -> tuple[tf.TaskDoc, list[str], list[str]]:
-        """Apply field changes. Returns (new doc, changed workspace paths, change notes)."""
+    def update(self, ref: str, changes: dict[str, Any], *, expect_revision: str | None = None
+               ) -> tuple[tf.TaskDoc, list[str], list[str]]:
+        """Apply field changes. Returns (new doc, changed workspace paths, change notes).
+
+        ``expect_revision`` (a ``tf.content_hash`` of the file bytes the caller based its decision on) is checked
+        under the task lock; if the file changed since, ``tf.ConcurrentEditError`` is raised and nothing is written."""
         doc = self.resolve(ref)
         ok, why = tf.writable(doc.fm)
         if not ok:
             raise NeedsInput("unsupported", f"This task cannot be edited by Alchemy Task: {why}. Edit it by hand.")
         with task_lock(self.data_dir, doc.task_id, doc.path):
             doc = tf.parse_file(doc.path)  # re-read under the lock
+            if expect_revision and tf.content_hash(doc.raw) != expect_revision:
+                raise tf.ConcurrentEditError(f"{doc.path.name} changed since it was read")
             ok, why = tf.writable(doc.fm)
             if not ok:
                 raise NeedsInput("unsupported", f"This task cannot be edited by Alchemy Task: {why}.")

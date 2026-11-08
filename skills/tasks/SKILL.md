@@ -85,6 +85,9 @@ Map what people say to tools; never tell them to type a command when you can do 
 | "change my digest to 7 PM", "make it weekdays only", "stop the work digest" | `discovery_stream` `update` / `remove` (confirm first) |
 | "run my digest now", "check my email for tasks now" | `discovery_stream` `run_now` |
 | "turn off Alchemy Task's schedules", "stop the background jobs", "uninstall" | confirm, then `task_setup` `teardown` with `user_confirmed: true`; for uninstalling, mention `hermes plugins remove alchemy-task` afterwards |
+| "sync reminders", "sync iOS", "sync my iPhone", "update my Reminders" | `task_ios` (sync); report its message as given, including "waiting for your iPhone" |
+| "put my tasks in Apple Reminders", "set up iPhone reminders" | `task_ios` `setup`: ask which areas, show the preview, then `user_approved: true` |
+| "stop syncing reminders" | confirm, then `task_ios` `disable` (reminders stay on the phone) |
 | "change my timezone / default area / workspace", "stop researching new tasks by default" | `task_setup` `save` with just that setting |
 | "add a garden area", "I don't need the bakery area any more" | `task_setup` `save` `add_areas` / `remove_areas` |
 | "make the discovery hourly", "change my digest to 9 AM", "weekdays only" | `discovery_stream` `update` with just `frequency` or `time` (a time on an hourly stream makes it daily at that time) |
@@ -109,6 +112,14 @@ Let the tool work out the dates: pass `period` rather than computing dates yours
 tasks by day, saying whether each is scheduled for that day or due then, then the overdue ones (the tool lists
 the most recent; mention the total). Keep it short: title, area when there are several, and the reason. Use
 `agenda_from`/`agenda_to` only for other ranges ("the 20th to the 25th").
+
+## Apple Reminders (optional)
+
+Only open tasks get a new reminder (and not ones more than 14 days overdue). Title, due date and the checkbox
+stay in sync both ways when the user syncs; notes, research and everything else stay in the task file. The phone
+only answers while the Hermes app is open, so when the tool says it is waiting, tell the user to open the app
+and sync again. Never call a sync done while the tool reports waiting. For a conflict (changed in both places),
+show both values and ask which to keep, then `resolve`.
 
 ## When a tool says `ok: false`
 

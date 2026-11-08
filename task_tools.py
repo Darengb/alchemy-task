@@ -539,6 +539,53 @@ def discovery_decide(args: dict[str, Any], session_id: str) -> str:
                                                           else "") + ". " + (_git_note(receipt) if receipt else ""))
 
 
+IOS_SCHEMA = {
+    "name": "task_ios",
+    "description": (
+        "Optional Apple Reminders sync through the Hermes mobile app (beta). Use for /task ios, \"sync reminders\", "
+        "\"sync iOS\", \"sync my iPhone\". Actions: sync (default: runs or resumes the sync; works only while the "
+        "Hermes app is open on the phone), setup (choose areas and list; preview first, then user_approved=true), "
+        "status, disable, resolve (settle a conflict: choices {field: local|native}), confirm_missing (the user "
+        "checked the phone and a task's reminder is not there, so it may be created). Report what the tool says; "
+        "never say synced while it says waiting."),
+    "parameters": {"type": "object", "properties": {
+        "action": {"type": "string", "enum": ["sync", "setup", "status", "disable", "resolve", "confirm_missing"]},
+        "areas": {"type": "array", "items": {"type": "string"}, "description": "setup: areas whose tasks to mirror."},
+        "list": {"type": "string", "description": "setup: an existing Reminders list by name (default: the phone's "
+                                                  "default list)."},
+        "device_id": {"type": "string"},
+        "user_approved": {"type": "boolean"},
+        "user_approved_change": {"type": "boolean", "description": "setup: the user approved changing device, list "
+                                                                  "or adding areas."},
+        "task": {"type": "string"},
+        "choices": {"type": "object", "description": "resolve: {\"title\": \"local\", \"due\": \"native\"}"}},
+        "required": []},
+}
+
+
+@_guard
+def task_ios(args: dict[str, Any], **_: Any) -> str:
+    from . import ios_sync as ios
+    rt = Runtime()
+    action = args.get("action") or "sync"
+    try:
+        if action == "sync":
+            return _ok(**ios.sync(rt))
+        if action == "setup":
+            return _ok(**ios.setup(rt, args))
+        if action == "status":
+            return _ok(**ios.status(rt))
+        if action == "disable":
+            return _ok(**ios.disable(rt))
+        if action == "resolve":
+            return _ok(**ios.resolve(rt, args.get("task", ""), args.get("choices") or {}))
+        if action == "confirm_missing":
+            return _ok(**ios.confirm_uncertain(rt, args.get("task", "")))
+    except ios.SyncError as exc:
+        return _fail("ios", str(exc))
+    return _fail("fix_call", "unknown action")
+
+
 RESEARCH_SCHEMA = {
     "name": "task_research",
     "description": (
@@ -587,6 +634,7 @@ TOOLS = (
     (WORK_SCHEMA, task_work_start, "🜁"),
     (CHECKPOINT_SCHEMA, task_checkpoint, "🜃"),
     (SETUP_SCHEMA, task_setup, "⚙️"),
+    (IOS_SCHEMA, task_ios, "📱"),
     (DISCOVERY_STREAM_SCHEMA, discovery_stream, "🜍"),
     (DISCOVERY_START_SCHEMA, discovery_start, "🜍"),
     (DISCOVERY_SUBMIT_SCHEMA, discovery_submit, "🜍"),
