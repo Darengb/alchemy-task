@@ -124,6 +124,24 @@ def test_stop_without_submit_requeues_then_fails(ctx, settings, data_dir):
     assert "Research failed after 3 attempts" in tf.parse_file(doc.path).body
 
 
+def test_child_dying_before_first_tool_call_is_requeued(ctx, settings, data_dir):
+    doc = create(settings, data_dir)
+    ra.subagent_start(child_session_id="child-x", child_subagent_id="sa-1")  # fires before launch returns
+    ra.launch(runtime.Runtime(), doc.task_id)
+    ra.subagent_stop(child_session_id="child-x", child_status="error")
+    assert tf.parse_file(doc.path).fm["enrichment"]["status"] == "pending"
+
+
+def test_request_again_refuses_closed_task_without_writing(ctx, settings, data_dir):
+    store = TaskStore(settings, data_dir)
+    doc = create(settings, data_dir)
+    store.update(doc.task_id, {"status": "done"})
+    before = doc.path.read_bytes()
+    with pytest.raises(rs.ResearchError):
+        ra.request_again(runtime.Runtime(), doc.task_id)
+    assert doc.path.read_bytes() == before
+
+
 def test_launch_failure_leaves_task_queued_and_recover_runs_queue(ctx, settings, data_dir):
     ctx.subagent_lifecycle.fail = True
     doc = create(settings, data_dir)

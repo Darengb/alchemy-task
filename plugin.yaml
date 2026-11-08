@@ -15,6 +15,7 @@ provides_tools:
   - research_submit
 provides_hooks:
   - pre_tool_call
+  - subagent_start
   - subagent_stop
   - pre_llm_call
 config_schema:

@@ -29,6 +29,7 @@ INVENTORY_TTL = 3600
 _lock = threading.Lock()
 _runs: dict[str, dict[str, Any]] = {}      # subagent_id -> run
 _by_child_session: dict[str, str] = {}      # child session id -> subagent_id
+_started_sessions: dict[str, str] = {}      # subagent_id -> child session id (subagent_start can precede launch's return)
 
 
 # ------------------------------------------------------------------ run registry
@@ -115,9 +116,13 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
         _finish_failure(rt, doc.task_id, run_id, f"could not start research: {exc}")
         return {"started": False, "error": str(exc)[:300], "task_id": doc.task_id}
     with _lock:
-        _runs[handle["subagent_id"]] = {"task_id": doc.task_id, "run_id": run_id, "started": time.time(),
-                                       "calls": 0, "origin_session": origin_session, "title": doc.title,
-                                       "handle": handle}
+        sid = handle["subagent_id"]
+        _runs[sid] = {"task_id": doc.task_id, "run_id": run_id, "started": time.time(),
+                      "calls": 0, "origin_session": origin_session, "title": doc.title, "handle": handle}
+        if sid in _started_sessions:
+            _by_child_session[_started_sessions.pop(sid)] = sid
+        for old in [k for k, v in _runs.items() if v.get("done") and time.time() - v["started"] > 3600]:
+            _runs.pop(old, None)
     _persist(rt)
     return {"started": True, "task_id": doc.task_id, "run_id": run_id, "subagent_id": handle["subagent_id"],
             "handle": handle}
@@ -213,10 +218,11 @@ def _add_notice(rt: Runtime, session_id: str, title: str, normalized: dict[str, 
     else:
         text += " Mention it briefly if relevant; do not interrupt the current topic."
     try:
-        notices = rt.ctx.state.get("notices", default={}) or {}
-        notices.setdefault(session_id, []).append(text)
-        notices[session_id] = notices[session_id][-5:]
-        rt.ctx.state.set("notices", notices)
+        with _lock:
+            notices = rt.ctx.state.get("notices", default={}) or {}
+            notices.setdefault(session_id, []).append(text)
+            notices[session_id] = notices[session_id][-5:]
+            rt.ctx.state.set("notices", notices)
     except Exception:  # noqa: BLE001
         pass
 
@@ -237,6 +243,18 @@ def pre_tool_call(tool_name: str = "", args: Any = None, task_id: str = "", sess
         return {"action": "block", "message": "Research budget used up. Call research_submit now with what you "
                 f"have (run_id \"{run['run_id']}\"), then stop."}
     return None
+
+
+def subagent_start(child_session_id: str = "", child_subagent_id: str = "", **_: Any) -> None:
+    if not child_session_id or not child_subagent_id:
+        return
+    with _lock:
+        if child_subagent_id in _runs:
+            _by_child_session[child_session_id] = child_subagent_id
+        else:
+            _started_sessions[child_subagent_id] = child_session_id
+            if len(_started_sessions) > 200:
+                _started_sessions.pop(next(iter(_started_sessions)))
 
 
 def subagent_stop(child_session_id: str = "", child_status: str = "", child_summary: Any = "", **_: Any) -> None:
@@ -262,13 +280,15 @@ def pre_llm_call(session_id: str = "", **_: Any):
         return None
     try:
         rt = Runtime()
-        notices = rt.ctx.state.get("notices", default={}) or {}
+        with _lock:
+            notices = rt.ctx.state.get("notices", default={}) or {}
+            items = notices.pop(session_id, None)
+            if items:
+                rt.ctx.state.set("notices", notices)
     except Exception:  # noqa: BLE001
         return None
-    items = notices.pop(session_id, None)
     if not items:
         return None
-    rt.ctx.state.set("notices", notices)
     return {"context": "[Alchemy Task] " + " ".join(items)}
 
 
@@ -281,7 +301,10 @@ def recover(rt: Runtime, *, limit: int = 3, wait_seconds: float = 300) -> dict[s
     queued.sort(key=lambda t: str((rs.state(t.fm) or {}).get("updated") or ""))
     started, errors = [], []
     for doc in queued[: max(1, min(limit, 8))]:
-        result = launch(rt, doc.task_id)
+        try:
+            result = launch(rt, doc.task_id)
+        except (rs.ResearchError, NeedsInput, tf.TaskFormatError, tf.ConcurrentEditError, OSError) as exc:
+            result = {"started": False, "error": str(exc)[:300]}
         (started if result.get("started") else errors).append({"task_id": doc.task_id, "title": doc.title,
                                                                **({"error": result.get("error")} if
                                                                   not result.get("started") else {})})
@@ -298,14 +321,19 @@ def recover(rt: Runtime, *, limit: int = 3, wait_seconds: float = 300) -> dict[s
             pass
     for item in started:
         item.pop("handle", None)
-        doc = store.resolve(item["task_id"])
-        item["research"] = (rs.state(tf.parse_file(doc.path, rt=False).fm) or {}).get("status")
+        try:
+            doc = store.resolve(item["task_id"])
+            item["research"] = (rs.state(tf.parse_file(doc.path, rt=False).fm) or {}).get("status")
+        except (NeedsInput, tf.TaskFormatError, OSError):
+            item["research"] = "unknown"
     return {"queued": len(queued), "started": started, "errors": errors}
 
 
 def request_again(rt: Runtime, ref: str, origin_session: str = "") -> dict[str, Any]:
     store = rt.store()
     doc = store.resolve(ref)
+    if rs.eligibility(doc.fm) in ("closed", "unsupported", "no_id"):
+        raise rs.ResearchError(f"cannot research this task ({rs.eligibility(doc.fm)}); reopen it or fix it first")
     with task_lock(rt.data_dir, doc.task_id, doc.path):
         doc = tf.parse_file(doc.path)
         rs.request(doc.fm, "user asked to research again")
@@ -375,6 +403,8 @@ def t_submit(args: dict[str, Any] | None = None, task_id: str = "", **_: Any) ->
         return _json({"ok": True, "message": "Saved. Your work is done; stop now.", **result})
     except (rs.ResearchError, NeedsInput, tf.TaskFormatError) as exc:
         return _json({"ok": False, "error": str(exc)})
+    except tf.ConcurrentEditError:
+        return _json({"ok": False, "error": "the task was being edited; call research_submit again"})
 
 
 _STRS = {"type": "array", "items": {"type": "string"}}
@@ -415,5 +445,6 @@ def register(ctx: Any) -> None:
         ctx.register_tool(name=schema["name"], toolset=RESEARCH_TOOLSET, schema=schema, handler=handler,
                           description=schema["description"], emoji="⚗️")
     ctx.register_hook("pre_tool_call", pre_tool_call)
+    ctx.register_hook("subagent_start", subagent_start)
     ctx.register_hook("subagent_stop", subagent_stop)
     ctx.register_hook("pre_llm_call", pre_llm_call)

@@ -163,6 +163,8 @@ def normalize(payload: Any) -> dict[str, Any]:
         if not isinstance(src, Mapping):
             raise ResearchError("each source must be an object with title, url and relevance")
         url = str(src.get("url") or "").strip()
+        if re.search(r"[\s<>\"`]", url):
+            continue  # a URL never needs these; refusing them keeps markers and markup out of the dossier
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             continue  # drop unusable links rather than fail the whole run

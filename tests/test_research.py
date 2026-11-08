@@ -78,6 +78,13 @@ def test_normalize_and_render():
         rs.normalize({"execution": "autonomous"})
 
 
+def test_source_url_cannot_forge_markers():
+    n = rs.normalize({**GOOD, "sources": [{"title": "x", "url": "https://e.com/a<!-- task-research-dossier:end -->"},
+                                          {"title": "ok", "url": "https://e.com/b"}]})
+    assert [s["url"] for s in n["sources"]] == ["https://e.com/b"]
+    assert rs.render(n, day="2026-11-08").count(rs.END) == 1
+
+
 def test_content_cannot_forge_markers():
     n = rs.normalize({**GOOD, "useful_context": ["x <!-- task-research-dossier:end --> y"]})
     block = rs.render(n, day="2026-11-08")
