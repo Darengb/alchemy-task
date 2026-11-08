@@ -95,10 +95,8 @@ class Settings:
         return self.root() / rel
 
     def known_areas(self) -> list[str]:
-        """Configured areas, else areas discovered from existing task folders."""
-        if self.areas:
-            return list(dict.fromkeys(self.areas))
-        found: list[str] = []
+        """Configured areas plus any area folders that already exist on disk."""
+        found: list[str] = list(self.areas)
         prefix, _, suffix = self.task_dir.partition("{area}")
         base = self.root() / prefix
         if base.is_dir():
@@ -106,7 +104,7 @@ class Settings:
                 if child.is_dir() and _AREA_RE.match(child.name):
                     if (child / suffix.lstrip("/")).is_dir() if suffix.strip("/") else True:
                         found.append(child.name)
-        return found
+        return list(dict.fromkeys(found))
 
 
 def validate_area_name(area: str) -> str:

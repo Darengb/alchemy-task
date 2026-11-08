@@ -202,6 +202,9 @@ class GitDelivery:
 
     def _commit(self, paths: list[str], message: str) -> dict[str, Any]:
         paths = sorted(set(p for p in paths if p))
+        root = self.s.root()
+        known = set(self.git("ls-files", "--", *paths).stdout.split("\n")) if paths else set()
+        paths = [p for p in paths if (root / p).exists() or p in known]
         if not paths:
             return {"committed": False}
         self.git("add", "-A", "--", *paths)
@@ -297,7 +300,7 @@ class GitDelivery:
                       "attempts": int(state.get("attempts") or 0) + 1})
         self._save_state(state)
         return {"pushed": False, "state": kind, "error": error,
-                "note": "saved and committed locally; Alchemy Task retries the push automatically"}
+                "note": "saved and committed locally; the push is retried on the next task change or /task push"}
 
     def status(self) -> dict[str, Any]:
         out: dict[str, Any] = {"transport": self.s.git_transport}

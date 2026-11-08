@@ -126,6 +126,10 @@ def _guard(fn):
             return _fail("retry", f"{exc}. Read it again with task_find and retry.")
         except LockTimeout as exc:
             return _fail("retry", f"The task is busy ({exc}). Retry in a moment.")
+        except (ValueError, TypeError) as exc:
+            return _fail("fix_call", f"Invalid argument: {exc}")
+        except OSError as exc:
+            return _fail("retry", f"File system error: {exc.__class__.__name__}: {exc}")
     wrapper.__name__ = fn.__name__
     return wrapper
 

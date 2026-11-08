@@ -211,6 +211,38 @@ def test_find(settings, data_dir):
     assert e.value.data["candidates"][0]["task_id"] == NEWSLETTER
 
 
+def test_triple_dash_inside_values(settings, data_dir):
+    store = TaskStore(settings, data_dir)
+    doc = store.create(title="Q3 --- budget review", area="work", due="2026-11-30", research=False,
+                       research_skip_reason="err --- detail")
+    assert doc.task_id and doc.title == "Q3 --- budget review"
+    assert [t.task_id for t in store.find(task_id=doc.task_id)] == [doc.task_id]
+    p = settings.root() / "areas/work/tasks/2026-11-01-draft-the-spring-newsletter.md"
+    text = p.read_text().replace("  last_error: null", "  last_error: parse --- error")
+    assert "parse --- error" in text
+    p.write_text(text)
+    store.update(NEWSLETTER, {"priority": "low"})
+    fm, _ = tf.split_text(p.read_text())
+    assert fm["google_tasks"]["work"]["task_id"] == "FAKETASK1"
+    assert fm["enrichment"]["last_error"] == "parse --- error"
+
+
+def test_create_area_is_visible_when_areas_configured(settings, data_dir):
+    import dataclasses
+    s = dataclasses.replace(settings, areas=["work", "home"])
+    store = TaskStore(s, data_dir)
+    doc = store.create(title="Plan garden beds", area="garden", due="2026-12-01", create_area=True, research=False)
+    assert [t.task_id for t in store.find(task_id=doc.task_id)] == [doc.task_id]
+    assert store.update(doc.task_id, {"priority": "high"})[1]
+
+
+def test_same_date_on_unquoted_file_is_noop(settings, data_dir):
+    store = TaskStore(settings, data_dir)
+    p = settings.root() / "areas/work/tasks/2026-11-01-draft-the-spring-newsletter.md"
+    p.write_text(p.read_text().replace("due: '2026-11-12'", "due: 2026-11-12"))
+    assert store.update(NEWSLETTER, {"due": "2026-11-12"})[1] == []
+
+
 # ---------------------------------------------------------------- validator
 
 def test_validator_dry_run_and_apply(settings, data_dir):

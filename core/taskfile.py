@@ -83,20 +83,28 @@ class TaskDoc:
 
 # ------------------------------------------------------------------ parse/render
 
-def split_text(text: str) -> tuple[dict[str, Any], str]:
+def split_raw(text: str) -> tuple[str, str]:
+    """Split into (raw frontmatter, body) on the closing ``---`` *line*, so a
+    ``---`` inside a value never cuts the frontmatter short."""
     if not text.startswith("---\n"):
         raise TaskFormatError("no frontmatter")
-    try:
-        _, raw_fm, body = text.split("---", 2)
-    except ValueError as exc:
-        raise TaskFormatError("unterminated frontmatter") from exc
+    idx = text.find("\n---", 3)
+    while idx != -1 and text[idx + 4: idx + 5] not in ("\n", ""):
+        idx = text.find("\n---", idx + 1)
+    if idx == -1:
+        raise TaskFormatError("unterminated frontmatter")
+    return text[4: idx + 1], text[idx + 4:].lstrip("\n")
+
+
+def split_text(text: str) -> tuple[dict[str, Any], str]:
+    raw_fm, body = split_raw(text)
     try:
         fm = yaml.safe_load(raw_fm) or {}
     except yaml.YAMLError as exc:
         raise TaskFormatError(f"invalid YAML frontmatter: {exc.__class__.__name__}") from exc
     if not isinstance(fm, dict):
         raise TaskFormatError("frontmatter is not a mapping")
-    return fm, body.lstrip("\n")
+    return fm, body
 
 
 def parse_file(path: Path) -> TaskDoc:

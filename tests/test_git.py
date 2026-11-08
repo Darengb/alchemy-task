@@ -141,6 +141,15 @@ def test_rename_commits_both_paths(settings, data_dir, workspace):
     assert paths[1] in tree and paths[0] not in tree
 
 
+def test_rename_of_never_committed_task(settings, data_dir, workspace):
+    store, rel = make_task(settings, data_dir, title="Buy printer ink")  # created, never delivered
+    doc, paths, _ = store.update(rel, {"title": "Buy printer toner", "rename_file": True})
+    r = GitDelivery(settings, data_dir).deliver(paths, "rename")
+    assert r["committed"] and r["pushed"], r
+    tree = git(workspace, "ls-tree", "-r", "--name-only", "HEAD").stdout.split()
+    assert paths[1] in tree and paths[0] not in tree
+
+
 def test_deploy_key_env_and_token_env(settings, data_dir):
     dk = dataclasses.replace(settings, git_transport="deploy_key")
     gd = GitDelivery(dk, data_dir)

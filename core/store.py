@@ -54,19 +54,14 @@ def _cached_parse(path: Path) -> tf.TaskDoc:
     try:
         raw = path.read_bytes()
         text = raw.decode("utf-8")
-        if not text.startswith("---\n"):
-            raise tf.TaskFormatError("no frontmatter")
-        try:
-            _, raw_fm, body = text.split("---", 2)
-        except ValueError as exc:
-            raise tf.TaskFormatError("unterminated frontmatter") from exc
+        raw_fm, body = tf.split_raw(text)
         try:
             fm = yaml.load(raw_fm, Loader=_Loader) or {}
         except yaml.YAMLError as exc:
             raise tf.TaskFormatError("invalid YAML frontmatter") from exc
         if not isinstance(fm, dict):
             raise tf.TaskFormatError("frontmatter is not a mapping")
-        doc: tf.TaskDoc | Exception = tf.TaskDoc(path=path, fm=fm, body=body.lstrip("\n"), raw=raw)
+        doc: tf.TaskDoc | Exception = tf.TaskDoc(path=path, fm=fm, body=body, raw=raw)
     except (tf.TaskFormatError, UnicodeDecodeError) as exc:
         doc = tf.TaskFormatError(str(exc))
     _parse_cache[key] = (st.st_mtime_ns, st.st_size, doc)
@@ -320,6 +315,9 @@ class TaskStore:
             raise NeedsInput("unsupported", f"This task cannot be edited by Alchemy Task: {why}. Edit it by hand.")
         with task_lock(self.data_dir, doc.task_id, doc.path):
             doc = tf.parse_file(doc.path)  # re-read under the lock
+            ok, why = tf.writable(doc.fm)
+            if not ok:
+                raise NeedsInput("unsupported", f"This task cannot be edited by Alchemy Task: {why}.")
             fm = dict(doc.fm)
             body = doc.body
             notes: list[str] = []
@@ -330,6 +328,9 @@ class TaskStore:
             def setf(key: str, value: Any, label: str | None = None) -> None:
                 old = fm.get(key)
                 if old == value or (old in (None, "") and value in (None, "")):
+                    return
+                if key in ("due", "scheduled", "completed", "created") and tf.norm_date(old) == value \
+                        and value is not None:
                     return
                 fm[key] = value
                 shown_old = tf.norm_date(old) or old
@@ -429,7 +430,11 @@ class TaskStore:
             changed = [self.rel(old_path)]
             if new_path != old_path:
                 new_path.parent.mkdir(parents=True, exist_ok=True)
-                os.link(old_path, new_path)  # fails if the target exists
+                try:
+                    os.link(old_path, new_path)  # fails if the target exists
+                except FileExistsError as exc:
+                    raise NeedsInput("retry", f"Saved the change, but {self.rel(new_path)} appeared meanwhile, so "
+                                     "the file was not renamed or moved. Retry the move.") from exc
                 old_rel = self.rel(old_path)
                 os.unlink(old_path)
                 changed = [old_rel, self.rel(new_path)]
