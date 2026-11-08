@@ -30,7 +30,10 @@ def register(ctx):
                 allowed = {'tool_search', 'tool_describe', 'tool_call', 'discovery_research_fetch', 'discovery_research_submit', 'discovery_join', 'runner_probe_source', 'runner_probe_example', 'runner_probe_stress', 'runner_probe_late'}
                 name = kw.get('tool_name', '')
                 nested = (kw.get('args') or {}).get('calls', []) if name == 'tool_call' else []
-                if name not in allowed or any(c.get('name') not in allowed for c in nested):
+                if isinstance(nested, str):
+                    try: nested = json.loads(nested)
+                    except ValueError: nested = [None]
+                if name not in allowed or not isinstance(nested, list) or any(not isinstance(c, dict) or c.get('name') not in allowed for c in nested):
                     result = {'action': 'block', 'message': 'Synthetic TEST containment: use ONLY this probe source/read/fetch/submit tools. No terminal, code execution, other probes or external source tools. Preserve exact failure rather than bypassing the public handler.'}
                     audit('test-containment', {'kwargs': kw, 'result': result})
             if result and _name == 'pre_tool_call': audit('guard', {'kwargs': kw, 'result': result})
