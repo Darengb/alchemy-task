@@ -1,0 +1,58 @@
+{
+  "candidate_id": "c_aaaaaaaaaaaaaaaaaaaa",
+  "workstreams": [
+    {
+      "disposition": "retain",
+      "title": "Workstream 1",
+      "current_understanding": "The launch needs a decision.",
+      "substantive_next_action": "Choose the launch date.",
+      "owner_and_collaborators": [
+        {
+          "name": "Example User",
+          "role": "owner"
+        }
+      ],
+      "decisions_and_open_questions": {
+        "decisions": [],
+        "open_questions": [
+          "Which date?"
+        ]
+      },
+      "dependencies_and_risks": [
+        "Approval"
+      ],
+      "implementation_context": [
+        "Update the launch page after approval."
+      ],
+      "execution_classification": "user_collaboration_or_approval",
+      "exact_source_ids": [
+        {
+          "type": "slack",
+          "workspace_id": "T1",
+          "channel_id": "C1",
+          "thread_root_ts": "171.1",
+          "message_ts": "171.2"
+        }
+      ],
+      "related_source_ids": [],
+      "source_links": [
+        "https://workspace.example.test/archives/C1/p1712000000?thread_ts=171.1"
+      ],
+      "related_context_links": [],
+      "sources_consulted": [
+        {
+          "source": "Slack thread",
+          "result": "complete"
+        }
+      ],
+      "sources_unavailable": [],
+      "existing_task_candidates": [],
+      "represented_candidate_ids": [],
+      "new_information": [
+        "Launch date is unresolved."
+      ],
+      "errors": [],
+      "research_status": "sufficient"
+    }
+  ]
+}

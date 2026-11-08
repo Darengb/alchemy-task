@@ -1,0 +1,855 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidate_id",
+    "workstreams"
+  ],
+  "properties": {
+    "candidate_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^c_[0-9a-f]{20}$",
+      "maxLength": 22
+    },
+    "workstreams": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/workstream"
+      },
+      "maxItems": 12
+    }
+  },
+  "$defs": {
+    "workstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "research_status",
+        "disposition",
+        "title",
+        "current_understanding",
+        "substantive_next_action",
+        "owner_and_collaborators",
+        "decisions_and_open_questions",
+        "dependencies_and_risks",
+        "implementation_context",
+        "execution_classification",
+        "exact_source_ids",
+        "related_source_ids",
+        "source_links",
+        "related_context_links",
+        "sources_consulted",
+        "sources_unavailable",
+        "existing_task_candidates",
+        "new_information",
+        "errors",
+        "represented_candidate_ids"
+      ],
+      "properties": {
+        "research_status": {
+          "description": "Select sufficient when the current research bundle is eligible for delivery because available evidence establishes a useful latest state, disposition, or substantive next action; the underlying task may still be unresolved or completely unstarted. Select insufficient only when the current research is not eligible for delivery because no reliable substantive state, disposition, or action can be established. Selecting insufficient nullifies the current bundle and prevents it from producing a follow-up in the user's digest. Do not select insufficient to request additional research, to indicate that the underlying task is incomplete, or merely because a supporting source is unavailable. An inaccessible supporting source is an evidence limitation, not insufficient research. The parent may independently attempt repair, but evaluate this bundle as though no additional attempt is guaranteed. Failed is also not eligible for delivery and is reserved for a technical or source-access failure that prevents sufficient research.",
+          "enum": [
+            "sufficient",
+            "insufficient",
+            "failed"
+          ]
+        },
+        "disposition": {
+          "enum": [
+            "retain",
+            "exclude_pure_chase",
+            "exclude_resolved",
+            "uncertain"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "current_understanding": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "substantive_next_action": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "owner_and_collaborators": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "role"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 4000
+              },
+              "role": {
+                "enum": [
+                  "owner",
+                  "collaborator",
+                  "approver",
+                  "dependency"
+                ]
+              }
+            }
+          },
+          "maxItems": 50
+        },
+        "decisions_and_open_questions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decisions",
+            "open_questions"
+          ],
+          "properties": {
+            "decisions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 4000
+              },
+              "maxItems": 50
+            },
+            "open_questions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 4000
+              },
+              "maxItems": 50
+            }
+          }
+        },
+        "dependencies_and_risks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "maxItems": 50
+        },
+        "implementation_context": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "maxItems": 50
+        },
+        "execution_classification": {
+          "enum": [
+            "hermes_independent",
+            "user_collaboration_or_approval",
+            "other_owner_or_access",
+            "no_action"
+          ]
+        },
+        "exact_source_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "workspace_id",
+                  "channel_id",
+                  "thread_root_ts"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "slack"
+                  },
+                  "workspace_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "channel_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "thread_root_ts": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "message_ts": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "team_id",
+                  "channel_id",
+                  "thread_root_ts"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "slack"
+                  },
+                  "team_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "channel_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "thread_root_ts": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "message_ts": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "workspace",
+                  "channel_id",
+                  "thread_root_ts"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "slack"
+                  },
+                  "workspace": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "channel_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "thread_root_ts": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "message_ts": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "account_slug",
+                  "thread_id"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "gmail"
+                  },
+                  "account_slug": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "thread_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "message_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "account",
+                  "thread_id"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "gmail"
+                  },
+                  "account": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "thread_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "message_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "page_id"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "notion"
+                  },
+                  "page_id": {
+                    "type": "string",
+                    "pattern": "^[0-9A-Fa-f]{32}$|^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+                    "maxLength": 256
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "dossier_id"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "dossier"
+                  },
+                  "dossier_id": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._-]+$",
+                    "maxLength": 256
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "source_key",
+                  "account_key",
+                  "object_kind",
+                  "object_id"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "source"
+                  },
+                  "source_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "account_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "object_kind": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "object_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "message_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  }
+                }
+              }
+            ]
+          },
+          "maxItems": 15,
+          "uniqueItems": true
+        },
+        "related_source_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workstream/properties/exact_source_ids/items"
+          },
+          "maxItems": 15,
+          "uniqueItems": true
+        },
+        "source_links": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "maxItems": 50
+        },
+        "related_context_links": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "maxItems": 50
+        },
+        "sources_consulted": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source",
+              "result"
+            ],
+            "properties": {
+              "source": {
+                "type": "string",
+                "maxLength": 4000
+              },
+              "result": {
+                "type": "string",
+                "maxLength": 4000
+              }
+            }
+          },
+          "maxItems": 50
+        },
+        "sources_unavailable": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "maxItems": 50
+        },
+        "existing_task_candidates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "match_basis"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9._-]*/)+[A-Za-z0-9][A-Za-z0-9._-]*\\.md$",
+                "maxLength": 4000
+              },
+              "match_basis": {
+                "enum": [
+                  "exact",
+                  "related_only"
+                ]
+              }
+            }
+          },
+          "maxItems": 50
+        },
+        "new_information": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "maxItems": 50
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "maxItems": 50
+        },
+        "represented_candidate_ids": {
+          "description": "IDs of other non-excluded candidates from the shared index whose actions were intentionally omitted because those candidates represent them. Never include the assigned candidate ID itself. Use an empty array when this workstream does not omit an action represented by another survivor.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^c_[0-9a-f]{20}$",
+            "maxLength": 4000
+          },
+          "maxItems": 50,
+          "uniqueItems": true
+        },
+        "action_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "action_anchor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "locator",
+            "outcome"
+          ],
+          "properties": {
+            "locator": {
+              "type": "string",
+              "pattern": "^(?:message|bullet|section|paragraph|line|item):[A-Za-z0-9._/-]{1,240}$"
+            },
+            "outcome": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            }
+          }
+        },
+        "action_relation": {
+          "enum": [
+            "independent",
+            "same_action"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "action_key"
+            ]
+          },
+          "then": {
+            "required": [
+              "action_key",
+              "action_anchor",
+              "action_relation"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action_anchor"
+            ]
+          },
+          "then": {
+            "required": [
+              "action_key",
+              "action_anchor",
+              "action_relation"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action_relation"
+            ]
+          },
+          "then": {
+            "required": [
+              "action_key",
+              "action_anchor",
+              "action_relation"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "exact_source_ids": {
+                "minItems": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "related_source_ids": {
+                "maxItems": 14
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "exact_source_ids": {
+                "minItems": 2
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "related_source_ids": {
+                "maxItems": 13
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "exact_source_ids": {
+                "minItems": 3
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "related_source_ids": {
+                "maxItems": 12
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "exact_source_ids": {
+                "minItems": 4
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "related_source_ids": {
+                "maxItems": 11
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "exact_source_ids": {
+                "minItems": 5
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "related_source_ids": {
+                "maxItems": 10
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "exact_source_ids": {
+                "minItems": 6
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "related_source_ids": {
+                "maxItems": 9
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "exact_source_ids": {
+                "minItems": 7
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "related_source_ids": {
+                "maxItems": 8
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "exact_source_ids": {
+                "minItems": 8
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "related_source_ids": {
+                "maxItems": 7
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "exact_source_ids": {
+                "minItems": 9
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "related_source_ids": {
+                "maxItems": 6
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "exact_source_ids": {
+                "minItems": 10
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "related_source_ids": {
+                "maxItems": 5
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "exact_source_ids": {
+                "minItems": 11
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "related_source_ids": {
+                "maxItems": 4
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "exact_source_ids": {
+                "minItems": 12
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "related_source_ids": {
+                "maxItems": 3
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "exact_source_ids": {
+                "minItems": 13
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "related_source_ids": {
+                "maxItems": 2
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "exact_source_ids": {
+                "minItems": 14
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "related_source_ids": {
+                "maxItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "exact_source_ids": {
+                "minItems": 15
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "related_source_ids": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$id": "urn:alchemy-task:discovery-child-output:2"
+}
