@@ -330,6 +330,22 @@ def test_later_cohort_requires_outcome_bound_unambiguous_reconciliation(tmp_path
     assert not runner.join(run, session_id='parent')['joined']
 
 
+def test_authorized_new_parent_gets_pointer_and_deliberate_hold_release(tmp_path):
+    runner, store, pool, run = setup_runner(tmp_path, count=1)
+    cid = store.get_run(run)['candidates'][0]['candidate_id']
+    a = store.reserve_attempt(run, cid, owner_session='parent')
+    runner.recovery_authorizer = lambda run_id, old, new: old == 'parent' and new == 'new-parent'
+    runner.recover(run, session_id='new-parent', adopt=True, owner_restarted=True)
+    assert runner.pre_llm_call(session_id='new-parent')['context']
+    assert runner.pre_llm_call(session_id='parent') is None
+    assert runner.run(run, session_id='new-parent')['status'] == 'pending'
+    with pytest.raises(UserError): runner.release_hold(run, reason='', session_id='new-parent')
+    runner.release_hold(run, reason='User deliberately releases remaining unstarted work; unknown launch remains fenced', session_id='new-parent')
+    assert store.get_attempt(run, a['token'])['state'] == 'launch_unknown'
+    result = runner.run(run, session_id='new-parent')
+    assert not pool.requests and result['unknown_candidates'] == [cid]
+
+
 def test_parent_tool_factory_does_not_accept_model_identity(tmp_path):
     from alchemy_task.discovery_runner import make_tool_handlers
     runner, store, pool, run = setup_runner(tmp_path, count=1)

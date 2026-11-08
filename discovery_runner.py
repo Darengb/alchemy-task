@@ -29,7 +29,7 @@ BINDING_KEYS = ('config_revision', 'index_revision', 'schema_revision', 'source_
 KNOWN_MUTATORS = frozenset({'task_create', 'task_update', 'task_checkpoint', 'task_work_start', 'task_ios',
     'task_setup', 'task_research', 'task_research_sweep', 'research_submit', 'discovery_submit',
     'discovery_decide', 'discovery_stream', 'discovery_start', 'discovery_research_run',
-    'discovery_research_accept', 'discovery_join', 'discovery_actions', 'discovery_recover', 'discovery_reconcile',
+    'discovery_research_accept', 'discovery_join', 'discovery_actions', 'discovery_recover', 'discovery_reconcile', 'discovery_release_hold',
     'send_message', 'cronjob', 'write_file', 'patch'})
 
 
@@ -164,7 +164,9 @@ class DiscoveryRunner:
             if not (path / 'ledger.json').exists():
                 continue
             ledger = self.store.get_run(path.name)
-            if ledger['status'] == 'open' and ledger['origin'].get('session_id') == session_id:
+            with self._state(path.name) as state:
+                owner = state.get('parent_session', ledger['origin'].get('session_id'))
+            if ledger['status'] == 'open' and owner == session_id:
                 pending.append(path.name)
         if pending:
             return {'context': 'Saved discovery work requires continuation in the SAME frozen run before any new source window: ' + ', '.join(pending) + '. Call discovery_research_run/recovery or review saved full payloads; this pointer does not schedule a turn.'}
@@ -341,6 +343,17 @@ class DiscoveryRunner:
                     remaining = dt.datetime.fromisoformat(a['deadline_utc']).timestamp() - self.clock.time()
                     self._deadlines[(run_id, a['token'])] = self.clock.monotonic() + max(0, remaining)
         return {'fenced': fenced, 'same_parent': old_parent == session_id, 'owner_restarted': owner_restarted}
+
+    def release_hold(self, run_id, reason, *, session_id=''):
+        self._parent(run_id, session_id)
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
+            raise UserError('deliberate bounded hold-release reason required')
+        with self._state(run_id) as state:
+            state.setdefault('hold_releases', []).append({'holds': state['holds'], 'reason': reason, 'session_id': session_id, 'at': _utc(self.clock.time())})
+            state['holds'] = []
+        # Existing uncertain ordinals stay fenced and reserved. Only never-run
+        # or proven terminal-retryable independent work may subsequently launch.
+        return {'released': True, 'unknown_attempts_still_fenced': True}
 
     def run(self, run_id, *, session_id='', expected_revision=None):
         ledger = self._parent(run_id, session_id)
@@ -604,7 +617,8 @@ def make_tool_handlers(runner):
     return {'discovery_research_run': handler(runner.run), 'discovery_research_fetch': handler(runner.fetch, True),
             'discovery_research_submit': handler(runner.submit, True), 'discovery_research_accept': handler(runner.accept),
             'discovery_actions': handler(runner.actions), 'discovery_reconcile': handler(runner.reconcile),
-            'discovery_join': handler(runner.join), 'discovery_recover': handler(runner.recover)}
+            'discovery_join': handler(runner.join), 'discovery_recover': handler(runner.recover),
+            'discovery_release_hold': handler(runner.release_hold)}
 
 
 def make_hooks(runner):
