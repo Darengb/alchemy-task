@@ -8,8 +8,6 @@ provides_tools:
   - task_create
   - task_update
   - task_find
-python_dependencies:
-  - "PyYAML>=6.0,<7"
 config_schema:
   workspace_root:
     type: str

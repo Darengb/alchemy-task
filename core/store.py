@@ -7,16 +7,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-import yaml
-
 from . import taskfile as tf
+from . import yamlio
 from .config import ConfigError, Settings, validate_area_name
 from .locks import task_lock
-
-try:  # Loading only; rendering always uses the pure SafeDumper for byte-stable output.
-    _Loader = yaml.CSafeLoader  # type: ignore[attr-defined]
-except AttributeError:  # pragma: no cover
-    _Loader = yaml.SafeLoader
 
 _FILENAME_DATE = re.compile(r"^(\d{4}-\d{2}-\d{2})-")
 PROTECTED_KEYS = {"task_id", "schema_version", "enrichment", "google_tasks", "google_tasks_conflicts",
@@ -56,8 +50,8 @@ def _cached_parse(path: Path) -> tf.TaskDoc:
         text = raw.decode("utf-8")
         raw_fm, body = tf.split_raw(text)
         try:
-            fm = yaml.load(raw_fm, Loader=_Loader) or {}
-        except yaml.YAMLError as exc:
+            fm = yamlio.safe_load(raw_fm) or {}
+        except yamlio.YAMLError as exc:
             raise tf.TaskFormatError("invalid YAML frontmatter") from exc
         if not isinstance(fm, dict):
             raise tf.TaskFormatError("frontmatter is not a mapping")
@@ -318,7 +312,7 @@ class TaskStore:
             ok, why = tf.writable(doc.fm)
             if not ok:
                 raise NeedsInput("unsupported", f"This task cannot be edited by Alchemy Task: {why}.")
-            fm = dict(doc.fm)
+            fm = doc.fm  # round-trip mapping: edit in place so comments and layout survive
             body = doc.body
             notes: list[str] = []
             old_path = doc.path
@@ -425,7 +419,7 @@ class TaskStore:
             if not tf.has_task_tag(fm):
                 fm["tags"] = ["task", *tf.tag_values(fm.get("tags"))]
             body = tf.append_log(body, entry, today)
-            data = tf.render(fm, body).encode("utf-8")
+            data = tf.render(fm, body, seq_offset=doc.seq_offset, keep_blank=doc.blank_keys).encode("utf-8")
             tf.atomic_write(old_path, data, expect=doc.raw)
             changed = [self.rel(old_path)]
             if new_path != old_path:
@@ -450,12 +444,13 @@ class TaskStore:
             raise NeedsInput("unsupported", f"This task cannot be edited by Alchemy Task: {why}.")
         with task_lock(self.data_dir, doc.task_id, doc.path):
             doc = tf.parse_file(doc.path)
-            fm = dict(doc.fm)
-            fm.update(fm_updates or {})
+            fm = doc.fm
+            for key, value in (fm_updates or {}).items():
+                fm[key] = value
             body = tf.upsert_block(doc.body, start, end, block, top=top)
             if log:
                 body = tf.append_log(body, log, self.s.today())
-            tf.atomic_write(doc.path, tf.render(fm, body).encode("utf-8"), expect=doc.raw)
+            tf.atomic_write(doc.path, tf.render(fm, body, seq_offset=doc.seq_offset, keep_blank=doc.blank_keys).encode("utf-8"), expect=doc.raw)
         return tf.parse_file(doc.path), [self.rel(doc.path)]
 
 

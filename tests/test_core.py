@@ -178,6 +178,19 @@ def test_update_rename_and_move_keep_identity(settings, data_dir):
     assert store.resolve(LICENSES).path == doc.path
 
 
+def test_update_keeps_hand_written_comments(settings, data_dir):
+    store = TaskStore(settings, data_dir)
+    validator.validate(store, apply=True)  # give the hand-made task its ID
+    p = settings.root() / "areas/work/tasks/2026-11-05-book-venue-for-the-offsite.md"
+    before = p.read_text()
+    store.update("Book venue for the offsite", {"priority": "high", "log": "Two quotes in"})
+    after = p.read_text()
+    fm_before, fm_after = before.split("\n---\n")[0].split("\n"), after.split("\n---\n")[0].split("\n")
+    changed = [(a, b) for a, b in zip(fm_before, fm_after) if a != b]
+    assert changed == [("priority: normal", "priority: high")] and len(fm_before) == len(fm_after)
+    assert "# quote @ contexts" in after and "  # - '@computer'" in after
+
+
 def test_update_refuses_newer_schema(settings, data_dir):
     store = TaskStore(settings, data_dir)
     with pytest.raises(NeedsInput) as e:
@@ -189,8 +202,8 @@ def test_concurrent_edit_detected(settings, data_dir, monkeypatch):
     store = TaskStore(settings, data_dir)
     real = tf.render
 
-    def racing_render(fm, body):
-        out = real(fm, body)
+    def racing_render(fm, body, **kw):
+        out = real(fm, body, **kw)
         p = settings.root() / "areas/work/tasks/2026-11-01-draft-the-spring-newsletter.md"
         p.write_text(p.read_text() + "\nedited elsewhere\n")
         return out

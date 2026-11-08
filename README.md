@@ -13,8 +13,9 @@ researches it in the background, and keeps it current while you work on it.
   area folder, and enforce status rules: done records the completion date, reopening must be explicit, and
   cancelled or waiting needs a reason.
 - **Plain Markdown you own:** one file per task with YAML frontmatter, readable in any editor and compatible
-  with Obsidian and TaskNotes. Unknown fields, your own sections and blocks written by other tools are
-  preserved byte for byte.
+  with Obsidian and TaskNotes. Edits touch only the fields they change: your comments, layout, unknown fields,
+  own sections and blocks written by other tools are preserved byte for byte. YAML is handled by ruamel.yaml,
+  which ships with Hermes, so the plugin installs no Python dependencies.
 - **Git delivery you can trust:** every change is a path-scoped commit. A push only counts once the remote
   branch matches your commit. If the remote moved, Alchemy Task rebases when that is safe, and it never
   stashes, resets or force-pushes your work. If a push can't go through, the task is still saved and the push
@@ -99,7 +100,7 @@ Setup fills them in for you.
 ## Development
 
 ```bash
-cd tests && python -m pytest -q        # needs pytest and PyYAML
+cd tests && python -m pytest -q        # needs pytest and ruamel.yaml
 hermes plugins validate /path/to/alchemy-task
 ```
 

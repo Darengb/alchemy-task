@@ -1,14 +1,11 @@
 """Task file format: parse, render, identity, log lines and managed blocks.
 
-Tasks are Markdown files with YAML frontmatter. The render rule is fixed so
-that files touched by this plugin produce no unrelated diff for other tools
-that use the same convention:
+Tasks are Markdown files with YAML frontmatter, framed as
 
-    "---\\n" + yaml.safe_dump(fm, sort_keys=False, allow_unicode=True,
-                              default_flow_style=False).rstrip()
-    + "\\n---\\n\\n" + body
+    "---\n" + <frontmatter YAML> + "\n---\n\n" + body
 
-where ``body`` is the original body with leading newlines stripped.
+Frontmatter is edited in ruamel.yaml round-trip mode (see ``yamlio``), so an
+edit changes only the keys it touches; comments and layout survive.
 """
 from __future__ import annotations
 
@@ -21,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
+from . import yamlio
 
 SCHEMA_VERSION = 1
 TASK_ID_KEY = "task_id"
@@ -62,6 +59,8 @@ class TaskDoc:
     fm: dict[str, Any]
     body: str
     raw: bytes = field(repr=False, default=b"")
+    seq_offset: int = 0  # list indentation style of the original file
+    blank_keys: frozenset = frozenset()  # keys the file wrote as bare `key:`
 
     @property
     def task_id(self) -> str | None:
@@ -96,34 +95,45 @@ def split_raw(text: str) -> tuple[str, str]:
     return text[4: idx + 1], text[idx + 4:].lstrip("\n")
 
 
-def split_text(text: str) -> tuple[dict[str, Any], str]:
+def split_text(text: str, *, rt: bool = False) -> tuple[dict[str, Any], str]:
     raw_fm, body = split_raw(text)
     try:
-        fm = yaml.safe_load(raw_fm) or {}
-    except yaml.YAMLError as exc:
+        fm = (yamlio.load_rt(raw_fm) if rt else yamlio.safe_load(raw_fm))
+        if fm is None:
+            fm = yamlio.load_rt("{}") if rt else {}
+    except yamlio.YAMLError as exc:
         raise TaskFormatError(f"invalid YAML frontmatter: {exc.__class__.__name__}") from exc
     if not isinstance(fm, dict):
         raise TaskFormatError("frontmatter is not a mapping")
     return fm, body
 
 
-def parse_file(path: Path) -> TaskDoc:
+def parse_file(path: Path, *, rt: bool = True) -> TaskDoc:
+    """Parse a task file. ``rt=True`` (default) returns an editable mapping that
+    keeps comments and formatting; use ``rt=False`` for fast read-only access."""
     raw = path.read_bytes()
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise TaskFormatError("not UTF-8") from exc
-    fm, body = split_text(text)
-    return TaskDoc(path=path, fm=fm, body=body, raw=raw)
+    fm, body = split_text(text, rt=rt)
+    raw_fm = split_raw(text)[0]
+    return TaskDoc(path=path, fm=fm, body=body, raw=raw, seq_offset=yamlio.seq_offset(raw_fm),
+                   blank_keys=frozenset(yamlio.blank_keys(raw_fm)))
 
 
-def render(fm: dict[str, Any], body: str) -> str:
-    dumped = yaml.safe_dump(fm, sort_keys=False, allow_unicode=True, default_flow_style=False).rstrip()
+def render(fm: dict[str, Any], body: str, *, seq_offset: int = 0, keep_blank: frozenset = frozenset()) -> str:
+    dumped = yamlio.dump(fm, seq_offset=seq_offset, keep_blank=keep_blank).rstrip()
     return f"---\n{dumped}\n---\n\n{body.lstrip(chr(10))}"
 
 
 def is_canonical(doc: TaskDoc) -> bool:
-    return render(doc.fm, doc.body).encode("utf-8") == doc.raw
+    """True when loading and re-writing the file without changes is byte-identical."""
+    text = doc.raw.decode("utf-8")
+    fm, body = split_text(text, rt=True)
+    raw_fm = split_raw(text)[0]
+    return render(fm, body, seq_offset=yamlio.seq_offset(raw_fm),
+                  keep_blank=frozenset(yamlio.blank_keys(raw_fm))).encode("utf-8") == doc.raw
 
 
 def atomic_write(path: Path, data: bytes, *, expect: bytes | None) -> None:
@@ -221,7 +231,7 @@ def insert_fm_line(text: str, key: str, value: Any, after: tuple[str, ...]) -> s
     """Add ``key: value`` as a one-line edit, keeping every other byte (comments,
     blank template lines). Fills a blank ``key:`` line if one exists."""
     lines, end = _fm_lines(text)
-    rendered = yaml.safe_dump({key: value}, default_flow_style=False).rstrip("\n")
+    rendered = yamlio.dump({key: value}).rstrip("\n")
     blank_re = re.compile(rf"^{re.escape(key)}:[ \t]*(?:#.*)?$")
     blank = [i for i, line in enumerate(lines) if blank_re.match(line)]
     if any(line.startswith(f"{key}:") for line in lines) and not blank:
