@@ -9,6 +9,8 @@ provides_tools:
   - runner_probe_receipt
   - runner_probe_source
   - runner_probe_example
+  - runner_probe_stress
+  - runner_probe_wire
   - discovery_research_run
   - discovery_research_fetch
   - discovery_research_submit
@@ -18,3 +20,7 @@ provides_tools:
   - discovery_join
   - discovery_recover
   - discovery_release_hold
+provides_hooks:
+  - subagent_start
+  - pre_tool_call
+  - pre_llm_call
