@@ -31,6 +31,15 @@ researches it in the background, and keeps it current while you work on it.
   names of your tools. It cannot run commands or change files, accounts or settings. Each run is limited to
   30 tool calls and 10 minutes, with up to 3 attempts. Results from a superseded run are discarded, and the
   dossier is written into the task's latest content, so research never overwrites edits made while it ran.
+- **Official work sessions:** say "work on X" or "continue X". The chat is linked to the task, which turns
+  in progress, and the agent gets the notes, research, access plan and current state with its next step, so
+  you never re-explain. When the work finishes, needs you, waits on someone or is blocked, the agent records
+  a checkpoint: a **Current state** section at the top of the task with what was done, the next step and
+  what is needed from whom. Marking a task done requires evidence of what was checked.
+- **Safety net:** if a linked chat ends or sits idle for 30 minutes without a checkpoint, Alchemy Task writes
+  one itself from the conversation, using your checkpoint model (by default the same model as compression)
+  or a free digest of the last exchange when no model call is available. Automatic checkpoints never mark a
+  task done.
 - **Validator:** `/task validate` checks hand-edited files, reports problems and assigns missing IDs with
   one-line edits that keep your comments and formatting.
 
@@ -112,7 +121,13 @@ Setup fills them in for you.
 - **Reads outside plugin data:** research agents read your skills through Hermes's skill tools, the names
   and availability of your toolsets, tools and MCP servers (never keys or credentials), and Markdown notes the
   task links to inside the workspace.
-- **Chat context:** when research finishes, a one-line note is added to your next message in the chat where
+- **Work-session transcripts and background thread:** for chats linked to a task, the plugin keeps a short
+  digest of the last exchange, reads the chat's transcript through Hermes's session store when it writes an
+  automatic checkpoint, and runs one background thread per profile that checks linked chats every 10
+  minutes. Automatic checkpoints make one small model call (about 3,000 input and 300 output tokens) through
+  the `alchemy_task_checkpoint` model slot, which you can point at a cheaper model.
+- **Chat context:** in a chat linked to a task, a one-line reminder to checkpoint is added to each message;
+  when research finishes, a one-line note is added to your next message in the chat where
   the task was created, so your agent can tell you about it.
 - **Scheduled job (created only with your approval during setup):** a research sweep every 30 minutes. A
   pre-check script copied into `$HERMES_HOME/scripts/` runs first and starts the agent only when a task is

@@ -13,6 +13,7 @@ tools; they validate fields, keep IDs stable, commit and push, and queue researc
 | Add a task | `task_find` (check for an existing one), then `task_create` |
 | Change status, dates, title, area or notes | `task_update` with the `task_id` |
 | Look something up | `task_find` (`include_body: true` to read one task in full) |
+| Work on or continue a task | `task_work_start`, then `task_checkpoint` when you stop |
 
 ## Creating
 
@@ -38,6 +39,15 @@ tools; they validate fields, keep IDs stable, commit and push, and queue researc
 - Done: `status: done` (the completed date is set for you). Cancelled or waiting: include `reason`.
 - Reopening a done or cancelled task needs `reopen: true`, only when the user wants it reopened.
 - A user correction ("actually it's due Thursday") updates the existing task; never create a second one.
+
+## Working on a task
+
+- "Work on X", "continue X", "let's do X" → `task_work_start`, then do the work using what it returns
+  (current state and next step first, then research and notes).
+- Call `task_checkpoint` when the work is finished (`done`, with `evidence` of what you checked), when you
+  need the user (`waiting_user`), when it waits on someone else (`waiting_other`), when it is blocked, or
+  before stopping partway (`in_progress`). Do not wait to be asked.
+- `done` and `next_step` are concrete: "Drafted the intro and three sections" rather than "made progress".
 
 ## Research
 
