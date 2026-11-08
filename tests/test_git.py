@@ -150,6 +150,22 @@ def test_rename_of_never_committed_task(settings, data_dir, workspace):
     assert paths[1] in tree and paths[0] not in tree
 
 
+def test_rename_of_committed_non_ascii_filename(settings, data_dir, workspace):
+    folder = workspace / "areas/work/tasks"
+    src = next(folder.glob("2026-10-20-*.md"))
+    hand = folder / "2026-10-20-café-chairs.md"
+    src.rename(hand)
+    git(workspace, "add", "-A")
+    git(workspace, "commit", "-qm", "hand-made")
+    store = TaskStore(settings, data_dir)
+    doc, paths, _ = store.update(hand.name and "areas/work/tasks/2026-10-20-café-chairs.md",
+                                 {"title": "Order cafe chairs", "rename_file": True})
+    assert GitDelivery(settings, data_dir).deliver(paths, "rename")["pushed"]
+    tree = git(workspace, "ls-tree", "-r", "--name-only", "-z", "HEAD").stdout.split("\0")
+    assert paths[1] in tree and paths[0] not in tree
+    assert git(workspace, "status", "--porcelain", "--", "areas/work/tasks").stdout == ""
+
+
 def test_deploy_key_env_and_token_env(settings, data_dir):
     dk = dataclasses.replace(settings, git_transport="deploy_key")
     gd = GitDelivery(dk, data_dir)

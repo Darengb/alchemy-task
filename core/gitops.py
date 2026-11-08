@@ -203,7 +203,7 @@ class GitDelivery:
     def _commit(self, paths: list[str], message: str) -> dict[str, Any]:
         paths = sorted(set(p for p in paths if p))
         root = self.s.root()
-        known = set(self.git("ls-files", "--", *paths).stdout.split("\n")) if paths else set()
+        known = set(self.git("ls-files", "-z", "--", *paths).stdout.split("\0")) if paths else set()
         paths = [p for p in paths if (root / p).exists() or p in known]
         if not paths:
             return {"committed": False}
