@@ -90,17 +90,20 @@ def test_run_digest_dedupe_and_decide(ctx, settings):
                         next(p.name for p in (settings.root() / "areas/work/tasks").glob("*send-sam*")))
     assert "Found by the work discovery stream" in doc.body and "Source ID: `msg-1`" in doc.body
     assert "Discovery research: Quote template exists." in doc.body and doc.fm["due"] == "2026-11-12"
-    # approved items leave the digest
+    # a later run lists only new items
     nxt = tool(task_tools.discovery_submit, stream="work", candidates=[], coverage=[])
-    assert nxt["open_proposals"] == 0 and "Nothing new" in nxt["digest"]
+    assert "Nothing new" in nxt["digest"]
+    assert tool(task_tools.discovery_decide, approve=["1"])["needs"] == "discovery"  # already added
 
 
-def test_dismiss_and_carryover(ctx):
+def test_unpicked_items_are_not_relisted_but_stay_replyable(ctx):
     make_stream()
     tool(task_tools.discovery_submit, stream="work", candidates=CANDS[:2], coverage=[])
-    tool(task_tools.discovery_decide, dismiss=["2"])
+    tool(task_tools.discovery_decide, approve=["1"])  # the user ignores 2
     out = tool(task_tools.discovery_submit, stream="work", candidates=[], coverage=[])
-    assert out["open_proposals"] == 1 and "Send Sam" in out["digest"] and "Book the launch" not in out["digest"]
+    assert "Book the launch" not in out["digest"]
+    later = tool(task_tools.discovery_decide, approve=["2"], edits={"2": {"due": "2026-11-20"}})
+    assert later["results"][0]["title"] == "Book the launch retro"
 
 
 def test_two_streams_in_one_chat_get_letters_and_cross_stream_dedupe(ctx):
@@ -129,18 +132,25 @@ def test_separate_chats_keep_plain_numbers_and_research_cap(ctx):
     assert sum(1 for p in items.values() if p["researched"]) == 1
 
 
-def test_numbers_stay_stable_between_runs(ctx):
+def test_numbers_continue_through_the_day_and_restart_next_day(ctx, monkeypatch):
     make_stream()
-    three = [{**CANDS[1], "source_id": f"s{i}", "title": f"Follow up with vendor {i}", "due_hint": "2026-11-20"}
-             for i in range(1, 4)]
-    tool(task_tools.discovery_submit, stream="work", candidates=three, coverage=[])
-    tool(task_tools.discovery_decide, approve=["1"])
-    d = tool(task_tools.discovery_submit, stream="work",
-             candidates=[{**three[0], "source_id": "s4", "title": "Ask the printer about badge stock"}], coverage=[])["digest"]
-    assert "**2.** Follow up with vendor 2" in d and "**4.** Ask the printer about badge stock" in d and "**1.**" not in d
-    out = tool(task_tools.discovery_decide, approve=["3"])
-    assert out["results"][0]["title"] == "Follow up with vendor 3"
-    assert tool(task_tools.discovery_decide, approve=["1"])["needs"] == "discovery"  # already decided
+    v = [{**CANDS[1], "source_id": f"s{i}", "title": f"Call supplier number {i}", "due_hint": "2026-11-20"}
+         for i in range(1, 6)]
+    d1 = tool(task_tools.discovery_submit, stream="work", candidates=v[:3], coverage=[])["digest"]
+    d2 = tool(task_tools.discovery_submit, stream="work", candidates=[{**v[3], "title": "Ask the printer about badge stock"}],
+              coverage=[])["digest"]
+    assert "**3.**" in d1 and "**4.** Ask the printer about badge stock" in d2 and "**1.**" not in d2
+    assert tool(task_tools.discovery_decide, approve=["2"])["results"][0]["title"] == "Call supplier number 2"
+    # next day: numbers restart; a bare number means today's, day=yesterday reaches back
+    monkeypatch.setattr(dv, "_today", lambda rt: "2099-01-02")
+    d3 = tool(task_tools.discovery_submit, stream="work", candidates=[{**v[4], "title": "Renew the domain"}],
+              coverage=[])["digest"]
+    assert "**1.** Renew the domain" in d3
+    assert tool(task_tools.discovery_decide, approve=["1"])["results"][0]["title"] == "Renew the domain"
+    earlier = runtime.Runtime().settings.today()
+    back = tool(task_tools.discovery_decide, approve=["3"], day=earlier)
+    assert back["results"][0]["title"] == "Call supplier number 3"
+    monkeypatch.setattr(dv, "_today", lambda rt: __import__("datetime").date.today().isoformat())
 
 
 def test_invalid_edit_creates_nothing_and_failures_stay_open(ctx, settings):

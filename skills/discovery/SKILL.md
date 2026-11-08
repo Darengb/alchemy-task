@@ -38,7 +38,9 @@ pass `deliver: telegram:<chat_id>:<thread_id>`.
 
 Several streams are fine: one per area or per inbox. They run and fail independently, and the same message is
 never proposed twice across streams. Numbers are plain (1, 2, 3) unless two streams post into the same chat;
-then they get a letter (W1, B2).
+then they get a letter (W1, B2). Numbers restart at 1 each day; a stream that runs several times a day keeps
+counting up until the day ends. Each digest lists only new items; unpicked ones are not shown again but can
+still be added for a week.
 
 ## Running a stream (scheduled job)
 
@@ -58,7 +60,9 @@ then they get a letter (W1, B2).
 
 ## When the user replies to a digest
 
-"1 and 3", "add 2, skip the rest", "W1 for Friday": call `discovery_decide` with `approve` and `dismiss`, plus
-`edits` for anything they said (due date, area, title). If the tool asks for due dates, ask the user in one
-message for the numbers it names. The created tasks are researched like any other. Confirm briefly what was
-added.
+People usually reply with only the numbers they want and ignore the rest; that is normal, and ignored items
+need nothing. "1 and 3", "W1 for Friday": call `discovery_decide` with `approve`, plus `edits` for anything
+they said (due date as YYYY-MM-DD in their timezone, area, title). Numbers restart each day and continue
+across that day's digests, so a bare number means today's (or the latest digest if none came today). If they
+point at an earlier digest ("yesterday's 2"), pass `day`. If the tool asks for due dates, ask once for the
+numbers it names. The created tasks are researched like any other. Confirm briefly what was added.

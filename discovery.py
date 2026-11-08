@@ -314,13 +314,9 @@ def submit(rt: Runtime, name: str, candidates: list[dict[str, Any]], coverage: l
         props = _props(rt, stream["name"])
         seen = _seen(rt)
         cap_left = max(0, stream["research_cap"] - _researched_today(props, today))
-        if not any(p["state"] == "open" for p in props["items"].values()):
-            props["next_num"] = 1  # numbering restarts only when nothing is waiting for a reply
-        for p in sorted(props["items"].values(), key=lambda x: x["at"]):  # items saved before stable numbers
-            if not p.get("num"):
-                p["num"] = int(props.get("next_num") or 1)
-                props["next_num"] = p["num"] + 1
-        added, skipped = 0, []
+        if props.get("num_day") != today:  # numbers restart each day and run on through that day's digests
+            props["num_day"], props["next_num"] = today, 1
+        added, skipped, new_items = 0, [], []
         for raw in (candidates or [])[:40]:
             if not isinstance(raw, dict):
                 continue
@@ -366,14 +362,14 @@ def submit(rt: Runtime, name: str, candidates: list[dict[str, Any]], coverage: l
                 "due": due, "num": num,
                 "research_notes": research, "researched": researched, "day": today, "at": now, "state": "open"}
             seen[source_id] = {"stream": stream["name"], "at": now, "outcome": "proposed"}
+            new_items.append(props["items"][source_id])
             added += 1
         cutoff = now - KEEP_DAYS * 86400
-        for sid in [k for k, p in props["items"].items() if p["at"] < cutoff or p["state"] != "open"]:
-            props["items"].pop(sid)
+        for sid in [k for k, p in props["items"].items() if p["at"] < cutoff or not p.get("num")]:
+            props["items"].pop(sid)  # unpicked items stay replyable for 7 days but are never re-listed
         for sid in [k for k, v in seen.items() if v.get("at", 0) < now - 60 * 86400]:
             seen.pop(sid)
-        ordered = sorted(props["items"].values(), key=lambda p: (p["day"] != today, p.get("num", 0)))
-        props["digest"] = [p["source_id"] for p in ordered]
+        props["digest"] = [p["source_id"] for p in new_items]
         props["researched_by_day"] = {d: n for d, n in (props.get("researched_by_day") or {}).items() if d >= today}
         props["digest_at"] = now
         _save_props(rt, stream["name"], props)
@@ -382,39 +378,28 @@ def submit(rt: Runtime, name: str, candidates: list[dict[str, Any]], coverage: l
         if stream["name"] in streams:
             streams[stream["name"]]["last_run"] = now
             _save_streams(rt, streams)
-    digest = render_digest(stream, ordered, coverage or [], today)
-    return {"added": added, "skipped": skipped, "open_proposals": len(ordered), "digest": digest}
+    digest = render_digest(stream, new_items, coverage or [], today)
+    return {"added": added, "skipped": skipped, "digest": digest}
 
 
 def render_digest(stream: dict[str, Any], items: list[dict[str, Any]], coverage: list[dict[str, Any]],
                   today: str) -> str:
+    """One digest lists only this run's new items. Numbers restart each day and continue across that day's runs."""
     label = stream.get("label") or ""
     lines = [f"**{stream['name'].title()} discovery** · {today}"]
-    new = [p for p in items if p["day"] == today]
-    old = [p for p in items if p["day"] != today]
     if not items:
         lines.append("Nothing new that needs a task.")
-    n = 0
-    first_nums: list[int] = []
-    for group, heading in ((new, None), (old, "Still waiting from earlier:")):
-        if not group:
-            continue
-        if heading:
-            lines.append(heading)
-        for p in group:
-            n += 1
-            num = p.get("num") or n
-            first_nums.append(num)
-            bits = [f"**{label}{num}.** {p['title']}"]
-            meta = [x for x in (p["area"], f"due {p['due']}" if p["due"] else "", p["source"]) if x]
-            if meta:
-                bits.append(f"({', '.join(meta)})")
-            line = " ".join(bits)
-            if p["why"]:
-                line += f": {p['why']}"
-            if p["link"]:
-                line += f" [source]({p['link']})"
-            lines.append(line)
+    for p in items:
+        bits = [f"**{label}{p['num']}.** {p['title']}"]
+        meta = [x for x in (p["area"], f"due {p['due']}" if p["due"] else "", p["source"]) if x]
+        if meta:
+            bits.append(f"({', '.join(meta)})")
+        line = " ".join(bits)
+        if p["why"]:
+            line += f": {p['why']}"
+        if p["link"]:
+            line += f" [source]({p['link']})"
+        lines.append(line)
     problems = [c for c in coverage if isinstance(c, dict) and str(c.get("status") or "ok").lower() != "ok"]
     covered = [str(c.get("source")) for c in coverage if isinstance(c, dict) and str(c.get("status")).lower() == "ok"]
     if covered:
@@ -422,15 +407,35 @@ def render_digest(stream: dict[str, Any], items: list[dict[str, Any]], coverage:
     for c in problems:
         lines.append(f"⚠️ {c.get('source')}: {c.get('status')}" + (f" ({c.get('note')})" if c.get("note") else ""))
     if items:
-        example = f"{label}{first_nums[0]}" + (f" and {label}{first_nums[1]}" if n > 1 else "")
-        lines.append(f"Reply with the numbers to add as tasks (for example \"{example}\"), or \"none\".")
+        example = f"{label}{items[0]['num']}" + (f" and {label}{items[1]['num']}" if len(items) > 1 else "")
+        lines.append(f"Reply with the numbers you want as tasks (for example \"{example}\"); the rest are left alone.")
     return "\n".join(lines)
 
 
 # ------------------------------------------------------------------ decisions
 
-def _resolve_numbers(rt: Runtime, refs: list[Any], stream_name: str) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+def _day_of(rt: Runtime, day: str) -> str:
+    text = str(day or "").strip().lower()
+    if not text or text == "today":
+        return ""
+    if text == "yesterday":
+        return (dt.date.fromisoformat(_today(rt)) - dt.timedelta(days=1)).isoformat()
+    try:
+        return tf.validate_date(text, "day") or ""
+    except tf.TaskFormatError as exc:
+        raise DiscoveryError("day must be today, yesterday or YYYY-MM-DD") from exc
+
+
+def _recent(props: dict[str, Any]) -> list[dict[str, Any]]:
+    return [p for p in props["items"].values() if p.get("num")]
+
+
+def _resolve_numbers(rt: Runtime, refs: list[Any], stream_name: str, day: str = "") -> list[tuple[dict[str, Any],
+                                                                                               dict[str, Any]]]:
+    """A bare number means today's numbering, or the latest day with a digest if none posted today yet."""
     streams = _streams(rt)
+    want_day = _day_of(rt, day)
+    today = _today(rt)
     out = []
     for ref in refs:
         text = str(ref).strip().upper()
@@ -443,20 +448,23 @@ def _resolve_numbers(rt: Runtime, refs: list[Any], stream_name: str) -> list[tup
         elif letter:
             candidates = [s for s in streams.values() if s.get("label") == letter]
         else:
-            live = [s for s in streams.values()
-                if any(p["state"] == "open" for p in _props(rt, s["name"])["items"].values())]
+            live = [s for s in streams.values() if _recent(_props(rt, s["name"]))]
             candidates = live if len(live) == 1 else []
             if len(live) > 1:
-                raise DiscoveryError("several streams have open proposals; pass stream, or use the letter prefix")
+                raise DiscoveryError("several streams have recent digests; pass stream, or use the letter prefix")
         if not candidates:
-            raise DiscoveryError(f"no open discovery digest matches {ref!r}")
+            raise DiscoveryError(f"no recent discovery digest matches {ref!r}")
         stream = candidates[0]
-        props = _props(rt, stream["name"])
-        match = [p for p in props["items"].values() if p.get("num") == num and p["state"] == "open"]
+        items = _recent(_props(rt, stream["name"]))
+        target = want_day or (today if any(p["day"] == today for p in items)
+                              else max((p["day"] for p in items), default=today))
+        match = [p for p in items if p["day"] == target and p["num"] == num]
         if not match:
-            open_nums = sorted(p.get("num") for p in props["items"].values() if p["state"] == "open")
-            raise DiscoveryError(f"{ref!r} is not an open {stream['name']} proposal (open: "
-                                 f"{', '.join(str(n) for n in open_nums) or 'none'})")
+            nums = sorted(p["num"] for p in items if p["day"] == target)
+            raise DiscoveryError(f"{ref!r} is not in the {stream['name']} digest for {target} (numbers: "
+                                 f"{', '.join(str(n) for n in nums) or 'none'})")
+        if match[0]["state"] == "approved":
+            raise DiscoveryError(f"{ref!r} ({match[0]['title']}) was already added as a task")
         if all(p["source_id"] != match[0]["source_id"] for _, p in out):
             out.append((stream, match[0]))
     return out
@@ -464,8 +472,8 @@ def _resolve_numbers(rt: Runtime, refs: list[Any], stream_name: str) -> list[tup
 
 def decide(rt: Runtime, args: dict[str, Any], session_id: str = "") -> dict[str, Any]:
     stream_name = args.get("stream", "")
-    approve = _resolve_numbers(rt, args.get("approve") or [], stream_name)
-    dismiss = _resolve_numbers(rt, args.get("dismiss") or [], stream_name)
+    approve = _resolve_numbers(rt, args.get("approve") or [], stream_name, args.get("day", ""))
+    dismiss = _resolve_numbers(rt, args.get("dismiss") or [], stream_name, args.get("day", ""))
     approved_ids = {p["source_id"] for _, p in approve}
     dismiss = [(s, p) for s, p in dismiss if p["source_id"] not in approved_ids]
     edits = {str(k).strip().upper(): v for k, v in (args.get("edits") or {}).items() if isinstance(v, dict)}
@@ -548,12 +556,14 @@ def pre_llm_call(session_id: str = "", **_: Any):
         streams = [s for s in _streams(rt).values() if s.get("origin_session") == session_id]
     except Exception:  # noqa: BLE001
         return None
-    live = [s for s in streams if any(p["state"] == "open" for p in _props(rt, s["name"])["items"].values())]
+    live = [s for s in streams if _recent(_props(rt, s["name"]))]
     if not live:
         return None
     names = ", ".join(f"{s['name']}" + (f" (numbers start with {s['label']})" if s.get("label") else "") for s in live)
     return {"context": f"[Alchemy Task] This chat receives discovery digests for: {names}. If the user replies with "
-                       "proposal numbers, call discovery_decide (approve / dismiss)."}
+                       "proposal numbers, call discovery_decide with approve. Numbers restart each day: a bare number means "
+                       "today's digests (or the latest day if none posted today); pass day=yesterday or a date when the "
+                       "user refers to an earlier digest. Unpicked items need no action."}
 
 
 def register(ctx: Any) -> None:
