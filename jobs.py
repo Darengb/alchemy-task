@@ -39,11 +39,11 @@ JOBS: dict[str, dict[str, Any]] = {
         "stub": "alchemy_task_research_sweep.py",
         "body": "print(json.dumps(precheck.research_wake(data_dir={data_dir!r})))",
         "missing": 'print(json.dumps({{"wakeAgent": False}}))',
-        "toolsets": ["alchemy-task", "alchemy-task-research", "web"],
+        "toolsets": ["alchemy-task-sweep", "alchemy-task-research", "web"],
         "deliver": "local",
-        "prompt": ("Alchemy Task research sweep. Call task_research with no task argument to research tasks that are "
-                   "waiting or whose research stalled. Reply with one short line saying how many were started and "
-                   "finished. Do nothing else."),
+        "prompt": ("Alchemy Task research sweep. Call task_research_sweep to research tasks that are waiting or whose "
+                   "research stalled. Reply with one short line saying how many were started and finished. Do "
+                   "nothing else."),
         "why": "Researches tasks whose research could not start or stopped early (for example after a restart).",
         "cost": "Free when nothing is waiting (a script checks first); otherwise one short turn plus the research.",
     },

@@ -140,7 +140,8 @@ def inspect_workspace(path: str, task_dir: str = "") -> dict[str, Any]:
 def _create_workspace(path: Path, areas: list[str], task_dir: str) -> list[str]:
     path.mkdir(parents=True, exist_ok=True)
     made = []
-    if _git(path, "rev-parse", "--show-toplevel").returncode != 0:
+    top = _git(path, "rev-parse", "--show-toplevel")
+    if top.returncode != 0 or Path(top.stdout.strip()).resolve() != path.resolve():
         _git(path, "init", "-q", "-b", "main")
         made.append("git repository")
     for area in areas:
@@ -167,7 +168,7 @@ def save(rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
                 value = [v.strip() for v in value.split(",") if v.strip()]
             value = [validate_area_name(v) for v in value]
         elif kind is bool:
-            value = bool(value)
+            value = value if isinstance(value, bool) else str(value).strip().lower() in ("true", "yes", "1", "on")
         else:
             value = str(value).strip()
         changes[key] = value
@@ -240,7 +241,11 @@ def git_check(rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
         raise SetupError("the workspace is not a Git repository")
     if args.get("remote_url"):
         url = str(args["remote_url"]).strip()
-        if _git(root, "remote", "get-url", s.git_remote).returncode == 0:
+        current = _git(root, "remote", "get-url", s.git_remote)
+        if current.returncode == 0 and current.stdout.strip() != url and not args.get("replace_remote"):
+            raise SetupError(f"the workspace already pushes to {current.stdout.strip()}. Only change it if the user "
+                             "asked to (pass replace_remote=true).")
+        if current.returncode == 0:
             _git(root, "remote", "set-url", s.git_remote, url)
         else:
             _git(root, "remote", "add", s.git_remote, url)
@@ -293,8 +298,10 @@ def jobs_preview(rt: Runtime) -> dict[str, Any]:
     items = jobs.inventory(tz)
     for item in items:
         reg = registry.get(item["key"])
-        item["status"] = "created" if reg and reg.get("job_id") and reg.get("hash") == jobs.spec_hash(item["key"]) \
-            else ("needs update" if reg and reg.get("job_id") else "not created")
+        stub = _hermes_home() / "scripts" / jobs.JOBS[item["key"]]["stub"]
+        current = reg and reg.get("job_id") and reg.get("hash") == jobs.spec_hash(item["key"]) and stub.exists() \
+            and str(_plugin_dir()) in stub.read_text(errors="ignore")
+        item["status"] = "created" if current else ("needs update" if reg and reg.get("job_id") else "not created")
     return {"jobs": items, "approval_needed": any(i["status"] != "created" for i in items),
             "instructions": "Show these jobs to the user and ask once whether to create them. Only call "
                             "action=jobs_create with user_approved=true after they say yes."}
@@ -308,6 +315,11 @@ def jobs_create(rt: Runtime, *, user_approved: bool, session_id: str = "") -> di
         raise SetupError("confirm the user's timezone first (it is unset or UTC), so schedules run at their local time")
     scripts = _hermes_home() / "scripts"
     registry = rt.ctx.state.get("jobs", default={}) or {}
+    known_ids = {r.get("job_id") for r in registry.values()}
+    for job in _list_jobs(rt):  # adopt-or-clean jobs left by an earlier install whose registry was lost
+        jid = str(job.get("job_id") or job.get("id") or "")
+        if str(job.get("name") or "") in {jobs.job_name(k) for k in jobs.JOBS} and jid not in known_ids:
+            _remove_job(rt, jid)
     results = []
     for key in jobs.JOBS:
         jobs.write_stub(scripts, key, plugin_dir=str(_plugin_dir()), data_dir=str(rt.data_dir))
@@ -423,7 +435,7 @@ def status(rt: Runtime) -> dict[str, Any]:
         out["discovery"] = discovery.status_summary(rt)
     except Exception:  # noqa: BLE001
         out["discovery"] = {"ready": False, "streams": 0}
-    order = ("timezone", "workspace", "areas", "git", "jobs", "discovery")
+    order = ("timezone", "workspace", "areas", "git", "jobs")  # discovery streams are optional
     pending = [k for k in order if k in out and not out[k].get("ready")]
     out["next"] = pending[0] if pending else "all set"
     return out

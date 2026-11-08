@@ -137,6 +137,33 @@ def test_deploy_key_flow(home, workspace, data_dir, tmp_path):
     assert not out["ready"]
 
 
+def test_maintenance_reports_push_failure_once(home, settings, data_dir, workspace, tmp_path):
+    import os
+    from alchemy_task.core import precheck
+    from alchemy_task.core.store import TaskStore
+    from alchemy_task.core.gitops import GitDelivery
+    precheck.maintenance(str(data_dir), settings=settings)  # baseline (assigns the fixture's missing ID)
+    os.rename(tmp_path / "remote.git", tmp_path / "away.git")
+    doc = TaskStore(settings, data_dir).create(title="Water the plants", area="home", due="2026-12-01", research=False)
+    GitDelivery(settings, data_dir).deliver([TaskStore(settings, data_dir).rel(doc.path)], "x")
+    first = precheck.maintenance(str(data_dir), settings=settings)
+    assert "not pushed" in first
+    assert precheck.maintenance(str(data_dir), settings=settings) == ""  # same failure: silent
+    os.rename(tmp_path / "away.git", tmp_path / "remote.git")
+    fixed = precheck.maintenance(str(data_dir), settings=settings)
+    assert "Pushed task changes" in fixed
+    assert precheck.maintenance(str(data_dir), settings=settings) == ""
+    broken = dataclasses.replace(settings, workspace_root=str(tmp_path / "gone"))
+    assert "hourly check failed" in precheck.maintenance(str(data_dir), settings=broken)
+    assert precheck.maintenance(str(data_dir), settings=broken) == ""
+
+
+def test_remote_not_replaced_without_permission(home, workspace, data_dir):
+    make_ctx(data_dir, workspace_root=str(workspace))
+    out = call(action="git_check", remote_url="git@github.com:else/where.git")
+    assert out["needs"] == "setup" and "already pushes" in out["message"]
+
+
 def test_stubs_run_silently_and_report(home, settings, data_dir, workspace, tmp_path):
     from pathlib import Path
     plugin = Path(sf.__file__).resolve().parent

@@ -294,6 +294,7 @@ SETUP_SCHEMA = {
         "git_remote": {"type": "string"},
         "git_branch": {"type": "string"},
         "remote_url": {"type": "string", "description": "git_check: set the remote URL (an empty private repo)."},
+        "replace_remote": {"type": "boolean", "description": "git_check: change an existing remote (user asked)."},
         "user_approved": {"type": "boolean", "description": "jobs_create: true only after the user said yes."}},
         "required": ["action"]},
 }
@@ -521,7 +522,26 @@ TOOLS = (
 )
 
 
+SWEEP_SCHEMA = {
+    "name": "task_research_sweep",
+    "description": "Alchemy Task scheduled sweep only: research tasks that are waiting or whose research stalled, "
+                   "and wait for the results.",
+    "parameters": {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 8}}},
+}
+
+
+@_guard
+def task_research_sweep(args: dict[str, Any], **_: Any) -> str:
+    from . import research_agent
+    result = research_agent.recover(Runtime(), limit=int(args.get("limit") or 3), wait_seconds=300)
+    done = sum(1 for s in result["started"] if s.get("research") == "complete")
+    return _ok(**result, message=f"{result['queued']} waiting; started {len(result['started'])}, {done} finished.")
+
+
 def register_tools(ctx: Any) -> None:
     for schema, handler, emoji in TOOLS:
         ctx.register_tool(name=schema["name"], toolset=TOOLSET, schema=schema, handler=handler,
                           description=schema["description"], emoji=emoji)
+    # The scheduled sweep gets only this tool (plus research tools), not setup or teardown.
+    ctx.register_tool(name="task_research_sweep", toolset="alchemy-task-sweep", schema=SWEEP_SCHEMA,
+                      handler=task_research_sweep, description=SWEEP_SCHEMA["description"], emoji="⚗️")

@@ -9,6 +9,7 @@ provides_tools:
   - task_update
   - task_find
   - task_research
+  - task_research_sweep
   - task_work_start
   - task_checkpoint
   - task_setup
