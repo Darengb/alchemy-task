@@ -36,6 +36,84 @@ def prepare(store,run,cid):
     return attempt
 
 
+def _completed_for_review(tmp_path):
+    import datetime as dt
+    store, run, items = setup(tmp_path)
+    a = prepare(store, run, items[0]['candidate_id']); token = a['token']
+    start = dt.datetime.now(dt.timezone.utc)
+    store.mark_running(run, token, started_at=start.isoformat(), deadline_utc=(start + dt.timedelta(minutes=30)).isoformat())
+    b = bundle(); b['candidate_id'] = a['candidate_id']
+    receipt = store.spool_payload(run, token, b)
+    store.observe_terminal(run, token, state='SUCCEEDED', receipt={'state': 'SUCCEEDED'})
+    read_all(store, run, receipt['resource'], 'parent')
+    return store, run, a, b, receipt
+
+
+@pytest.mark.parametrize('closed', ['submitted', 'terminal_observed', 'rejected_retryable', 'accepted_bundle'])
+def test_running_replay_never_regresses_workflow(tmp_path, closed):
+    store, run, a, b, receipt = _completed_for_review(tmp_path); token = a['token']
+    if closed == 'submitted':
+        # A separate attempt without a terminal observation.
+        store, run, items = setup(tmp_path / 'submitted'); a = prepare(store, run, items[0]['candidate_id']); token = a['token']
+        import datetime as dt
+        start = dt.datetime.now(dt.timezone.utc)
+        store.mark_running(run, token, started_at=start.isoformat(), deadline_utc=(start + dt.timedelta(minutes=30)).isoformat())
+        b = bundle(); b['candidate_id'] = a['candidate_id']; store.spool_payload(run, token, b)
+    elif closed == 'rejected_retryable':
+        store.reject_attempt(run, token, reason='Ownership contradicts primary', retryable=True, semantic=True)
+    elif closed == 'accepted_bundle':
+        store.accept_attempt(run, token, payload_sha256=receipt['payload_sha256'], assessment={'accepted': True, 'reason': 'Checked'}, reader='parent')
+    saved = store.get_attempt(run, token)
+    store.mark_running(run, token, started_at=saved['started_at'], deadline_utc=saved['deadline_utc'])
+    assert store.get_attempt(run, token)['state'] == closed
+    if closed == 'rejected_retryable':
+        with pytest.raises(m.UserError):
+            store.accept_attempt(run, token, payload_sha256=receipt['payload_sha256'], assessment={'accepted': True, 'reason': 'Changed mind'}, reader='parent')
+    if closed == 'accepted_bundle': store.recover_bundles(run)
+
+
+@pytest.mark.parametrize('multipart', [False, True])
+def test_committed_spool_crash_is_immutable_before_recovery(tmp_path, monkeypatch, multipart):
+    store, run, items = setup(tmp_path); a = prepare(store, run, items[0]['candidate_id']); token = a['token']
+    b = bundle(); b['candidate_id'] = a['candidate_id']; raw = 'prefix ```json\n' + json.dumps(b) + '\n``` suffix'
+    if multipart:
+        store.begin_upload(run, token, total_bytes=len(raw.encode()), sha256=hashlib.sha256(raw.encode()).hexdigest(), part_count=1)
+        store.upload_part(run, token, index=0, content=raw)
+    real = store._save
+    monkeypatch.setattr(store, '_save', lambda *args: (_ for _ in ()).throw(OSError('checkpoint crash')))
+    with pytest.raises(OSError):
+        store.commit_upload(run, token) if multipart else store.spool_payload(run, token, raw)
+    monkeypatch.setattr(store, '_save', real)
+    path = store.run_dir(run) / 'spool' / (token + '.receipt.json'); receipt = path.read_bytes()
+    changed = json.loads(json.dumps(b)); changed['workstreams'][0]['title'] = 'Changed committed facts'
+    recovered = m.DiscoveryStore(store.state_root)
+    with pytest.raises(m.UserError): recovered.spool_payload(run, token, changed)
+    # Same parsed object but different wrapper is also a transport conflict.
+    with pytest.raises(m.UserError): recovered.spool_payload(run, token, json.dumps(b))
+    same = recovered.commit_upload(run, token) if multipart else recovered.spool_payload(run, token, raw)
+    assert same == json.loads(receipt)
+    assert path.read_bytes() == receipt
+    recovered.recover_spools(run)
+    assert recovered.get_attempt(run, token)['payload'] == same
+
+
+@pytest.mark.parametrize('operation', ['reject', 'fence', 'reserve'])
+def test_pending_accept_intent_excludes_rejection_fencing_and_new_ordinal(tmp_path, monkeypatch, operation):
+    store, run, a, b, receipt = _completed_for_review(tmp_path); token = a['token']
+    real = store._materialize_bundle_locked
+    monkeypatch.setattr(store, '_materialize_bundle_locked', lambda *args: (_ for _ in ()).throw(OSError('intent crash')))
+    with pytest.raises(OSError):
+        store.accept_attempt(run, token, payload_sha256=receipt['payload_sha256'], assessment={'accepted': True, 'reason': 'Checked'}, reader='parent')
+    monkeypatch.setattr(store, '_materialize_bundle_locked', real)
+    with pytest.raises(m.UserError, match='intent'):
+        if operation == 'reject': store.reject_attempt(run, token, reason='Changed mind', retryable=True, semantic=True)
+        elif operation == 'fence': store.fence_attempt(run, token, reason='execution_unknown')
+        else: store.reserve_attempt(run, a['candidate_id'], owner_session='parent')
+    store.recover_bundles(run)
+    assert store.get_attempt(run, token)['state'] == 'accepted_bundle'
+    assert len(store.get_run(run)['attempts']) == 1
+
+
 def test_ledger_no_truncation_cohorts_immutable_revisions_and_modes(tmp_path):
     store,run,items=setup(tmp_path,201)
     assert len(items)==201

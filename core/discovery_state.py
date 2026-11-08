@@ -326,12 +326,17 @@ class DiscoveryStore:
             boundary = max(boundary, end)
         return boundary == resource['total_bytes']
 
+    def _assert_no_accept_intent(self, run_id: str, cid: str) -> None:
+        if (self.run_dir(run_id) / 'commits' / (_name(cid) + '.intent.json')).exists():
+            raise UserError('accepted bundle intent must settle before another transition')
+
     def reserve_attempt(self, run_id: str, cid: str, *, owner_session: str, daily_limit: int = 50) -> dict[str, Any]:
         if type(daily_limit) is not int or daily_limit < 0:
             raise UserError('daily limit must be non-negative')
         with self._lock(self._run_lock_name(run_id)):
             ledger = self._load(run_id, open_only=True)
             item = self._candidate(ledger, cid)
+            self._assert_no_accept_intent(run_id, cid)
             if not ledger['index_revision'] or item.get('parent_candidate_id') or item['prefilter_disposition'] != 'research' or item.get('decomposition_state') == 'complete':
                 raise UserError('candidate is not eligible for a fresh attempt')
             previous = [a for a in ledger['attempts'].values() if a['candidate_id'] == cid]
@@ -418,14 +423,16 @@ class DiscoveryStore:
     def mark_running(self, run_id: str, token: str, *, started_at: str, deadline_utc: str) -> dict[str, Any]:
         with self._lock(self._run_lock_name(run_id)):
             ledger = self._load(run_id, open_only=True)
-            attempt = self._live_attempt(ledger, token)
+            attempt = self._live_attempt(ledger, token, check_deadline=False)
             if not attempt['handle']:
                 raise UserError('running requires handle')
             if attempt.get('started_at') and (attempt['started_at'] != started_at or attempt['deadline_utc'] != deadline_utc):
                 raise UserError('execution start/deadline is immutable')
             if dt.datetime.fromisoformat(started_at).tzinfo is None or dt.datetime.fromisoformat(deadline_utc).tzinfo is None:
                 raise UserError('execution dates require timezone')
-            attempt.update(started_at=started_at, deadline_utc=deadline_utc, state='RUNNING')
+            attempt.update(started_at=started_at, deadline_utc=deadline_utc)
+            if attempt['state'] in {'launch_intent', 'handle_bound', 'RUNNING'} and not attempt['terminal'] and not attempt['payload'] and not attempt.get('rejection'):
+                attempt['state'] = 'RUNNING'
             self._save(run_id, ledger)
             return attempt
 
@@ -437,6 +444,7 @@ class DiscoveryStore:
             attempt = ledger['attempts'].get(token)
             if not attempt:
                 raise UserError('unknown attempt')
+            self._assert_no_accept_intent(run_id, attempt['candidate_id'])
             if attempt['state'] == 'accepted_bundle':
                 raise UserError('accepted attempt cannot be fenced')
             attempt.update(fenced=True, state=reason, fence_reason=reason, cancellation=copy.deepcopy(cancellation), fenced_at=now())
@@ -481,6 +489,7 @@ class DiscoveryStore:
             attempt = ledger['attempts'].get(token)
             if not attempt or not attempt['terminal'] or attempt['state'] == 'accepted_bundle':
                 raise UserError('rejection requires terminal unaccepted attempt')
+            self._assert_no_accept_intent(run_id, attempt['candidate_id'])
             attempt.update(state='rejected_retryable' if retryable and attempt['ordinal'] < 2 else 'exhausted', rejection={'reason': reason, 'retryable': bool(retryable), 'semantic': semantic})
             if semantic:
                 attempt['evidence']['semantic'] = 'rejected'
@@ -504,6 +513,17 @@ class DiscoveryStore:
         if len(data) > MAX_BUNDLE_BYTES:
             raise UserError('serialized research bundle exceeds shared limit')
         digest = _hash(data)
+        committed = read_json(self.run_dir(run_id) / 'spool' / (token + '.receipt.json'))
+        if committed:
+            saved = (self.run_dir(run_id) / 'spool' / (token + '.json')).read_bytes()
+            original_transport = (self.run_dir(run_id) / 'resources' / committed['transport_sha256']).read_bytes()
+            if committed.get('run_id') != run_id or committed.get('token') != token or committed.get('candidate_id') != attempt['candidate_id'] or _hash(saved) != committed['payload_sha256'] or len(saved) != committed['total_bytes'] or _hash(original_transport) != committed['transport_sha256']:
+                raise UserError('committed spool bytes or binding conflict')
+            if committed['payload_sha256'] != digest or committed['transport_sha256'] != _hash(transport):
+                raise UserError('committed payload is immutable')
+            if attempt['payload'] and attempt['payload'] != committed:
+                raise UserError('committed receipt and ledger conflict')
+            return committed
         if attempt['payload']:
             if attempt['payload']['payload_sha256'] != digest or attempt['payload']['transport_sha256'] != _hash(transport):
                 raise UserError('committed payload is immutable')
@@ -682,7 +702,7 @@ class DiscoveryStore:
         with self._lock(self._run_lock_name(run_id)):
             ledger = self._load(run_id, open_only=True)
             attempt = self._live_attempt(ledger, token, check_deadline=False)
-            if attempt['state'] in {'rejected_retryable', 'exhausted'}:
+            if attempt['state'] in {'rejected_retryable', 'exhausted'} or attempt.get('rejection') or attempt['evidence'].get('semantic') == 'rejected':
                 raise UserError('rejected attempt requires a fresh child, not changed acceptance')
             if not attempt['terminal'] or attempt['terminal']['state'] != 'SUCCEEDED' or not attempt['payload']:
                 raise UserError('acceptance requires completed successful execution and saved full payload')
