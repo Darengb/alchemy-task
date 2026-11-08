@@ -185,7 +185,9 @@ Setup fills them in for you.
   the paired phone you choose, reads only the list you choose, and writes only reminders it created. Each new
   reminder's notes hold a short marker with the task's ID. Mappings and pending phone requests are stored in
   plugin data. The phone answers only while the Hermes app is open; there is no background sync. Requires the
-  Hermes mobile app (beta) and its device-access connector.
+  Hermes mobile app (beta) and its device-access connector. Reminders has no "only if unchanged" write, so if
+  you edit the same reminder field on the phone in the moment between Alchemy Task reading and writing it,
+  the phone edit can be overwritten; changes made at other times are merged or shown as conflicts.
 - **Setup writes:** plugin settings through Hermes's plugin settings API; Hermes's own `timezone` only if you
   agree during setup; a new workspace folder and Git repository if you start fresh; a
   `.alchemy-task-owner` marker in the workspace (listed in `.git/info/exclude`) so two installs do not

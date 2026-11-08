@@ -314,6 +314,46 @@ def test_disable_fences_and_cancelled_is_left_alone(ctx, phone, settings, data_d
     assert ios_call()["needs"] == "setup"
 
 
+def test_done_reopen_done_really_completes(ctx, phone, settings, data_dir):
+    store = TaskStore(settings, data_dir)
+    t = mk(settings, data_dir, "Toggle me")
+    setup_ok(["home"])
+    ios_call()
+    for status, extra in (("done", {}), ("open", {"reopen": True}), ("done", {})):
+        store.update(t.task_id, {"status": status, **extra})
+        ios_call()
+    assert phone_task(phone, "Toggle me")["completed"]
+    ios_call()
+    assert tf.parse_file(t.path).fm["status"] == "done"
+
+
+def test_transient_check_failure_does_not_duplicate(ctx, phone, settings, data_dir):
+    mk(settings, data_dir, "Dup check")
+    setup_ok(["home"])
+    phone.writes_stall = True
+    ios_call()
+    real = phone.dispatch
+    phone.dispatch = lambda n, a: json.dumps({"error": "temporarily unavailable"}) if n == "mobile_request_result" \
+        else real(n, a)
+    ios_call()
+    phone.dispatch = real
+    phone.writes_stall = False
+    phone.come_online()
+    ios_call()
+    assert [r["title"] for r in phone.reminders.values()].count("Dup check") == 1
+
+
+def test_refused_access_is_reported_not_waiting(ctx, phone, settings, data_dir):
+    mk(settings, data_dir, "Refused")
+    setup_ok(["home"])
+    real = phone.dispatch
+    phone.dispatch = lambda n, a: json.dumps({"status": "unavailable", "error": "app too old",
+                                              "message": "Update Hermes Agent on the iPhone."}) \
+        if n == "mobile_reminder_create" else real(n, a)
+    out = ios_call()
+    assert "refused" in out["message"] and "Waiting" not in out["message"] and not out["synced"]
+
+
 def test_slash_command_uses_same_engine(ctx, phone, settings, data_dir):
     from alchemy_task.commands import task_command
     mk(settings, data_dir, "Mail the birthday card")

@@ -53,10 +53,15 @@ def load(rt: Runtime) -> dict[str, Any]:
     return st
 
 
-def save(rt: Runtime, st: dict[str, Any]) -> None:
+def save(rt: Runtime, st: dict[str, Any], *, keep_disk_config: bool = False) -> None:
     path = _path(rt)
     path.parent.mkdir(parents=True, exist_ok=True)
     with workspace_lock(rt.data_dir, "ios-state"):
+        if keep_disk_config:  # a sync never overwrites a disable/setup made while it ran
+            try:
+                st["config"] = json.loads(path.read_text()).get("config", st["config"])
+            except (OSError, ValueError):
+                pass
         tmp = path.with_suffix(".tmp")
         with open(tmp, "w") as fh:
             json.dump(st, fh, indent=1, sort_keys=True)
@@ -208,7 +213,7 @@ def resolve(rt: Runtime, task: str, choices: dict[str, str]) -> dict[str, Any]:
         raise SyncError("that task has no Reminders conflict")
     m = st["mappings"][doc.task_id]
     for field, choice in choices.items():
-        if field not in conflict:
+        if field not in conflict or field.startswith("_"):
             continue
         if choice == "local":
             m["base"][field] = conflict[field]["native"]  # only the local side now differs -> it is pushed
@@ -217,7 +222,7 @@ def resolve(rt: Runtime, task: str, choices: dict[str, str]) -> dict[str, Any]:
         else:
             raise SyncError("choose 'local' or 'native' for each field")
         conflict.pop(field)
-    if not conflict:
+    if not [k for k in conflict if not k.startswith("_")]:
         st["conflicts"].pop(doc.task_id)
     save(rt, st)
     return {"resolved": sorted(choices), "message": "Saved. Run /task ios (or say \"sync reminders\") to apply it."}
@@ -239,14 +244,15 @@ def confirm_uncertain(rt: Runtime, task: str) -> dict[str, Any]:
 # ------------------------------------------------------------------ sync
 
 def sync(rt: Runtime, *, budget: float = BUDGET_SECONDS) -> dict[str, Any]:
-    st = load(rt)
-    cfg = st["config"]
-    if not cfg:
-        return {"needs": "setup", "message": "Reminders sync is not set up yet. Load the skill alchemy-task:tasks "
-                "and run task_ios with action setup."}
-    if not cfg.get("enabled"):
-        return {"needs": "setup", "message": "Reminders sync is turned off. Turn it on again with task_ios setup."}
     with _lease(rt):
+        st = load(rt)
+        cfg = st["config"]
+        if not cfg:
+            return {"needs": "setup", "message": "Reminders sync isn't set up yet. Say \"set up iPhone reminders\" "
+                    "to choose which tasks go to Reminders."}
+        if not cfg.get("enabled"):
+            return {"needs": "setup", "message": "Reminders sync is turned off. Say \"set up iPhone reminders\" to "
+                    "turn it back on."}
         return _sync(rt, st, cfg, time.monotonic() + budget)
 
 
@@ -272,11 +278,18 @@ def _sync(rt: Runtime, st: dict[str, Any], cfg: dict[str, Any], deadline: float)
     for tid in dupes:
         rep["problems"].append(f"task ID {tid[:8]} is used by {len(ids[tid])} files; run \"check my task files\"")
     by_id = {tid: docs[0] for tid, docs in ids.items() if tid not in dupes}
+    no_id = [t.title for t in in_scope if not t.task_id]
+    if no_id:
+        rep["problems"].append(f"{len(no_id)} task(s) have no ID yet and were skipped (say \"fix my task files\")")
 
     # 1. Resume phone operations sent earlier.
     in_flight = 0
     for key, op in list(st["ops"].items()):
         if op.get("state") == "uncertain":
+            continue
+        fenced = op["task_id"] not in by_id or op["args"].get("device_id") != cfg["device_id"]
+        if op.get("state") == "dispatching" and fenced:  # scope or phone changed: never re-send
+            op["state"] = "uncertain" if op["kind"] == "create" else "dropped"
             continue
         if op.get("state") == "dispatching":  # crashed between recording and learning the request ID
             if time.time() - op["created"] > UNKNOWN_DISPATCH_MAX_AGE:
@@ -294,7 +307,7 @@ def _sync(rt: Runtime, st: dict[str, Any], cfg: dict[str, Any], deadline: float)
     remote, complete = _read_list(rt, st, cfg, rep, left)
     if not complete:
         rep["waiting"] += 1
-        save(rt, st)
+        save(rt, st, keep_disk_config=True)
         return _finish(rt, st, rep, changed_paths, waiting=True)
 
     # 3. Recover uncertain creates by their marker; never guess from titles.
@@ -343,13 +356,15 @@ def _sync(rt: Runtime, st: dict[str, Any], cfg: dict[str, Any], deadline: float)
             st["conflicts"].pop(tid, None)
         if extras.get("native_due"):
             m["native_due"] = extras["native_due"]
+        else:
+            m.pop("native_due", None)
         if res["pull"]:
             if _pull(rt, store, doc, m, res["pull"], extras, rep, changed_paths, tz):
                 rep["pulled"] += 1
         if res["push"] and left() > 2 and in_flight < MAX_IN_FLIGHT and rep["updated"] + rep["created"] < MAX_WRITES:
             if "due" in res["push"] and m.get("native_due"):
-                rep["skipped"].append(f"{doc.title}: replaced the reminder's time ({m.pop('native_due')}) with the "
-                                      "new date")
+                what = "the new date" if res["push"]["due"] else "no date"
+                rep["skipped"].append(f"{doc.title}: replaced the reminder's time ({m.pop('native_due')}) with {what}")
             in_flight += _push(rt, st, cfg, tid, m, res["push"], rep, left)
 
     # 5. Create reminders for open tasks without one.
@@ -359,6 +374,10 @@ def _sync(rt: Runtime, st: dict[str, Any], cfg: dict[str, Any], deadline: float)
             continue
         ok, why = rm.eligible_for_create(doc.fm, today)
         if not ok:
+            continue
+        existing = by_marker.get(tid)
+        if existing:  # created earlier but our record was lost: adopt it instead of making another
+            st["mappings"][tid] = _mapping(cfg, existing, rm.remote_projection(existing, tz)[0], doc)
             continue
         if left() <= 2 or in_flight >= MAX_IN_FLIGHT or rep["updated"] + rep["created"] >= MAX_WRITES:
             rep["skipped"].append("more reminders to create; run /task ios again")
@@ -418,12 +437,12 @@ def _read_list(rt: Runtime, st: dict[str, Any], cfg: dict[str, Any], rep: dict[s
 def _send(rt: Runtime, st: dict[str, Any], op: dict[str, Any], left) -> dict[str, Any]:
     """Record the operation durably, then send it. Returns the phone's response."""
     st["ops"][op["key"]] = op
-    save(rt, st)
+    save(rt, st, keep_disk_config=True)
     resp = _call(rt, op["tool"], {**op["args"], "wait_seconds": min(10, max(0, left() - 1))})
     if resp.get("id"):
         op["request_id"] = resp["id"]
     op["state"] = "sent" if op.get("request_id") else "dispatching"
-    save(rt, st)
+    save(rt, st, keep_disk_config=True)
     return resp
 
 
@@ -436,7 +455,7 @@ def _push(rt, st, cfg, tid, m, push, rep, left) -> int:
             args["completed"] = False
         op = {"kind": "update", "task_id": tid, "tool": "mobile_reminder_update", "created": time.time(),
               "push": push, "title": m.get("title")}
-        op["key"] = args["idempotency_key"] = _key("update", tid, m["reminder_id"], fields, completion, m["base"])
+        op["key"] = args["idempotency_key"] = _key("update", tid, m["reminder_id"], fields, completion, uuid.uuid4().hex)
         op["args"] = args
         resp = _send(rt, st, op, left)
         _settle(rt, st, op["key"], op, resp, rep, None, None, None, None)
@@ -445,7 +464,7 @@ def _push(rt, st, cfg, tid, m, push, rep, left) -> int:
         args = _phone_args(cfg, id=m["reminder_id"])
         op = {"kind": "complete", "task_id": tid, "tool": "mobile_reminder_complete", "created": time.time(),
               "push": {"completed": True}, "title": m.get("title")}
-        op["key"] = args["idempotency_key"] = _key("complete", tid, m["reminder_id"], m["base"])
+        op["key"] = args["idempotency_key"] = _key("complete", tid, m["reminder_id"], uuid.uuid4().hex)
         op["args"] = args
         resp = _send(rt, st, op, left)
         _settle(rt, st, op["key"], op, resp, rep, None, None, None, None)
@@ -475,11 +494,20 @@ def _settle(rt, st, key, op, resp, rep, by_id, changed_paths, store, tz) -> None
     if resp.get("id") and not op.get("request_id"):
         op["request_id"] = resp["id"]
         op["state"] = "sent"
+    if not resp.get("id") and not op.get("request_id") and status == "unavailable":
+        op["state"] = "dropped"  # refused before it was recorded: no key used, nothing ran
+        rep["failed"] += 1
+        rep["unavailable"] = str(resp.get("message") or resp.get("error") or "Reminders access is not available")
+        return
     if not resp.get("id") and not op.get("request_id") and status != "no_connector":
         # No answer at all: the phone may or may not have it. Keep the same key; re-sending returns the
         # original request instead of making a second one.
         op["state"] = "dispatching"
         rep["waiting"] += 1
+        return
+    if op.get("request_id") and resp.get("id") != op["request_id"] and "not found" not in str(resp.get("error")):
+        rep["waiting"] += 1  # could not read the request's state this time; it may still run. Ask again later.
+        rep["problems"].append(f"\"{op.get('title')}\": could not check on the phone right now")
         return
     if status in ("pending", "running"):
         rep["waiting"] += 1
@@ -551,6 +579,9 @@ def _pull(rt, store, doc, m, pull, extras, rep, changed_paths, tz) -> bool:
         else:
             prior = m.get("prior_status") or "open"
             if prior not in ("open", "in-progress"):
+                if prior == "waiting":
+                    rep["skipped"].append(f"{doc.title}: reopened as open (it was waiting before; say what it is "
+                                          "waiting on to set that again)")
                 prior = "open"
             changes.update(status=prior, reopen=True)
             notes.append("reopened")
@@ -578,7 +609,7 @@ def _finish(rt: Runtime, st: dict[str, Any], rep: dict[str, Any], changed_paths:
         rep["git"] = rt.git().deliver(sorted(set(changed_paths)), "task: changes from Apple Reminders")
     st["last_sync"] = {"at": time.time(), "created": rep["created"], "updated": rep["updated"],
                        "pulled": rep["pulled"], "waiting": rep["waiting"]}
-    save(rt, st)
+    save(rt, st, keep_disk_config=True)
     parts = []
     if rep["created"]:
         parts.append(f"{rep['created']} reminder(s) created")
@@ -589,11 +620,21 @@ def _finish(rt: Runtime, st: dict[str, Any], rep: dict[str, Any], changed_paths:
     if rep["conflicts"]:
         parts.append(f"{rep['conflicts']} conflict(s) need a choice")
     pending = sum(1 for op in st["ops"].values() if op.get("state") in ("sent", "dispatching"))
+    git = rep.get("git") or {}
+    git_bad = bool(git) and not git.get("pushed") and git.get("state") not in ("local_only", "no_git")
+    if git_bad:
+        parts.append(f"task changes saved and committed but not pushed ({git.get('error') or git.get('state')})")
+    uncertain = [op["title"] for op in st["ops"].values() if op.get("state") == "uncertain"]
+    if rep.get("unavailable"):
+        parts.append(f"the iPhone refused: {rep['unavailable']}")
     if waiting or pending:
         parts.append(WAITING)
-    elif not parts:
+    elif not parts and not rep["problems"] and not uncertain:
         parts.append("Everything already matches")
+    elif not parts:
+        parts.append("nothing changed, but see the notes below")
     rep["pending"] = pending
     rep["message"] = "Reminders: " + "; ".join(parts) + "."
-    rep["synced"] = not waiting and not pending and not rep["failed"]
+    rep["synced"] = not waiting and not pending and not rep["failed"] and not git_bad and not uncertain \
+        and not rep["conflicts"]
     return rep
