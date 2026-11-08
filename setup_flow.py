@@ -172,6 +172,26 @@ def save(rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
         else:
             value = str(value).strip()
         changes[key] = value
+    if args.get("add_areas") or args.get("remove_areas"):
+        current = list(changes.get("areas") or rt.settings.known_areas())
+        for a in args.get("add_areas") or []:
+            a = validate_area_name(a)
+            if a not in current:
+                current.append(a)
+        for a in args.get("remove_areas") or []:
+            a = validate_area_name(a)
+            if a not in current:
+                raise SetupError(f"{a!r} is not an area")
+            open_tasks = [t for t in TaskStore(rt.settings, rt.data_dir).find(area=a, status="open", limit=5)] \
+                if rt.settings.configured else []
+            if open_tasks:
+                raise SetupError(f"area {a!r} still has open tasks (for example {open_tasks[0].title!r}); move or "
+                                 "close them first")
+            folder = rt.settings.area_dir(a) if rt.settings.configured else None
+            if folder and folder.is_dir() and any(p.suffix == ".md" for p in folder.iterdir()):
+                raise SetupError(f"area {a!r} still has task files in {folder}; it stays listed while they exist")
+            current.remove(a)
+        changes["areas"] = current
     if "timezone" in changes:
         if not _valid_tz(changes["timezone"]):
             raise SetupError(f"unknown timezone {changes['timezone']!r}; use an IANA name like America/New_York")
@@ -198,6 +218,11 @@ def save(rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
         _guard_shared_workspace(rt, changes["workspace_root"], allow_shared=bool(args.get("allow_shared")))
     for key, value in changes.items():
         rt.ctx.set_config(key, value)
+    if rt.settings.configured or changes.get("workspace_root"):
+        root = Path(changes.get("workspace_root") or rt.settings.workspace_root)
+        pattern = changes.get("task_dir") or rt.settings.task_dir
+        for a in args.get("add_areas") or []:
+            (root / pattern.replace("{area}", validate_area_name(a))).mkdir(parents=True, exist_ok=True)
     if "timezone" in changes:
         rt.ctx.state.set("timezone_confirmed", True)
         if args.get("set_hermes_timezone"):

@@ -42,6 +42,15 @@ then they get a letter (W1, B2). Numbers restart at 1 each day; a stream that ru
 counting up until the day ends. Each digest lists only new items; unpicked ones are not shown again but can
 still be added for a week.
 
+## Changing a stream
+
+Change only what the user asks; the rest stays. `discovery_stream` `update` with `frequency`, `time`, `areas`,
+`research_cap`, `add_sources` or `remove_sources`. If several streams exist and it is unclear which one, ask.
+
+**A newly connected source** ("I just connected Gmail"): confirm you can now read it (find the tool, try a
+small read), propose a scope (which labels or senders, or which channels; meeting-transcript emails count as
+`transcript`), and once they agree add it with `add_sources`. Offer `run_now` so they see it working.
+
 ## Running a stream (scheduled job)
 
 1. `discovery_start` with the stream name. Read **only** the listed sources, within the given window, using

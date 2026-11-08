@@ -102,8 +102,14 @@ class Settings:
         if base.is_dir():
             for child in sorted(base.iterdir()):
                 if child.is_dir() and _AREA_RE.match(child.name):
-                    if (child / suffix.lstrip("/")).is_dir() if suffix.strip("/") else True:
-                        found.append(child.name)
+                    folder = child / suffix.lstrip("/") if suffix.strip("/") else child
+                    if not folder.is_dir():
+                        continue
+                    # With a configured list, an extra folder counts only once it holds tasks
+                    # (so a removed, empty area stays removed).
+                    if self.areas and child.name not in self.areas and not any(folder.glob("*.md")):
+                        continue
+                    found.append(child.name)
         return list(dict.fromkeys(found))
 
 

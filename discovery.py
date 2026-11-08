@@ -196,6 +196,8 @@ def update_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
     except (TypeError, ValueError) as exc:
         raise DiscoveryError("research_cap must be a whole number") from exc
     frequency = args.get("frequency") or current.get("frequency") or "daily"
+    if args.get("time") and not args.get("frequency") and frequency not in ("daily", "weekdays"):
+        frequency = "daily"  # "change it to 9 AM" on an hourly stream means once a day at 9 AM
     at = args.get("time") or current.get("time") or "6 PM"
     cron, when = (schedule_for(frequency, at) if (args.get("frequency") or args.get("time"))
                   else (current["schedule"], current["when"]))
@@ -203,10 +205,26 @@ def update_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
     areas = [validate_area_name(a) for a in (args.get("areas") or current["areas"])]
     if [a for a in areas if a not in known]:
         raise DiscoveryError(f"unknown area; known: {', '.join(known)}")
-    sources = current["sources"]
+    sources = list(current["sources"])
     if args.get("sources"):
-        probe = create_args_sources(args["sources"])
-        sources = probe
+        sources = create_args_sources(args["sources"])  # explicit full replacement
+    added, removed = [], []
+    for src in create_args_sources(args.get("add_sources") or []):
+        existing = [i for i, s in enumerate(sources) if s["name"].lower() == src["name"].lower()]
+        if existing:
+            sources[existing[0]] = src
+        else:
+            sources.append(src)
+        added.append(src["name"])
+    for name in args.get("remove_sources") or []:
+        keep = [s for s in sources if s["name"].lower() != str(name).strip().lower()]
+        if len(keep) == len(sources):
+            raise DiscoveryError(f"no source named {name!r} in this stream; sources: "
+                                 f"{', '.join(s['name'] for s in sources)}")
+        sources = keep
+        removed.append(str(name))
+    if not sources:
+        raise DiscoveryError("a stream needs at least one source; remove the stream instead")
     from .setup_flow import _timezone_state
     tz = _timezone_state(rt)["timezone"] or current.get("timezone") or "UTC"
     raw = rt.ctx.dispatch_tool("cronjob_manage", {"action": "update", "job_id": current["job_id"],
@@ -224,7 +242,13 @@ def update_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
                   "areas": areas, "sources": sources,
                   "research_cap": cap})
         _save_streams(rt, streams)
-    return {"stream": _public(s), "message": f"Updated '{s['name']}': {when} ({tz}), still posting to its own chat."}
+    msg = f"Updated '{s['name']}': {when} ({tz}), still posting to its own chat."
+    if added:
+        msg += f" Added source(s): {', '.join(added)}."
+    if removed:
+        msg += f" Removed source(s): {', '.join(removed)}."
+    msg += " Sources now: " + "; ".join(f"{x['name']} ({x['scope']})" for x in sources) + "."
+    return {"stream": _public(s), "message": msg}
 
 
 def create_args_sources(raw_sources: list[Any]) -> list[dict[str, str]]:

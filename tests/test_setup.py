@@ -116,6 +116,15 @@ def test_check_files_and_push_actions(home, workspace, data_dir, settings):
     assert call(action="push")["message"].startswith("Everything is pushed")
 
 
+def test_add_and_remove_areas(home, workspace, data_dir):
+    ctx = make_ctx(data_dir, workspace_root=str(workspace), timezone="America/New_York")
+    out = call(action="save", add_areas=["garden"])
+    assert out["ok"] and ctx.get_config("areas") == ["home", "work", "garden"] and (workspace / "areas/garden/tasks").is_dir()
+    assert call(action="save", remove_areas=["work"])["needs"] == "setup"  # has open tasks
+    out = call(action="save", remove_areas=["garden"])
+    assert out["ok"] and "garden" not in out["receipt"]["areas"]["areas"]
+
+
 def test_existing_vault_inspect(home, workspace, data_dir):
     make_ctx(data_dir)
     out = call(action="inspect", path=str(workspace))

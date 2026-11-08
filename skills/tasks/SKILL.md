@@ -85,7 +85,15 @@ Map what people say to tools; never tell them to type a command when you can do 
 | "change my digest to 7 PM", "make it weekdays only", "stop the work digest" | `discovery_stream` `update` / `remove` (confirm first) |
 | "run my digest now", "check my email for tasks now" | `discovery_stream` `run_now` |
 | "turn off Alchemy Task's schedules", "stop the background jobs", "uninstall" | confirm, then `task_setup` `teardown` with `user_confirmed: true`; for uninstalling, mention `hermes plugins remove alchemy-task` afterwards |
-| "change my timezone / default area / workspace" | `task_setup` `save` |
+| "change my timezone / default area / workspace", "stop researching new tasks by default" | `task_setup` `save` with just that setting |
+| "add a garden area", "I don't need the bakery area any more" | `task_setup` `save` `add_areas` / `remove_areas` |
+| "make the discovery hourly", "change my digest to 9 AM", "weekdays only" | `discovery_stream` `update` with just `frequency` or `time` (a time on an hourly stream makes it daily at that time) |
+| "I just connected Gmail, add it to discovery", "also check #launch in Slack" | load `alchemy-task:discovery`; check you can read it, agree the scope, then `discovery_stream` `update` `add_sources` (never resend the whole list) |
+| "stop checking the newsletter folder" | `discovery_stream` `update` `remove_sources` |
+| "push my tasks to a different GitHub repo" | `task_setup` `git_check` `remote_url` (+ `replace_remote` once they confirm) |
+
+Change one setting at a time and keep everything else as it is. Confirm what changed, and for schedules say the
+new time in the user's timezone.
 
 Overdue follows Google Tasks: a task is overdue when its date has passed (its work date, when the user set a
 separate one). Rescheduling takes it off the overdue list. When listing overdue tasks, offer to reschedule

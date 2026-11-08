@@ -327,7 +327,10 @@ SETUP_SCHEMA = {
         "create_workspace": {"type": "boolean", "description": "save: create a new workspace folder and Git repo."},
         "allow_shared": {"type": "boolean"},
         "task_dir": {"type": "string", "description": "Folder pattern with {area}, default areas/{area}/tasks."},
-        "areas": {"type": "array", "items": {"type": "string"}},
+        "areas": {"type": "array", "items": {"type": "string"}, "description": "Full list (setup). To change one, "
+                                                                              "use add_areas / remove_areas."},
+        "add_areas": {"type": "array", "items": {"type": "string"}},
+        "remove_areas": {"type": "array", "items": {"type": "string"}},
         "default_area": {"type": "string"},
         "timezone": {"type": "string", "description": "IANA name the user confirmed, e.g. America/New_York."},
         "set_hermes_timezone": {"type": "boolean", "description": "Also set Hermes's own timezone (when it was unset)."},
@@ -401,13 +404,18 @@ DISCOVERY_STREAM_SCHEMA = {
     "description": (
         "Manage discovery streams (load skill alchemy-task:discovery first). A stream reads approved sources on a "
         "schedule and posts numbered task suggestions into the chat it was created in. Actions: list, create "
-        "(call from the chat that should receive the digest, after the user approved), update, remove, "
+        "(call from the chat that should receive the digest, after the user approved), update (change one thing: "
+        "frequency, time, areas, research_cap, add_sources, remove_sources; the rest stays), remove, "
         "run_now (start the stream's job immediately)."),
     "parameters": {"type": "object", "properties": {
         "action": {"type": "string", "enum": ["list", "create", "update", "remove", "run_now"]},
         "name": {"type": "string", "description": "Stream name, e.g. 'work'."},
         "areas": {"type": "array", "items": {"type": "string"}},
-        "sources": {"type": "array", "items": _SOURCE},
+        "sources": {"type": "array", "items": _SOURCE, "description": "create: all sources. update: replaces the "
+                                                                       "whole list; prefer add_sources/remove_sources."},
+        "add_sources": {"type": "array", "items": _SOURCE, "description": "update: add (or replace by name) sources, "
+                                                                          "keeping the others."},
+        "remove_sources": {"type": "array", "items": {"type": "string"}, "description": "update: source names to drop."},
         "frequency": {"type": "string", "enum": ["daily", "weekdays", "hourly", "every 2 hours", "every 3 hours",
                                                  "every 4 hours"]},
         "time": {"type": "string", "description": "Local time for daily/weekdays, e.g. '6 PM'."},

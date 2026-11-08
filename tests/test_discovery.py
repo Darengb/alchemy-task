@@ -187,6 +187,25 @@ def test_update_keeps_schedule_parts_and_chat(ctx):
     assert out["stream"]["when"] == "weekdays at 8:00 AM"
 
 
+def test_update_one_thing_at_a_time(ctx):
+    make_stream()
+    jid = next(iter(ctx.cron))
+    out = tool(task_tools.discovery_stream, action="update", name="work", frequency="hourly", user_approved=True)
+    assert out["stream"]["when"] == "hourly" and ctx.cron[jid]["schedule"] == "5 * * * *"
+    out = tool(task_tools.discovery_stream, action="update", name="work", time="9 AM", user_approved=True)
+    assert out["stream"]["when"] == "daily at 9:00 AM"
+    gmail = {"name": "Gmail", "type": "email", "scope": "inbox, not newsletters", "method": "gmail MCP"}
+    out = tool(task_tools.discovery_stream, action="update", name="work", add_sources=[gmail], user_approved=True)
+    names = [s["name"] for s in out["stream"]["sources"]]
+    assert names == ["Work email", "Team chat", "Gmail"] and "Added source(s): Gmail" in out["message"]
+    out = tool(task_tools.discovery_stream, action="update", name="work", remove_sources=["Team chat"],
+               user_approved=True)
+    assert [s["name"] for s in out["stream"]["sources"]] == ["Work email", "Gmail"]
+    assert tool(task_tools.discovery_stream, action="update", name="work", remove_sources=["Nope"],
+                user_approved=True)["needs"] == "discovery"
+    assert out["stream"]["when"] == "daily at 9:00 AM" and list(ctx.cron) == [jid]
+
+
 def test_remove_and_teardown(ctx):
     make_stream()
     assert tool(task_tools.discovery_stream, action="remove", name="work")["ok"] and ctx.cron == {}
