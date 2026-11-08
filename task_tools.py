@@ -327,6 +327,145 @@ def task_setup(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
     return _fail("fix_call", "unknown action")
 
 
+_SOURCE = {"type": "object", "properties": {
+    "name": {"type": "string", "description": "Short label, e.g. 'Work email' or 'Team Slack'."},
+    "type": {"type": "string", "enum": ["email", "chat", "transcript", "meeting_notes", "document", "tracker", "other"]},
+    "scope": {"type": "string", "description": "Exactly what to read: label, channels, sender filter, folder."},
+    "method": {"type": "string", "description": "Which tool or skill reads it (e.g. gmail MCP, slack skill)."}},
+    "required": ["name", "type", "scope", "method"]}
+
+DISCOVERY_STREAM_SCHEMA = {
+    "name": "discovery_stream",
+    "description": (
+        "Manage discovery streams (load skill alchemy-task:discovery first). A stream reads approved sources on a "
+        "schedule and posts numbered task suggestions into the chat it was created in. Actions: list, create "
+        "(call from the chat that should receive the digest, after the user approved), update, remove, "
+        "run_now (start the stream's job immediately)."),
+    "parameters": {"type": "object", "properties": {
+        "action": {"type": "string", "enum": ["list", "create", "update", "remove", "run_now"]},
+        "name": {"type": "string", "description": "Stream name, e.g. 'work'."},
+        "areas": {"type": "array", "items": {"type": "string"}},
+        "sources": {"type": "array", "items": _SOURCE},
+        "frequency": {"type": "string", "enum": ["daily", "weekdays", "hourly", "every 2 hours", "every 3 hours",
+                                                 "every 4 hours"]},
+        "time": {"type": "string", "description": "Local time for daily/weekdays, e.g. '6 PM'."},
+        "deliver": {"type": "string", "description": "Default origin (this chat). For a Telegram topic: "
+                                                     "telegram:<chat_id>:<thread_id>."},
+        "research_cap": {"type": "integer", "description": "Candidates researched per day (default 50)."},
+        "user_approved": {"type": "boolean"}},
+        "required": ["action"]},
+}
+
+DISCOVERY_START_SCHEMA = {
+    "name": "discovery_start",
+    "description": "Discovery runs only: get a stream's approved sources, time window, research budget, already "
+                   "proposed source IDs and open tasks, before reading the sources.",
+    "parameters": {"type": "object", "properties": {"stream": {"type": "string"}}, "required": ["stream"]},
+}
+
+DISCOVERY_SUBMIT_SCHEMA = {
+    "name": "discovery_submit",
+    "description": "Discovery runs only: submit candidate tasks found in the sources, plus coverage for every source. "
+                   "Returns the numbered digest; reply with it unchanged.",
+    "parameters": {"type": "object", "properties": {
+        "stream": {"type": "string"},
+        "candidates": {"type": "array", "items": {"type": "object", "properties": {
+            "title": {"type": "string", "description": "Imperative task title."},
+            "area": {"type": "string"},
+            "source_type": {"type": "string", "enum": ["email", "chat", "transcript", "meeting_notes", "document",
+                                                       "tracker", "other"]},
+            "source": {"type": "string", "description": "Human label: 'email from Sam', '#launch thread'."},
+            "source_id": {"type": "string", "description": "Stable ID: message ID, thread permalink, file path."},
+            "link": {"type": "string"},
+            "summary": {"type": "string", "description": "What was asked or committed, by whom."},
+            "why": {"type": "string", "description": "One line: why this is the user's task."},
+            "due_hint": {"type": "string", "description": "YYYY-MM-DD only if the source states or implies it."},
+            "research_notes": {"type": "string", "description": "Optional, within today's research budget."}},
+            "required": ["title", "source_id", "summary"]}},
+        "coverage": {"type": "array", "items": {"type": "object", "properties": {
+            "source": {"type": "string"}, "status": {"type": "string", "enum": ["ok", "partial", "failed"]},
+            "note": {"type": "string"}}, "required": ["source", "status"]}}},
+        "required": ["stream", "candidates", "coverage"]},
+}
+
+DISCOVERY_DECIDE_SCHEMA = {
+    "name": "discovery_decide",
+    "description": (
+        "Act on a discovery digest reply: approve numbers to create tasks, dismiss numbers. Example: the user says "
+        "\"1 and 3, skip 2\" -> approve [\"1\",\"3\"], dismiss [\"2\"]. Pass edits per number for due dates, "
+        "areas or titles the user gave."),
+    "parameters": {"type": "object", "properties": {
+        "stream": {"type": "string", "description": "Optional when only one stream has open proposals."},
+        "approve": {"type": "array", "items": {"type": "string"}},
+        "dismiss": {"type": "array", "items": {"type": "string"}},
+        "edits": {"type": "object", "description": "{\"1\": {\"due\": \"2026-11-20\", \"area\": \"work\", "
+                                                   "\"title\": \"...\", \"undated\": false}}"}},
+        "required": []},
+}
+
+
+def _discovery(fn):
+    @_guard
+    def wrapper(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
+        from .discovery import DiscoveryError
+        try:
+            return fn(args, session_id)
+        except DiscoveryError as exc:
+            return _fail("discovery", str(exc))
+    wrapper.__name__ = fn.__name__
+    return wrapper
+
+
+@_discovery
+def discovery_stream(args: dict[str, Any], session_id: str) -> str:
+    from . import discovery as dv
+    rt = Runtime()
+    action = args.get("action")
+    if action == "list":
+        return _ok(streams=[dv._public(s) for s in dv._streams(rt).values()])
+    if action == "create":
+        return _ok(**dv.create_stream(rt, args, session_id))
+    if action == "update":
+        return _ok(**dv.update_stream(rt, args, session_id))
+    if action == "remove":
+        return _ok(**dv.remove_stream(rt, args.get("name", "")))
+    if action == "run_now":
+        s = dv._get(rt, args.get("name", ""))
+        out = rt.ctx.dispatch_tool("cronjob_manage", {"action": "run", "job_id": s["job_id"]})
+        return _ok(started=True, detail=str(out)[:300], message="Started; the digest arrives in its chat shortly.")
+    return _fail("fix_call", "unknown action")
+
+
+@_discovery
+def discovery_start(args: dict[str, Any], session_id: str) -> str:
+    from . import discovery as dv
+    return _ok(**dv.start(Runtime(), args.get("stream", "")))
+
+
+@_discovery
+def discovery_submit(args: dict[str, Any], session_id: str) -> str:
+    from . import discovery as dv
+    out = dv.submit(Runtime(), args.get("stream", ""), args.get("candidates") or [], args.get("coverage") or [])
+    return _ok(**out, message="Reply with the digest text exactly as given, and nothing else.")
+
+
+@_discovery
+def discovery_decide(args: dict[str, Any], session_id: str) -> str:
+    from . import discovery as dv
+    rt = Runtime()
+    out = dv.decide(rt, args, session_id)
+    created = out.pop("created")
+    research_errors = []
+    for doc in created:
+        if (doc.fm.get("enrichment") or {}).get("status") == "pending":
+            research_errors += rt.notify_research(doc, session_id or "")
+    receipt = rt.git().deliver([rt.store().rel(d.path) for d in created], "task: add from discovery") if created \
+        else {}
+    return _ok(**out, git=receipt or None, research_errors=research_errors or None,
+               message=f"Added {len(created)} task(s)" + (f", dismissed {len(out['dismissed'])}" if out["dismissed"]
+                                                          else "") + ". " + (_git_note(receipt) if receipt else ""))
+
+
 RESEARCH_SCHEMA = {
     "name": "task_research",
     "description": (
@@ -375,6 +514,10 @@ TOOLS = (
     (WORK_SCHEMA, task_work_start, "🜁"),
     (CHECKPOINT_SCHEMA, task_checkpoint, "🜃"),
     (SETUP_SCHEMA, task_setup, "⚙️"),
+    (DISCOVERY_STREAM_SCHEMA, discovery_stream, "🜍"),
+    (DISCOVERY_START_SCHEMA, discovery_start, "🜍"),
+    (DISCOVERY_SUBMIT_SCHEMA, discovery_submit, "🜍"),
+    (DISCOVERY_DECIDE_SCHEMA, discovery_decide, "🜍"),
 )
 
 

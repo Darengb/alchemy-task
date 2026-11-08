@@ -12,6 +12,10 @@ provides_tools:
   - task_work_start
   - task_checkpoint
   - task_setup
+  - discovery_stream
+  - discovery_start
+  - discovery_submit
+  - discovery_decide
   - research_skills_list
   - research_skill_view
   - research_capabilities
