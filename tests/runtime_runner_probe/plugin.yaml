@@ -13,6 +13,7 @@ provides_tools:
   - runner_probe_wire
   - runner_probe_late
   - runner_probe_cancel_case
+  - runner_probe_late_case
   - discovery_research_run
   - discovery_research_fetch
   - discovery_research_submit

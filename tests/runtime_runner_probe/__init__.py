@@ -163,6 +163,37 @@ def register(ctx):
         audit('cancel', result)
         return json.dumps(result)
     register_tool('runner_probe_cancel_case', cancel_case, {}, [], 'Actual shortened60s RUNNING cancellation and real late callback fencing, followed by public same-owner reconnect and coordinator-state restart simulation. No service restart.')
+    def late_case(args, session_id='', **kw):
+        import time
+        from .discovery_runner import normalize
+        if not session_id: return json.dumps({'error':'Actual parent required'})
+        run = store.init_run(origin={'session_id':session_id}, stream='late-probe')
+        store.add_candidates(run,[{'title':'Synthetic late callback only','source_ids':['source:synthetic:sample:thread:late']}])
+        store.freeze_index(run,rubric='Public cooperative cancellation protocol test only; no research or tasks.')
+        cid=store.get_run(run)['candidates'][0]['candidate_id']
+        a=store.reserve_attempt(run,cid,owner_session=session_id)
+        request=runner._bootstrap(run,a)
+        request['goal']='Cancellation PROTOCOL test only. Immediately call runner_probe_late {} exactly once, wait for its result, then stop. Do NOT fetch resources, research, read sources or use any other tools.'
+        data=json.loads(request['context']);data['instructions']=request['goal'];request['context']=json.dumps(data)
+        handle=normalize(ctx.subagent_lifecycle.launch(request))
+        store.bind_attempt(run,a['token'],handle,owner_session=session_id)
+        started=time.monotonic(); entered=False
+        while time.monotonic()-started<60:
+            entry=ctx.state.get('latest-late-start',default={}) or {}
+            if entry.get('run_id')==run: entered=True;break
+            ctx.subagent_lifecycle.wait(handle,timeout_seconds=.5)
+        before=normalize(ctx.subagent_lifecycle.reconnect(handle))
+        cancellation=runner._cancel(run,a['token'],handle,'execution_timeout')
+        # The child tool may still finish its blocked I/O after cooperative cancel.
+        until=time.monotonic()+100
+        while entered and time.monotonic()<until:
+            late=ctx.state.get('latest-late-result',default={}) or {}
+            if late.get('run_id')==run: break
+            time.sleep(.5)
+        result={'run_id':run,'label':'public cancellation protocol stress, not runner deadline duration proof','entered_real_child_io':entered,'same_owner_reconnect':before,'cancellation':cancellation,'status':normalize(ctx.subagent_lifecycle.status(handle)),'result':normalize(ctx.subagent_lifecycle.result(handle)),'late_result':ctx.state.get('latest-late-result',default={}), 'ledger':store.get_run(run)}
+        audit('late-case',result)
+        return json.dumps(result)
+    register_tool('runner_probe_late_case',late_case,{},[],'Public-lifecycle cancellation protocol stress using real runner bootstrap/store/hooks/binding and authentic blocked-I/O late fetch. No process restart.')
     def wire_payload(args, **kw):
         raw = (json.dumps(args['payload'], indent=2, sort_keys=True, ensure_ascii=False) + '\n').encode()
         ctx.state.set('wire-payload', args['payload'])
@@ -174,5 +205,5 @@ def register(ctx):
         latest = ctx.state.get('latest-run', default={}) or {}
         run = args.get('run_id') or latest.get('run_id')
         ledger = store.get_run(run) if run else {}
-        return json.dumps({'run_id': run, 'ledger': ledger, 'last_start_hook': ctx.state.get('latest-start', default={}), 'guard': ctx.state.get('latest-guard', default={}), 'sentinel': ctx.state.get('latest-sentinel', default={}), 'source_pages': {a['token']: ctx.state.get('source:' + a['token'], default=[]) for a in ledger.get('attempts', {}).values()}, 'late_result': ctx.state.get('latest-late-result', default={}), 'cancel_case': ctx.state.get('latest-cancel', default={}), 'stress': {a['token']: ctx.state.get('latest-stress-' + a['token'], default={}) for a in ledger.get('attempts', {}).values()}, 'runtime': {'pid': os.getpid(), 'thread': threading.current_thread().name}}, default=str)
+        return json.dumps({'run_id': run, 'ledger': ledger, 'last_start_hook': ctx.state.get('latest-start', default={}), 'guard': ctx.state.get('latest-guard', default={}), 'sentinel': ctx.state.get('latest-sentinel', default={}), 'source_pages': {a['token']: ctx.state.get('source:' + a['token'], default=[]) for a in ledger.get('attempts', {}).values()}, 'late_case': ctx.state.get('latest-late-case', default={}), 'late_result': ctx.state.get('latest-late-result', default={}), 'cancel_case': ctx.state.get('latest-cancel', default={}), 'stress': {a['token']: ctx.state.get('latest-stress-' + a['token'], default={}) for a in ledger.get('attempts', {}).values()}, 'runtime': {'pid': os.getpid(), 'thread': threading.current_thread().name}}, default=str)
     register_tool('runner_probe_receipt', receipt, {'run_id': {'type': 'string'}}, [], 'Read exact persisted synthetic runner ledger and actual hook/caller receipts.')
