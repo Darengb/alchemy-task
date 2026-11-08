@@ -276,6 +276,18 @@ def test_agenda_scheduled_due_overdue(settings, data_dir):
         {"Pay the electric bill", "Call the landlord"}
 
 
+def test_period_ranges(settings, data_dir):
+    store = TaskStore(settings, data_dir)
+    sunday, wednesday = "2026-11-08", "2026-11-11"
+    assert store.period_range("today", sunday) == (sunday, sunday)
+    assert store.period_range("this_week", sunday) == (sunday, "2026-11-15")  # weekend: the coming week
+    assert store.period_range("this_week", wednesday) == (wednesday, "2026-11-15")
+    assert store.period_range("next_week", wednesday) == ("2026-11-16", "2026-11-22")
+    assert store.period_range("monday", sunday) == ("2026-11-09", "2026-11-09")
+    assert store.period_range("wednesday", wednesday) == (wednesday, wednesday)
+    assert store.period_range("tomorrow", sunday) == ("2026-11-09", "2026-11-09")
+
+
 # ---------------------------------------------------------------- validator
 
 def test_validator_dry_run_and_apply(settings, data_dir):

@@ -90,8 +90,9 @@ FIND_SCHEMA = {
         "Look up tasks in the user's Alchemy Task workspace by title words, task_id, area, status or due "
         "date. Use it before creating a task (to avoid duplicates) and to get the task_id for task_update. "
         "Set include_body=true for one task to read its notes, research and current state. For \"today's "
-        "tasks\", \"this week\", \"tasks for Monday\": pass agenda_from and agenda_to (YYYY-MM-DD; the same date "
-        "for one day) to get open tasks scheduled or due then, plus overdue ones, each with the reason."),
+        "tasks\", \"this week\", \"tasks for Monday\", \"what's overdue\": pass period (today, this_week, monday, ...) "
+        "to get open tasks scheduled or due then, plus overdue ones, each with the reason. For other ranges pass "
+        "agenda_from and agenda_to."),
     "parameters": {
         "type": "object",
         "properties": {
@@ -103,6 +104,11 @@ FIND_SCHEMA = {
             "due_after": _DATE,
             "limit": {"type": "integer", "minimum": 1, "maximum": 100},
             "include_body": {"type": "boolean"},
+            "period": {"type": "string", "enum": ["today", "tomorrow", "this_week", "next_week", "overdue", "monday",
+                                                   "tuesday", "wednesday", "thursday", "friday", "saturday",
+                                                   "sunday"],
+                       "description": "Agenda for a spoken period, computed in the user's timezone (preferred over "
+                                      "agenda_from/agenda_to). A weekday means the next one, or today."},
             "agenda_from": {**_DATE, "description": "Agenda: first day (YYYY-MM-DD)."},
             "agenda_to": {**_DATE, "description": "Agenda: last day; omit for a single day."},
             "include_overdue": {"type": "boolean", "description": "Agenda: also list overdue tasks (default true)."},
@@ -203,15 +209,27 @@ def task_update(args: dict[str, Any], **_: Any) -> str:
 def task_find(args: dict[str, Any], **_: Any) -> str:
     rt = Runtime()
     store = rt.store()
-    if args.get("agenda_from"):
-        items = store.agenda(args["agenda_from"], args.get("agenda_to") or args["agenda_from"],
-                             area=args.get("area", ""), include_overdue=args.get("include_overdue", True))
-        limit = max(1, min(int(args.get("limit") or 60), 200))
-        tasks = [{**store.summary(d), "why": why} for d, why in items[:limit]]
-        return _ok(count=len(items), tasks=tasks, today=rt.settings.today(),
-                   weekday=__import__("datetime").date.fromisoformat(rt.settings.today()).strftime("%A"),
-                   note=("Group the answer: overdue first, then by day. Scheduled means the user planned to work on "
-                         "it that day; due is the deadline.") if tasks else "Nothing scheduled or due then.")
+    if args.get("period") or args.get("agenda_from"):
+        period = str(args.get("period") or "").lower()
+        if period:
+            start, end = store.period_range(period)
+        else:
+            start, end = args["agenda_from"], args.get("agenda_to") or args["agenda_from"]
+        items = store.agenda(start, end, area=args.get("area", ""),
+                             include_overdue=args.get("include_overdue", True))
+        if period == "overdue":
+            items = [(d, why) for d, why in items if why.startswith("overdue")]
+        overdue = [(d, w) for d, w in items if w.startswith("overdue")]
+        current = [(d, w) for d, w in items if not w.startswith("overdue")]
+        cap = 50 if period == "overdue" else 10
+        recent_overdue = sorted(overdue, key=lambda x: str(tf.norm_date(x[0].fm.get("due"))), reverse=True)[:cap]
+        tasks = [{**store.summary(d), "why": w} for d, w in recent_overdue + current[:150]]
+        note = ("Answer briefly: the period's tasks by day (say scheduled or due), then overdue ones. "
+                + (f"Only the {cap} most recent of {len(overdue)} overdue tasks are listed; mention the total."
+                   if len(overdue) > cap else "")) if tasks else "Nothing scheduled or due then."
+        return _ok(period=period or None, start=start, end=end, count=len(current), overdue_total=len(overdue),
+                   tasks=tasks, today=rt.settings.today(),
+                   weekday=__import__("datetime").date.fromisoformat(rt.settings.today()).strftime("%A"), note=note)
     docs = store.find(query=args.get("query", ""), task_id=args.get("task_id", ""), area=args.get("area", ""),
                       status=args.get("status", "open"), due_before=args.get("due_before", ""),
                       due_after=args.get("due_after", ""), limit=args.get("limit", 20))

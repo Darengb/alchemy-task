@@ -182,6 +182,32 @@ class TaskStore:
             ordered = sorted(tasks, key=_due_key)
         return ordered[: max(1, min(int(limit or 20), 100))]
 
+    PERIODS = ("today", "tomorrow", "this_week", "next_week", "overdue", "monday", "tuesday", "wednesday",
+               "thursday", "friday", "saturday", "sunday")
+
+    def period_range(self, period: str, today: str = "") -> tuple[str, str]:
+        """Dates for a spoken period, in the user's timezone. Weeks run Monday to Sunday; on a Saturday or
+        Sunday, "this week" means the coming week (people planning on a weekend mean the days ahead)."""
+        import datetime as dt
+        p = str(period or "").strip().lower().replace(" ", "_")
+        d = dt.date.fromisoformat(today or self.s.today())
+        if p in ("today", "overdue"):
+            return d.isoformat(), d.isoformat()
+        if p == "tomorrow":
+            return (d + dt.timedelta(days=1)).isoformat(), (d + dt.timedelta(days=1)).isoformat()
+        sunday = d + dt.timedelta(days=6 - d.weekday())
+        if p == "this_week":
+            end = sunday + dt.timedelta(days=7) if d.weekday() >= 5 else sunday
+            return d.isoformat(), end.isoformat()
+        if p == "next_week":
+            start = sunday + dt.timedelta(days=1)
+            return start.isoformat(), (start + dt.timedelta(days=6)).isoformat()
+        days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        if p in days:
+            target = d + dt.timedelta(days=(days.index(p) - d.weekday()) % 7)
+            return target.isoformat(), target.isoformat()
+        raise NeedsInput("fix_call", f"period must be one of {', '.join(self.PERIODS)}")
+
     def agenda(self, start: str, end: str, *, area: str = "", include_overdue: bool = True,
                today: str = "") -> list[tuple[tf.TaskDoc, str]]:
         """Open tasks scheduled or due between start and end (inclusive), plus overdue ones, each with a reason."""

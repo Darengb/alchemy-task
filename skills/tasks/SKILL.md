@@ -67,11 +67,11 @@ Map what people say to tools; never tell them to type a command when you can do 
 | "is everything working?", "what's set up?", "is it syncing?", "task status" | `task_setup` `status`; show its receipt text |
 | "sync my tasks", "push my changes", "why isn't GitHub updated?" | `task_setup` `push` (then `status` if it fails) |
 | "check my task files", "anything broken in my tasks?", "fix the IDs" | `task_setup` `check_files` (`fix: true` when they ask to fix) |
-| "what are today's tasks", "what's on my plate today" | `task_find` agenda for today (`agenda_from` = today) |
-| "tasks for this week", "what's coming up" | agenda from today through Sunday |
-| "tasks for Monday", "what's on Friday" | agenda for that one date (the next one, or today if it is that day) |
-| "next week" | agenda for next Monday through Sunday |
-| "what's overdue" | agenda for today, then report only the overdue items |
+| "what are today's tasks", "what's on my plate today" | `task_find` `period: today` |
+| "tasks for this week", "what's coming up" | `period: this_week` (on a weekend this covers the coming week) |
+| "tasks for Monday", "what's on Friday" | `period: monday` / `friday` (the next one, or today) |
+| "tomorrow", "next week" | `period: tomorrow` / `next_week` |
+| "what's overdue", "what did I miss" | `period: overdue` |
 | "show my open work", "what's in my bakery area" | `task_find` with status/area filters |
 | "research X again", "redo the research" | `task_research` with the task |
 | "work on X", "pick up X", "continue X", "where was I on X?" | `task_work_start` |
@@ -82,9 +82,10 @@ Map what people say to tools; never tell them to type a command when you can do 
 | "turn off Alchemy Task's schedules", "stop the background jobs", "uninstall" | confirm, then `task_setup` `teardown` with `user_confirmed: true`; for uninstalling, mention `hermes plugins remove alchemy-task` afterwards |
 | "change my timezone / default area / workspace" | `task_setup` `save` |
 
-For agendas, `task_find` returns `today` and `weekday`; convert the day words to dates from those. List
-overdue items first, then each day, and say whether each item is scheduled for that day or due then. Keep it
-short: title, area when there are several, and the reason.
+Let the tool work out the dates: pass `period` rather than computing dates yourself. Answer with the period's
+tasks by day, saying whether each is scheduled for that day or due then, then the overdue ones (the tool lists
+the most recent; mention the total). Keep it short: title, area when there are several, and the reason. Use
+`agenda_from`/`agenda_to` only for other ranges ("the 20th to the 25th").
 
 ## When a tool says `ok: false`
 
