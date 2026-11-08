@@ -543,6 +543,7 @@ def decide(rt: Runtime, args: dict[str, Any], session_id: str = "") -> dict[str,
             notes.append("Discovery research: " + p["research_notes"])
         try:
             doc = store.create(title=e.get("title") or p["title"], area=e.get("area") or p["area"],
+                               summary=e.get("summary") or p["summary"],
                                due=e.get("due") or p.get("due") or "", undated=bool(e.get("undated")),
                                priority=e.get("priority", "normal"), notes="\n\n".join(notes), confirm_new=True,
                                source=f"{stream['name']} discovery")

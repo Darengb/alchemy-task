@@ -19,6 +19,10 @@ tools; they validate fields, keep IDs stable, commit and push, and queue researc
 
 - Clean up phone-typed wording into a short imperative title. Put context, links and the user's reasoning in
   `notes`.
+- Always write a `summary`: one or two plain sentences on what the task is and why it matters (who asked,
+  what done looks like). It is what people see in lists and on their phone, so write it for a glance:
+  "Priya needs Saturday's final headcount by Wednesday to set up chairs and coffee." Update it with
+  `task_update` when the task's purpose changes.
 - **Due date:** if the user gave none, ask. Pass `undated: true` only when they said the task has no due date.
   Pass dates the way the user said them ("Friday", "Nov 13", "next week") or as `YYYY-MM-DD`; the tool reads
   them in the user's timezone. Numeric forms like 11/13 are refused as ambiguous, so convert those yourself.

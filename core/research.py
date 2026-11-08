@@ -191,6 +191,8 @@ def normalize(payload: Any) -> dict[str, Any]:
                        "setup": (_strings([str(item.get("setup") or "")], "setup") or [""])[0][:500]})
     out["access_plan"] = access
     out["skills_used"] = [s[:100] for s in _strings(payload.get("skills_used"), "skills_used", limit=10)]
+    found = _strings([str(payload.get("summary") or "")], "summary")
+    out["summary"] = tf.clean_summary(found[0]) if found else ""
     if not any(out[f] for f in LIST_FIELDS) and not out["access_plan"]:
         raise ResearchError("payload is empty: include at least a recommended approach")
     return out

@@ -251,6 +251,7 @@ class TaskStore:
         out: dict[str, Any] = {
             "task_id": doc.task_id,
             "title": doc.title,
+            "summary": fm.get("summary") or None,
             "status": fm.get("status"),
             "priority": fm.get("priority"),
             "area": fm.get("area") or self.area_of(doc.path),
@@ -277,6 +278,7 @@ class TaskStore:
                priority: str = "normal", project: str = "", notes: str = "", plan: str = "",
                subtasks: list[str] | None = None, contexts: list[str] | None = None, estimate: str = "",
                tags: list[str] | None = None, research: bool | None = None, research_skip_reason: str = "",
+               summary: str = "",
                confirm_new: bool = False, create_area: bool = False, status: str = "open",
                source: str = "") -> tf.TaskDoc:
         title = " ".join(str(title or "").split())
@@ -326,7 +328,7 @@ class TaskStore:
         if not do_research:
             enrichment["reason"] = (research_skip_reason or "user asked for no research").strip().rstrip(".")[:300]
         fm: dict[str, Any] = {
-            "title": title, "task_id": tf.new_task_id(), "schema_version": tf.SCHEMA_VERSION,
+            "title": title, "summary": tf.clean_summary(summary) or None, "task_id": tf.new_task_id(), "schema_version": tf.SCHEMA_VERSION,
             "status": status, "priority": priority, "area": area, "project": project.strip() or None,
             "due": due_v, "scheduled": sched_v, "created": today, "completed": None, "recurrence": None,
             "tags": tag_list, "contexts": ctx_list, "estimate": (estimate or "").strip() or None,
@@ -442,6 +444,14 @@ class TaskStore:
             for key in ("project", "estimate"):
                 if key in changes and changes[key] is not None:
                     setf(key, str(changes[key]).strip() or None)
+            if changes.get("summary") is not None:
+                new_summary = tf.clean_summary(changes["summary"]) or None
+                if "summary" not in fm and new_summary:
+                    fm.insert(1, "summary", new_summary) if hasattr(fm, "insert") else fm.__setitem__("summary",
+                                                                                                    new_summary)
+                    notes.append("summary added")
+                else:
+                    setf("summary", new_summary)
             if changes.get("contexts") is not None:
                 setf("contexts", [_context(c) for c in changes["contexts"] if str(c).strip()])
             if changes.get("tags_add") or changes.get("tags_remove"):

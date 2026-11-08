@@ -18,7 +18,27 @@ MARKER_PREFIX = "Alchemy Task ·"
 
 
 def marker(task_id: str) -> str:
-    return f"{MARKER_PREFIX} task {task_id}. Edit the title, date or checkbox here; the rest lives in your task file."
+    return f"{MARKER_PREFIX} task {task_id}"
+
+
+NEXT_MAX = 200
+
+
+def compose_notes(fm: Mapping[str, Any], body: str, task_id: str) -> str:
+    """What the reminder's notes show: the task's summary (or the first sentence of its Notes), the next step from
+    its latest checkpoint, then a one-line marker. Kept short because the phone shortens long notes."""
+    import re
+    summary = tf.clean_summary(fm.get("summary")) or tf.fallback_summary(body)
+    parts = [summary] if summary else []
+    state = ""
+    if body.count(tf.CURRENT_STATE_START) == 1 and body.count(tf.CURRENT_STATE_END) == 1:
+        state = body[body.index(tf.CURRENT_STATE_START): body.index(tf.CURRENT_STATE_END)]
+    m = re.search(r"\*\*Next step:\*\*\s*(.+)", state)
+    if m:
+        nxt = tf.clean_summary(m.group(1))
+        parts.append("Next: " + (nxt if len(nxt) <= NEXT_MAX else nxt[:NEXT_MAX - 1].rsplit(" ", 1)[0] + "…"))
+    parts.append(marker(task_id))
+    return "\n\n".join(parts)
 
 
 def marker_task_id(notes: Any) -> str | None:

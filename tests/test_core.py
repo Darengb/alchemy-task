@@ -105,7 +105,7 @@ def test_create_writes_expected_task(settings, data_dir):
                        notes="Kitchen sink.", subtasks=["Find the warranty"], contexts=["phone"], source="Telegram")
     assert re.match(r"areas/home/tasks/\d{4}-\d{2}-\d{2}-call-the-plumber-about-the-leak\.md$", store.rel(doc.path))
     fm = doc.fm
-    assert list(fm)[:4] == ["title", "task_id", "schema_version", "status"]
+    assert list(fm)[:5] == ["title", "summary", "task_id", "schema_version", "status"]
     assert fm["title"] == "Call the plumber about the leak" and tf.valid_task_id(fm["task_id"])
     assert fm["schema_version"] == 1 and fm["tags"] == ["task"] and fm["contexts"] == ["@phone"]
     assert fm["due"] == "2026-11-09" and fm["enrichment"]["status"] == "pending"

@@ -193,6 +193,11 @@ def submit(rt: Runtime, run_id: str, payload: dict[str, Any], caller_task_id: st
         block = rs.render(normalized, day=rt.settings.today())
         body = tf.upsert_block(doc.body, rs.START, rs.END, block)
         rs.complete(doc.fm, run_id, normalized)
+        if not doc.fm.get("summary") and normalized.get("summary"):  # fill a missing summary, never replace one
+            if "summary" in doc.fm:
+                doc.fm["summary"] = normalized["summary"]
+            else:
+                doc.fm.insert(1, "summary", normalized["summary"])
         body = tf.append_log(body, rs.summary_line(normalized), rt.settings.today())
         tf.atomic_write(doc.path, tf.render(doc.fm, body, seq_offset=doc.seq_offset,
                                             keep_blank=doc.blank_keys).encode(), expect=doc.raw)
@@ -422,6 +427,8 @@ RESEARCH_TOOLS = (
     ({"name": "research_submit", "description": "Alchemy Task research agents only: submit the research result "
       "once, then stop.", "parameters": {"type": "object", "properties": {
           "run_id": {"type": "string"},
+          "summary": {"type": "string", "description": "One or two plain sentences on what the task is and why it "
+                                                    "matters; used only if the task has no summary yet."},
           "recommended_approach": {**_STRS, "description": "Concrete steps Hermes should take, citing skills/tools."},
           "useful_context": _STRS,
           "dependencies_and_risks": _STRS,

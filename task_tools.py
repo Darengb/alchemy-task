@@ -28,6 +28,8 @@ CREATE_SCHEMA = {
         "type": "object",
         "properties": {
             "title": {"type": "string", "description": "Short imperative title, cleaned up from the user's wording."},
+            "summary": {"type": "string", "description": "One or two plain sentences: what this is and why it matters "
+                                                        "(who asked, what done looks like). Shown in Reminders and lists."},
             "area": {"type": "string", "description": "Area slug. Infer from context when clear; omit to get the list."},
             "due": {"type": "string", "description": "Deadline: YYYY-MM-DD, or words like 'Friday', 'tomorrow', 'Nov 13'. Required unless undated."},
             "undated": {"type": "boolean", "description": "True only if the user explicitly said this task has no due date."},
@@ -68,6 +70,7 @@ UPDATE_SCHEMA = {
             "reopen": {"type": "boolean"},
             "completed": {**_DATE, "description": "Completion date if not today."},
             "title": _STR,
+            "summary": {"type": "string", "description": "Replace the one- or two-sentence summary."},
             "rename_file": {"type": "boolean", "description": "Also rename the file to match a new title."},
             "due": {"type": "string", "description": "New deadline: YYYY-MM-DD or words ('Friday', 'Nov 13'); 'none' clears it (needs undated=true)."},
             "undated": {"type": "boolean"},
@@ -173,6 +176,7 @@ def task_create(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
         priority=args.get("priority", "normal"), project=args.get("project", ""), notes=args.get("notes", ""),
         plan=args.get("plan", ""), subtasks=args.get("subtasks"), contexts=args.get("contexts"),
         estimate=args.get("estimate", ""), tags=args.get("tags"), research=args.get("research"),
+        summary=args.get("summary", ""),
         research_skip_reason=args.get("research_skip_reason", ""), confirm_new=bool(args.get("confirm_new")),
         create_area=bool(args.get("create_area")), status=args.get("status", "open"),
         source=args.get("source", ""))
@@ -192,7 +196,7 @@ def task_create(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
     return _ok(task=summary, git=receipt, research=research, research_errors=research_errors or None, message=msg)
 
 
-_UPDATE_KEYS = ("status", "reason", "reopen", "completed", "title", "rename_file", "due", "undated", "scheduled",
+_UPDATE_KEYS = ("status", "reason", "reopen", "completed", "title", "summary", "rename_file", "due", "undated", "scheduled",
                 "keep_separate",
                 "priority", "project", "estimate", "area", "contexts", "tags_add", "tags_remove", "notes_append", "log")
 

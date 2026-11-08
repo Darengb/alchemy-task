@@ -364,6 +364,35 @@ def slugify(title: str, max_len: int = 60) -> str:
     return text.strip("-") or "task"
 
 
+SUMMARY_MAX = 300
+
+
+def clean_summary(text: Any) -> str:
+    """One or two plain sentences: whitespace collapsed, markdown links reduced to their text, bounded."""
+    s = " ".join(str(text or "").split())
+    s = re.sub(r"\[\[([^\]|]+)\|([^\]]+)\]\]", r"\2", s)
+    s = re.sub(r"\[\[([^\]]+)\]\]", lambda m: m.group(1).split("/")[-1], s)
+    s = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)
+    s = re.sub(r"[*_`]+", "", s).strip()
+    if len(s) > SUMMARY_MAX:
+        cut = s[:SUMMARY_MAX]
+        s = cut[: cut.rfind(" ")].rstrip(",;:") + "…" if " " in cut else cut + "…"
+    return s
+
+
+def fallback_summary(body: str) -> str:
+    """First sentence of the Notes section, for tasks written before summaries existed. Nothing is saved."""
+    lines = body.split("\n")
+    bounds = _section_bounds(lines, "Notes")
+    if not bounds:
+        return ""
+    text = " ".join(l.strip() for l in lines[bounds[0] + 1: bounds[1]]
+                    if l.strip() and not l.strip().startswith(("<!--", "|", "#", "- [", "```")))
+    text = re.sub(r"^[-*] ", "", text)
+    m = re.match(r"(.+?[.!?])(\s|$)", clean_summary(text))
+    return (m.group(1) if m else clean_summary(text))[:SUMMARY_MAX]
+
+
 def norm_title(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
 

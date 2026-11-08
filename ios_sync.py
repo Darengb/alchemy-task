@@ -316,6 +316,12 @@ def _sync(rt: Runtime, st: dict[str, Any], cfg: dict[str, Any], deadline: float)
     for key, op in list(st["ops"].items()):
         if op.get("state") == "uncertain" and op["kind"] == "create":
             found = by_marker.get(op["task_id"])
+            if not found and left() > 3:  # the phone searches full notes even when list results shorten them
+                hit = _call(rt, "mobile_reminders_list", _phone_args(cfg, query=op["task_id"], status="all",
+                                                                     list_ids=[cfg["list_id"]], limit=5,
+                                                                     wait_seconds=min(10, max(0, left() - 1))))
+                if hit.get("status") == "succeeded":  # the query matched the ID inside the notes
+                    found = next(iter(_data(hit).get("reminders") or []), None)
             if found and op["task_id"] not in st["mappings"]:
                 doc = by_id.get(op["task_id"])
                 st["mappings"][op["task_id"]] = _mapping(cfg, found, rm.remote_projection(found, tz)[0], doc)
@@ -362,11 +368,14 @@ def _sync(rt: Runtime, st: dict[str, Any], cfg: dict[str, Any], deadline: float)
         if res["pull"]:
             if _pull(rt, store, doc, m, res["pull"], extras, rep, changed_paths, tz):
                 rep["pulled"] += 1
-        if res["push"] and left() > 2 and in_flight < MAX_IN_FLIGHT and rep["updated"] + rep["created"] < MAX_WRITES:
+        want_notes = rm.compose_notes(doc.fm, doc.body, tid)
+        notes_change = want_notes if want_notes != m.get("notes_sent") else None
+        if (res["push"] or notes_change) and left() > 2 and in_flight < MAX_IN_FLIGHT \
+                and rep["updated"] + rep["created"] < MAX_WRITES:
             if "due" in res["push"] and m.get("native_due"):
                 what = "the new date" if res["push"]["due"] else "no date"
                 rep["skipped"].append(f"{doc.title}: replaced the reminder's time ({m.pop('native_due')}) with {what}")
-            in_flight += _push(rt, st, cfg, tid, m, res["push"], rep, left)
+            in_flight += _push(rt, st, cfg, tid, m, res["push"], rep, left, notes=notes_change)
 
     # 5. Create reminders for open tasks without one.
     pending_creates = {op["task_id"] for op in st["ops"].values() if op["kind"] == "create"}
@@ -448,15 +457,17 @@ def _send(rt: Runtime, st: dict[str, Any], op: dict[str, Any], left) -> dict[str
     return resp
 
 
-def _push(rt, st, cfg, tid, m, push, rep, left) -> int:
+def _push(rt, st, cfg, tid, m, push, rep, left, notes: str | None = None) -> int:
     fields, completion = rm.update_args(push)
+    if notes is not None:
+        fields["notes"] = notes  # task -> phone only: the task file is the source of the summary
     sent = 0
     if fields or completion is False:
         args = _phone_args(cfg, id=m["reminder_id"], **fields)
         if completion is False:
             args["completed"] = False
         op = {"kind": "update", "task_id": tid, "tool": "mobile_reminder_update", "created": time.time(),
-              "push": push, "title": m.get("title")}
+              "push": push, "title": m.get("title"), "notes": notes}
         op["key"] = args["idempotency_key"] = _key("update", tid, m["reminder_id"], fields, completion, uuid.uuid4().hex)
         op["args"] = args
         resp = _send(rt, st, op, left)
@@ -478,10 +489,11 @@ def _push(rt, st, cfg, tid, m, push, rep, left) -> int:
 def _create(rt, st, cfg, doc, rep, left) -> int:
     local = rm.local_projection(doc.fm)
     attempt = (st["notes"].get("attempts") or {}).get(doc.task_id, 0)
+    notes = rm.compose_notes(doc.fm, doc.body, doc.task_id)
     args = _phone_args(cfg, title=local["title"], list_id=cfg["list_id"], priority="none",
-                       notes=rm.marker(doc.task_id), due_date=local["due"] or None)
+                       notes=notes, due_date=local["due"] or None)
     op = {"kind": "create", "task_id": doc.task_id, "tool": "mobile_reminder_create", "created": time.time(),
-          "title": local["title"], "projection": local, "prior_status": str(doc.fm.get("status"))}
+          "title": local["title"], "projection": local, "prior_status": str(doc.fm.get("status")), "notes": notes}
     op["key"] = args["idempotency_key"] = _key("create", doc.task_id, cfg["list_id"], attempt)
     op["args"] = args
     resp = _send(rt, st, op, left)
@@ -541,7 +553,8 @@ def _settle(rt, st, key, op, resp, rep, by_id, changed_paths, store, tz) -> None
         projection, _ = rm.remote_projection(data, rt.settings.timezone or "UTC")
         st["mappings"][op["task_id"]] = {"reminder_id": data["id"], "list_id": data["list_id"],
                                          "device_id": cfg["device_id"], "base": projection, "title": op["title"],
-                                         "created_at": time.time(), "prior_status": op.get("prior_status", "open")}
+                                         "created_at": time.time(), "prior_status": op.get("prior_status", "open"),
+                                         "notes_sent": op.get("notes")}
         rep["created"] += 1
     else:
         m = st["mappings"].get(op["task_id"])
@@ -549,6 +562,8 @@ def _settle(rt, st, key, op, resp, rep, by_id, changed_paths, store, tz) -> None
             projection, _ = rm.remote_projection(data, rt.settings.timezone or "UTC")
             verified = {f: v for f, v in op["push"].items() if projection.get(f) == v}
             m["base"].update(verified)  # advance only what the phone confirmed
+            if op.get("notes") is not None and str(data.get("notes") or "").strip():
+                m["notes_sent"] = op["notes"]
             if len(verified) < len(op["push"]):
                 rep["problems"].append(f"\"{op.get('title')}\": the phone did not confirm every change")
         rep["updated"] += 1

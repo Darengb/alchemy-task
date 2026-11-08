@@ -56,7 +56,7 @@ class FakePhone:
             return dict(self.reminders[rid])
         r = self.reminders[a["id"]]
         if op == "mobile_reminder_update":
-            for k in ("title",):
+            for k in ("title", "notes"):
                 if k in a:
                     r[k] = a[k]
             if "due_date" in a:
@@ -353,6 +353,43 @@ def test_refused_access_is_reported_not_waiting(ctx, phone, settings, data_dir):
         if n == "mobile_reminder_create" else real(n, a)
     out = ios_call()
     assert "refused" in out["message"] and "Waiting" not in out["message"] and not out["synced"]
+
+
+def test_reminder_notes_show_summary_next_step_and_follow_task(ctx, phone, settings, data_dir):
+    store = TaskStore(settings, data_dir)
+    t = mk(settings, data_dir, "Send Priya the headcount",
+           summary="Priya needs Saturday's final headcount by Wednesday to set up chairs and coffee.")
+    legacy = mk(settings, data_dir, "Fix the fence", notes="The north fence panel blew down. Call Joe first.")
+    setup_ok(["home"])
+    ios_call()
+    r = phone_task(phone, "Send Priya the headcount")
+    assert r["notes"].startswith("Priya needs Saturday's final headcount") and rm.marker_task_id(r["notes"]) == t.task_id
+    assert phone_task(phone, "Fix the fence")["notes"].startswith("The north fence panel blew down.")
+    assert "Call Joe" not in phone_task(phone, "Fix the fence")["notes"]  # first sentence only
+    # a work-session next step and a new summary reach the phone; nothing else changes
+    from alchemy_task import worksession as ws
+    ws.write_checkpoint(runtime.Runtime(), t.task_id, {"state": "in_progress", "done": "Counted RSVPs",
+                                                       "next_step": "Email Priya the count of 24"})
+    store.update(t.task_id, {"summary": "Priya needs the final headcount (24) by Wednesday."})
+    out = ios_call()
+    r = phone_task(phone, "Send Priya the headcount")
+    assert out["updated"] >= 1 and r["notes"].split("\n\n")[:2] == [
+        "Priya needs the final headcount (24) by Wednesday.", "Next: Email Priya the count of 24"]
+    writes = phone.writes
+    ios_call()
+    assert phone.writes == writes  # unchanged summary: no re-send
+
+
+def test_summary_field_on_tasks(settings, data_dir):
+    store = TaskStore(settings, data_dir)
+    d = store.create(title="Book the band", area="home", due="Nov 30", research=False,
+                     summary="  The [[venue/README|hall]] wants the **band** booked by the 30th.  ")
+    assert d.fm["summary"] == "The hall wants the band booked by the 30th." and list(d.fm)[1] == "summary"
+    assert tf.fallback_summary("## Notes\n\n- Ask Sam. Then call.\n\n## Log\n") == "Ask Sam."
+    old = tf.parse_file(settings.root() / "areas/work/tasks/2026-10-20-renew-the-team-software-licenses.md")
+    assert "summary" not in old.fm
+    doc, _, notes = store.update(old.task_id, {"summary": "Three design seats renew yearly."})
+    assert doc.fm["summary"] == "Three design seats renew yearly." and list(doc.fm)[1] == "summary"
 
 
 def test_slash_command_uses_same_engine(ctx, phone, settings, data_dir):
