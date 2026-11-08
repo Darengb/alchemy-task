@@ -266,6 +266,63 @@ def task_checkpoint(args: dict[str, Any], session_id: str = "", **_: Any) -> str
                + _git_note(out["git"]))
 
 
+SETUP_SCHEMA = {
+    "name": "task_setup",
+    "description": (
+        "Set up Alchemy Task with the user (load the skill alchemy-task:setup first). Actions: status (readiness "
+        "receipt and what is next), inspect (look at a folder before using it), save (validate and save "
+        "settings), git_check (verify Git push, or create a deploy key), jobs_preview (list the scheduled jobs to "
+        "ask the user about), jobs_create (create them, only after the user approved), teardown (remove jobs)."),
+    "parameters": {"type": "object", "properties": {
+        "action": {"type": "string", "enum": ["status", "inspect", "save", "git_check", "jobs_preview",
+                                              "jobs_create", "teardown"]},
+        "path": {"type": "string", "description": "inspect: absolute folder path."},
+        "workspace_root": {"type": "string"},
+        "create_workspace": {"type": "boolean", "description": "save: create a new workspace folder and Git repo."},
+        "allow_shared": {"type": "boolean"},
+        "task_dir": {"type": "string", "description": "Folder pattern with {area}, default areas/{area}/tasks."},
+        "areas": {"type": "array", "items": {"type": "string"}},
+        "default_area": {"type": "string"},
+        "timezone": {"type": "string", "description": "IANA name the user confirmed, e.g. America/New_York."},
+        "set_hermes_timezone": {"type": "boolean", "description": "Also set Hermes's own timezone (when it was unset)."},
+        "research_by_default": {"type": "boolean"},
+        "git_transport": {"type": "string", "enum": ["system", "deploy_key", "token", "none"]},
+        "git_remote": {"type": "string"},
+        "git_branch": {"type": "string"},
+        "remote_url": {"type": "string", "description": "git_check: set the remote URL (an empty private repo)."},
+        "user_approved": {"type": "boolean", "description": "jobs_create: true only after the user said yes."}},
+        "required": ["action"]},
+}
+
+
+@_guard
+def task_setup(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
+    from . import setup_flow as sf
+    rt = Runtime()
+    action = args.get("action")
+    try:
+        if action == "status":
+            rep = sf.status(rt)
+            return _ok(receipt=rep, text=sf.receipt_text(rep))
+        if action == "inspect":
+            return _ok(**sf.inspect_workspace(args.get("path", ""), args.get("task_dir", "")))
+        if action == "save":
+            out = sf.save(rt, args)
+            rep = sf.status(Runtime())
+            return _ok(**out, receipt=rep, text=sf.receipt_text(rep))
+        if action == "git_check":
+            return _ok(**sf.git_check(rt, args))
+        if action == "jobs_preview":
+            return _ok(**sf.jobs_preview(rt))
+        if action == "jobs_create":
+            return _ok(**sf.jobs_create(rt, user_approved=bool(args.get("user_approved")), session_id=session_id))
+        if action == "teardown":
+            return _ok(**sf.teardown(rt))
+    except sf.SetupError as exc:
+        return _fail("setup", str(exc))
+    return _fail("fix_call", "unknown action")
+
+
 RESEARCH_SCHEMA = {
     "name": "task_research",
     "description": (
@@ -313,6 +370,7 @@ TOOLS = (
     (RESEARCH_SCHEMA, task_research, "⚗️"),
     (WORK_SCHEMA, task_work_start, "🜁"),
     (CHECKPOINT_SCHEMA, task_checkpoint, "🜃"),
+    (SETUP_SCHEMA, task_setup, "⚙️"),
 )
 
 

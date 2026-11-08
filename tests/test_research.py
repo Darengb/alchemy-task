@@ -126,8 +126,8 @@ def test_precheck_wakes_only_when_work_waits(settings, data_dir):
 
 def test_job_stub_renders():
     from alchemy_task import jobs
-    text = jobs.stub_text("research-recovery")
-    assert "precheck.research_wake()" in text and "wakeAgent" in text
+    text = jobs.stub_text("research-sweep", plugin_dir="/p", data_dir="/d")
+    assert "precheck.research_wake(data_dir='/d')" in text and "wakeAgent" in text
     compile(text, "stub", "exec")
 
 

@@ -8,10 +8,11 @@ from .core.config import ConfigError
 from .runtime import Runtime
 
 HELP = """Alchemy Task
-/task status      workspace, Git delivery and task counts
+/task status      setup and readiness of each part
+/task setup       how to set up (say "set up my tasks")
 /task validate    check task files (add `apply` to assign missing IDs)
 /task push        retry pushing committed task changes
-/task setup       set up your task workspace (or say "set up my tasks")
+/task teardown    remove Alchemy Task's scheduled jobs (task files are kept)
 Everyday use needs no commands: tell your agent what to do and it uses the task tools."""
 
 
@@ -21,12 +22,18 @@ def task_command(raw_args: str = "", **_: Any) -> str:
     try:
         if sub in ("help", "-h", "--help"):
             return HELP
-        if sub == "setup":
-            return ("Setup runs as a conversation with your agent. Say \"set up my tasks\" and it will walk you "
-                    "through the workspace, areas, Git delivery and schedules.")
         rt = Runtime()
+        from . import setup_flow as sf
+        if sub == "setup":
+            return (sf.receipt_text(sf.status(rt)) + "\n\nSetup is a short conversation with your agent: say "
+                    "\"set up my tasks\" and it walks you through the rest.")
         if sub == "status":
-            return _status(rt)
+            text = sf.receipt_text(sf.status(rt))
+            return text if not rt.settings.configured else text + "\n\n" + _status(rt)
+        if sub == "teardown":
+            out = sf.teardown(rt)
+            return (f"Removed {len(out['removed_jobs'])} scheduled job(s) and {len(out['removed_scripts'])} "
+                    f"script(s). {out['note']}")
         if sub == "validate":
             apply = len(parts) > 1 and parts[1].lower() in ("apply", "--apply", "fix")
             report = validator.validate(rt.store(), apply=apply)

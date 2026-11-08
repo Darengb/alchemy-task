@@ -18,8 +18,8 @@ def _prompt_section(_info: Any = None) -> str:
     except Exception:  # noqa: BLE001
         s = Settings()
     if not s.configured:
-        return ("Alchemy Task (task plugin) is installed but not set up. When the user talks about tasks, "
-                "offer to set it up; the user can say \"set up my tasks\".")
+        return ("Alchemy Task (task plugin) is installed but not set up. When the user talks about tasks, offer "
+                "to set it up. To set it up, load the skill alchemy-task:setup and follow it.")
     return ("Alchemy Task manages the user's tasks as Markdown files. Create, change and look up tasks only "
             "with task_create, task_update and task_find; do not edit task files with file tools. Ask for a due "
             "date when the user gives none. For conventions load the skill alchemy-task:tasks.")
@@ -34,6 +34,8 @@ def register(ctx: Any) -> None:
         runtime.research_listeners.append(research_agent.on_task_created)
     ctx.register_skill("tasks", _HERE / "skills" / "tasks" / "SKILL.md",
                        description="Use when creating, updating or finding the user's tasks with Alchemy Task.")
+    ctx.register_skill("setup", _HERE / "skills" / "setup" / "SKILL.md",
+                       description="Use when the user wants to set up or change Alchemy Task (\"set up my tasks\").")
     ctx.register_command("task", handler=task_command, description="Alchemy Task: status, validate, push, setup",
                          args_hint="[status|validate|push|setup]")
     ctx.register_system_prompt_section("alchemy-task", _prompt_section, max_chars=600)

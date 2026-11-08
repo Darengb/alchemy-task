@@ -1,50 +1,120 @@
-"""Scheduled jobs Alchemy Task asks to create during setup.
+"""Scheduled jobs Alchemy Task creates after the user approves them during setup.
 
-Setup (``/task setup``) shows this inventory, asks once, copies each stub into
-``$HERMES_HOME/scripts/`` (cron only runs scripts from there) and creates the
-jobs with ``ctx.dispatch_tool("cronjob_manage", ...)``. Stubs are thin: they
-add the plugin folder to ``sys.path`` and call plugin code, so plugin updates
-change behaviour without touching the copied files. A stub prints
-``{"wakeAgent": false}`` when there is nothing to do, so idle ticks cost no
-model call, and stays silent if the plugin has been removed.
+Each job is created with ``ctx.dispatch_tool("cronjob_manage", ...)``. Its stub
+is copied into ``$HERMES_HOME/scripts/`` (cron only runs scripts from there).
+Stubs are thin: they load the installed plugin and call ``core.precheck``, so
+plugin updates change behaviour without touching the copied files. A stub stays
+silent (and wakes no model) when there is nothing to do or the plugin is gone.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
 PREFIX = "alchemy-task"
 
-STUB = """\
-# Alchemy Task {name} pre-check (copied by /task setup; safe to delete with /task teardown).
-import json, os, sys
+_LOADER = """\
+# Alchemy Task: {name} (copied by Alchemy Task setup; removed by /task teardown).
+import json, sys
 from pathlib import Path
-plugin = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))) / "plugins" / "alchemy-task"
-if not (plugin / "jobs.py").exists():
-    print(json.dumps({{"wakeAgent": False}}))
+plugin = Path({plugin!r})
+if not (plugin / "core" / "precheck.py").exists():
+    {missing}
     sys.exit(0)
-sys.path.insert(0, str(plugin.parent))
 import importlib.util
 spec = importlib.util.spec_from_file_location("alchemy_task", plugin / "__init__.py",
                                               submodule_search_locations=[str(plugin)])
 mod = importlib.util.module_from_spec(spec); sys.modules["alchemy_task"] = mod
-from alchemy_task.core import precheck  # noqa: E402  (core has no Hermes imports)
-print(json.dumps(precheck.{func}()))
+from alchemy_task.core import precheck  # noqa: E402  (core has no plugin-context imports)
 """
 
-JOBS = {
-    "research-recovery": {
-        "schedule": "every 30m",
-        "mode": "agent, behind a free pre-check",
-        "stub": "alchemy_task_research_precheck.py",
-        "func": "research_wake",
+JOBS: dict[str, dict[str, Any]] = {
+    "research-sweep": {
+        "title": "Research sweep",
+        "schedule": "*/30 * * * *",
+        "when": "every 30 minutes",
+        "mode": "agent",
+        "stub": "alchemy_task_research_sweep.py",
+        "body": "print(json.dumps(precheck.research_wake(data_dir={data_dir!r})))",
+        "missing": 'print(json.dumps({{"wakeAgent": False}}))',
         "toolsets": ["alchemy-task", "alchemy-task-research", "web"],
-        "prompt": ("Alchemy Task research sweep. Call task_research with no task argument to research tasks "
-                   "that are still waiting or whose research stalled. Then reply with one short line: how many "
-                   "were started and finished. Do nothing else."),
-        "why": "Retries research that could not start or stopped early (for example after a restart).",
-        "cost": "No model call when nothing is waiting; otherwise one short turn plus the research itself.",
+        "deliver": "local",
+        "prompt": ("Alchemy Task research sweep. Call task_research with no task argument to research tasks that are "
+                   "waiting or whose research stalled. Reply with one short line saying how many were started and "
+                   "finished. Do nothing else."),
+        "why": "Researches tasks whose research could not start or stopped early (for example after a restart).",
+        "cost": "Free when nothing is waiting (a script checks first); otherwise one short turn plus the research.",
+    },
+    "maintenance": {
+        "title": "Task file check and push retry",
+        "schedule": "15 * * * *",
+        "when": "every hour",
+        "mode": "script",
+        "stub": "alchemy_task_maintenance.py",
+        "body": "text = precheck.maintenance({data_dir!r})\nif text:\n    print(text)",
+        "missing": "pass",
+        "deliver": "origin",
+        "why": ("Gives hand-made tasks their permanent ID and pushes task commits that could not be pushed earlier. "
+                "Messages this chat only when something changes or a new problem appears."),
+        "cost": "Free: a script, no model.",
     },
 }
 
 
-def stub_text(job: str) -> str:
+def stub_text(job: str, *, plugin_dir: str, data_dir: str) -> str:
     spec = JOBS[job]
-    return STUB.format(name=job, func=spec["func"])
+    head = _LOADER.format(name=spec["title"], plugin=str(plugin_dir), missing=spec["missing"].format())
+    return head + spec["body"].format(data_dir=str(data_dir)) + "\n"
+
+
+def spec_hash(job: str) -> str:
+    spec = {k: v for k, v in JOBS[job].items() if k in ("schedule", "mode", "toolsets", "deliver", "prompt", "stub")}
+    return hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def job_name(job: str) -> str:
+    return f"{PREFIX}: {JOBS[job]['title']}"
+
+
+def create_args(job: str, *, timezone: str) -> dict[str, Any]:
+    spec = JOBS[job]
+    args: dict[str, Any] = {"action": "create", "name": job_name(job), "schedule": spec["schedule"],
+                            "script": spec["stub"], "deliver": spec["deliver"]}
+    if timezone:
+        args["timezone"] = timezone
+    if spec["mode"] == "script":
+        args["no_agent"] = True
+    else:
+        args["prompt"] = spec["prompt"]
+        args["enabled_toolsets"] = spec["toolsets"]
+    return args
+
+
+def inventory(timezone: str) -> list[dict[str, str]]:
+    return [{"key": key, "name": spec["title"], "when": f"{spec['when']} ({timezone or 'UTC'})",
+             "kind": "script, no model" if spec["mode"] == "script" else "agent behind a free check",
+             "why": spec["why"], "cost": spec["cost"], "writes": f"scripts/{spec['stub']}"}
+            for key, spec in JOBS.items()]
+
+
+def parse_job_id(result: Any) -> str:
+    try:
+        data = json.loads(result) if isinstance(result, str) else dict(result or {})
+    except (TypeError, ValueError):
+        return ""
+    for path in (("job_id",), ("id",), ("job", "id"), ("job", "job_id")):
+        cur: Any = data
+        for key in path:
+            cur = cur.get(key) if isinstance(cur, dict) else None
+        if isinstance(cur, str) and cur:
+            return cur
+    return ""
+
+
+def write_stub(scripts_dir: Path, job: str, *, plugin_dir: str, data_dir: str) -> Path:
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    path = scripts_dir / JOBS[job]["stub"]
+    path.write_text(stub_text(job, plugin_dir=plugin_dir, data_dir=data_dir))
+    return path

@@ -11,6 +11,7 @@ provides_tools:
   - task_research
   - task_work_start
   - task_checkpoint
+  - task_setup
   - research_skills_list
   - research_skill_view
   - research_capabilities
