@@ -192,12 +192,19 @@ def _date(value):
 
 
 def validate_source_config(config):
-    for key in ('source_key', 'account_key', 'scope', 'read_method', 'identity'):
+    for key in ('source_key', 'account_key', 'scope', 'read_method'):
         if not config.get(key):
             raise UserError('source not ready: missing ' + key)
-    identity = config['identity']
-    if identity.get('confirmed') is not True or not identity.get('name'):
-        raise UserError('source identity needs interactive confirmation')
+    relevance = config.get('relevance') or {}
+    requirements = relevance.get('identity_requirements', [])
+    if not isinstance(requirements, list) or not set(requirements) <= {'name', 'aliases', 'user_id'}:
+        raise UserError('invalid relevance identity requirements')
+    if requirements:
+        identity = config.get('identity') or {}
+        if identity.get('confirmed') is not True or any(not identity.get(k) for k in requirements):
+            raise UserError('source relevance identity needs interactive confirmation')
+        if identity.get('account_key', config['account_key']) != config['account_key']:
+            raise UserError('source relevance identity account mismatch')
 
 
 def _persist_items(store, stream, config, items):

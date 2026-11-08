@@ -630,8 +630,10 @@ class DiscoveryStore:
     def _validate_for_attempt(ledger: dict[str, Any], attempt: dict[str, Any], payload: Any) -> list[tuple[str, dict[str, Any], list[str]]]:
         cid = attempt['candidate_id']
         item = DiscoveryStore._candidate(ledger, cid)
-        cohort = next(x for x in ledger['cohorts'] if cid in x['candidate_ids'])
-        others = {x['candidate_id']: x['source_ids'] for x in ledger['candidates'] if x['candidate_id'] in cohort['candidate_ids'] and x['candidate_id'] != cid and x['prefilter_disposition'] == 'research'}
+        selected = {parent for cohort in ledger['cohorts'] for parent in cohort['candidate_ids']}
+        others = {x['candidate_id']: x['source_ids'] for x in ledger['candidates']
+                  if x['candidate_id'] in selected and x['candidate_id'] != cid
+                  and not x.get('parent_candidate_id') and x['prefilter_disposition'] == 'research'}
         return validate_bundle(payload, cid, item['source_ids'], other_sources=others, action_registry=ledger['action_registry'].get(cid))
 
     def freeze_action_registry(self, run_id: str, cid: str, anchors: list[dict[str, str]]) -> list[dict[str, Any]]:

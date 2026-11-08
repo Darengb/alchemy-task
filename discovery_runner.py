@@ -232,7 +232,11 @@ class DiscoveryRunner:
         else:
             raise UserError('unknown upload action')
         a = self.store.get_attempt(run_id, token)
-        return {'receipt': receipt, 'accepted': False, 'validation_error': a.get('validation_error'), 'instruction': 'Stop. Final response is this receipt only. No same-child corrections.'}
+        committed = upload is None or upload.get('action') == 'commit'
+        instruction = ('Stop. Final response is this receipt only. No same-child corrections.' if committed
+                       else 'Continue uploading the remaining declared parts, then call commit. Do not stop before the full payload is committed.')
+        return {'receipt': receipt, 'accepted': False, 'payload_committed': committed,
+                'validation_error': a.get('validation_error'), 'instruction': instruction}
 
     def _bootstrap(self, run, attempt):
         ledger = self.store.get_run(run)
