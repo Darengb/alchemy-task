@@ -155,7 +155,10 @@ class DiscoveryConversion:
                                      'accepted_research_revision': content_revision(research)}}
                 body, before = '## Notes\n', None
             if before:
-                if title: fm['title'] = title
+                if title:
+                    if not isinstance(title, str) or not title.strip() or len(title) > 200:
+                        raise UserError('task title requires 1..200 characters')
+                    fm['title'] = title.strip()
                 if due or undated:
                     date = tf.parse_date_words(due, self.rt.settings.today(), 'due')
                     fm['due'] = date
@@ -239,7 +242,7 @@ class DiscoveryConversion:
                 if receipt or hash_ != plan['preimage_sha256']:
                     raise tf.ConcurrentEditError('whole batch preflight CAS failed')
                 outcome = self.match(run, wid)
-                if outcome['kind'] == 'conflict' or (plan['request']['choice'] == 'create' and outcome['kind'] == 'exact'):
+                if outcome['kind'] == 'conflict' or (outcome['kind'] == 'exact' and (plan['request']['choice'] == 'create' or outcome['targets'][0]['task_id'] != plan['task_id'])):
                     raise UserError('destination identity changed during batch preflight')
             self._validate_dossiers(plan['postimage'])
         return {'state': 'verified', 'count': len(bindings)}
@@ -267,7 +270,7 @@ class DiscoveryConversion:
                     raise tf.ConcurrentEditError('converted task changed; do not overwrite user edits')
                 elif (tf.content_hash(actual) if actual is not None else None) == plan['preimage_sha256']:
                     current = self.match(run, wid)
-                    if current['kind'] == 'conflict' or (plan['request']['choice'] == 'create' and current['kind'] == 'exact'):
+                    if current['kind'] == 'conflict' or (current['kind'] == 'exact' and (plan['request']['choice'] == 'create' or current['targets'][0]['task_id'] != plan['task_id'])):
                         raise UserError('exact destinations changed since preparation')
                     tf.atomic_write(path, plan['postimage'].encode(), expect=actual)
                 else:

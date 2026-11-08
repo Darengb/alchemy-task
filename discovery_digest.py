@@ -21,7 +21,7 @@ class DiscoveryDigest:
     def _load(self):
         return read_json(self.path, {'digests': {}, 'proposals': {}, 'numbers': {}, 'seen': {}, 'delivery': {}})
 
-    def prepare(self, run, *, stream, day, origin, items, failures=None, coverage=None, label=''):
+    def prepare(self, run, *, stream, day, origin, items, failures=None, coverage=None, outcomes=None, label=''):
         dt.date.fromisoformat(day)
         if not origin.get('session_id'):
             raise UserError('digest requires actual origin session')
@@ -55,13 +55,20 @@ class DiscoveryDigest:
                 lines.append(f"**{item['ref']}.** {item['title']}{qualifier}")
             if not numbered:
                 lines.append('No new proposals.')
+            for outcome in outcomes or []:
+                line = f"Existing task: {outcome['title']} [{outcome['task_id']}]: {outcome['status']}"
+                for surface in ('git', 'phone'):
+                    detail = outcome.get(surface) or {}
+                    if detail: line += f"; {surface}={detail.get('state', 'unknown')}" + (': ' + detail['reason'] if detail.get('reason') else '')
+                if outcome.get('resume_action'): line += '; resume with discovery_conversion_recover for this saved run/unit'
+                lines.append(line)
             for failure in failures:
                 lines.append('Attention: ' + str(failure.get('reason') or failure))
             for source in coverage:
                 lines.append('Coverage: ' + str(source.get('source_key', source.get('source', 'source'))) + ': ' + str(source.get('status', 'unknown')) + (': ' + str(source['error']) if source.get('error') else ''))
             lines.append('Reply with the numbers you want. Other items remain replyable for seven days.')
             result = {'run_id': run, 'stream': stream, 'day': day, 'origin': origin, 'items': numbered,
-                      'failures': failures, 'coverage': coverage, 'text': '\n'.join(lines)}
+                      'failures': failures, 'coverage': coverage, 'outcomes': outcomes or [], 'text': '\n'.join(lines)}
             result['sha256'] = hashlib.sha256(result['text'].encode()).hexdigest()
             data['digests'][run] = result
             data['delivery'][run] = {'state': 'prepared', 'digest_sha256': result['sha256'], 'origin': origin}

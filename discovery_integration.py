@@ -156,6 +156,10 @@ class DiscoveryIntegration:
             configs = (self.rt.ctx.state.get('discovery_sources', default={}) or {}).get(current['name'], {})
             if len(configs) != len(current['sources']):
                 raise UserError('configure approved source/account/read-method bindings and relevance before starting')
+            approved = [(s['name'], s['scope']) for s in current['sources']]
+            configured = [(s.get('name'), s.get('scope')) for s in configs.values()]
+            if any(configured.count(pair) != 1 for pair in approved) or any(pair not in approved for pair in configured):
+                raise UserError('source configuration membership/scope no longer matches approved stream; reconfigure before NEW scan')
             now = dt.datetime.now(dt.timezone.utc)
             windows = {}
             for key, config in configs.items():
@@ -436,13 +440,21 @@ class DiscoveryIntegration:
         if not info: raise UserError('global join required before review decisions/digest')
         join = json.loads((self.store.run_dir(run_id) / 'resources' / info['sha256']).read_text())
         if not join.get('joined'): raise UserError('global join incomplete')
-        items, conflicts = [], []
+        items, conflicts, outcomes = [], [], []
         for candidate in ledger['candidates']:
             if not candidate.get('parent_candidate_id') or candidate['parent_candidate_id'] not in join['accepted'] or not candidate.get('eligible_research'): continue
             decision = read_json(self._decision_path(run_id, candidate['candidate_id']))
             if not decision: raise UserError('post-join semantic decision missing for ' + candidate['candidate_id'])
             if decision['request']['decision'] == 'propose': items.append(decision)
             elif decision['kind'] == 'conflict': conflicts.append({'unit_id': candidate['candidate_id'], 'reason': 'Multiple exact task destinations conflict', 'targets': decision['targets']})
+            elif decision['request']['decision'] in {'auto', 'noop'}:
+                _, receipt_path = self.conversion._paths(run_id, candidate['candidate_id'])
+                receipt = read_json(receipt_path, {})
+                outcomes.append({'unit_id': candidate['candidate_id'], 'title': decision['title'],
+                                 'task_id': receipt.get('task_id', decision['request']['target_task_id']),
+                                 'status': receipt.get('state', 'noop' if decision['request']['decision'] == 'noop' else 'unknown'),
+                                 'git': receipt.get('git'), 'phone': receipt.get('phone'),
+                                 'resume_action': {'tool': 'discovery_conversion_recover', 'run_id': run_id, 'unit_id': candidate['candidate_id']} if receipt.get('state') != 'complete' and decision['request']['decision'] == 'auto' else None})
         coverage = []
         for name, info in ledger['resources'].items():
             if name.startswith('collection-'):
@@ -450,7 +462,7 @@ class DiscoveryIntegration:
         stream = self._stream(ledger['config'].get('stream_name', ledger['stream']))
         origin = {**ledger['origin'], 'session_id': ledger['origin'].get('stream_origin_session', ledger['origin']['session_id'])}
         digest = self.digest.prepare(run_id, stream=ledger['config'].get('stream_name', ledger['stream']), day=ledger['business_date'], origin=origin,
-                                     items=items, failures=join['failures'] + conflicts, coverage=coverage, label=stream.get('label', ''))
+                                     items=items, failures=join['failures'] + conflicts, coverage=coverage, outcomes=outcomes, label=stream.get('label', ''))
         self.store.save_review(run_id, {'digest': digest, 'conflicts': conflicts, 'joined': join})
         self._settle_backlog(run_id, join)
         return digest
@@ -472,6 +484,8 @@ class DiscoveryIntegration:
                 prepared.append((proposal, run_id, unit_id, True))
                 continue
             edit = copy.deepcopy((args.get('edits') or {}).get(str(ref), {}))
+            if 'title' in edit and (not isinstance(edit['title'], str) or not edit['title'].strip() or len(edit['title']) > 200):
+                raise UserError('approval title edit requires 1..200 characters')
             plan_path, _ = self.conversion._paths(run_id, unit_id)
             plan = read_json(plan_path)
             if plan and any(key not in plan['request'] or plan['request'][key] != value for key, value in edit.items()):
