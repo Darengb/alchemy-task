@@ -110,8 +110,10 @@ def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None) 
                    'Use discovery_research_run, fetch every full callback, perform substantive parent semantic acceptance/repair, '
                    'reconcile all cohorts, then discovery_join. Only after global join perform serial discovery_match/discovery_decision. '
                    'Prepare discovery_digest. No freeform discovery_submit candidates, no task creation before approval, '
-                   'no generic post-creation research replacing accepted dossiers. Return the immutable digest text unchanged for origin delivery; '
-                   'preparation is not a verified delivery receipt. If blocked, report the exact pending saved run rather than creating another run.')}
+                   'no generic post-creation research replacing accepted dossiers. If an approved explicit sender/readback binding exists, '
+                   'call discovery_digest action=send. This path requires local-only scheduler delivery; after sending or an unknown outcome '
+                   'return [SILENT], never repeat the digest in the final reply. Otherwise return the immutable digest for scheduler delivery '
+                   '(unverified); preparation is not delivery proof. If blocked, report the exact saved run rather than creating another run.')}
 
 
 def read_discovery_job(rt, stream):

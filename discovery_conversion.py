@@ -35,6 +35,7 @@ class DiscoveryConversion:
     def _exact_values(self, doc):
         # Related-only identities in a managed dossier never grant write authority.
         body = doc.body
+        self._validate_dossiers(body)
         values = set()
         for match in re.finditer(r'<!-- discovery-dossier:start ([A-Za-z0-9._-]+) -->(.*?)<!-- discovery-dossier:end \1 -->', body, re.S):
             values.add('dossier:' + match[1])
@@ -46,6 +47,22 @@ class DiscoveryConversion:
         values.update(extract_identities(metadata))
         values.update(extract_identities(body))
         return values
+
+    @staticmethod
+    def _validate_dossiers(body):
+        opened = None
+        seen = set()
+        for marker in re.finditer(r'<!-- discovery-dossier:(start|end) ([A-Za-z0-9._-]+) -->', body):
+            kind, identity = marker.groups()
+            if kind == 'start':
+                if opened or identity in seen: raise UserError('malformed or duplicated existing dossier markers')
+                opened = identity
+                seen.add(identity)
+            else:
+                if opened != identity: raise UserError('malformed existing dossier end marker')
+                opened = None
+        if opened or body.count('<!-- discovery-dossier:') != len(list(re.finditer(r'<!-- discovery-dossier:(?:start|end) [A-Za-z0-9._-]+ -->', body))):
+            raise UserError('malformed existing dossier markers')
 
     def match(self, run, wid):
         candidate, research = self.joined(run, wid)
@@ -76,7 +93,8 @@ class DiscoveryConversion:
         return folder / (wid + '.plan.json'), folder / (wid + '.receipt.json')
 
     def prepare(self, run, wid, *, choice, reason, target_task_id='', expected_revision='',
-                useful_delta=False, user_approved=False, area='', title='', due='', undated=False):
+                useful_delta=False, user_approved=False, area='', title='', due='', undated=False,
+                expected_plan_revision='', scope_notes=''):
         if not isinstance(reason, str) or not reason.strip() or len(reason) > 2000:
             raise UserError('substantive parent decision reason required')
         if choice not in {'create', 'update', 'auto', 'noop'}:
@@ -95,14 +113,16 @@ class DiscoveryConversion:
             raise UserError('exact task already exists; cannot create a duplicate')
         request = dict(choice=choice, reason=reason, target_task_id=target_task_id,
                        expected_revision=expected_revision, useful_delta=useful_delta,
-                       user_approved=user_approved, area=area, title=title, due=due, undated=undated)
+                       user_approved=user_approved, area=area, title=title, due=due, undated=undated,
+                       scope_notes=scope_notes)
         plan_path, _ = self._paths(run, wid)
         with self.store._lock('conversion:' + run + ':' + wid):
             old = read_json(plan_path)
             if old:
-                if old['request'] != request:
+                if not expected_plan_revision and old['request'] != request:
                     raise UserError('conversion binding is immutable; resume exact saved conversion')
-                return old
+                if not expected_plan_revision: return old
+                self._unwritten(old, run, wid, expected_plan_revision)
             task_store = self.rt.store()
             if choice != 'create':
                 targets = [t for t in outcome['targets'] if t['task_id'] == target_task_id]
@@ -123,7 +143,7 @@ class DiscoveryConversion:
                 date = tf.parse_date_words(due, self.rt.settings.today(), 'due')
                 if not date and not undated:
                     raise UserError('ask for due date or explicit undated approval')
-                tid = tf.new_task_id()
+                tid = old['task_id'] if old and old['request']['choice'] == 'create' else tf.new_task_id()
                 name = title or research['title']
                 if not isinstance(name, str) or not name.strip() or len(name) > 200:
                     raise UserError('task title requires 1..200 characters')
@@ -134,6 +154,16 @@ class DiscoveryConversion:
                       'enrichment': {'status': 'complete', 'attempts': 0, 'research_origin': 'discovery',
                                      'accepted_research_revision': content_revision(research)}}
                 body, before = '## Notes\n', None
+            if before:
+                if title: fm['title'] = title
+                if due or undated:
+                    date = tf.parse_date_words(due, self.rt.settings.today(), 'due')
+                    fm['due'] = date
+                    fm['scheduled'] = date
+                if area and area != fm.get('area'): raise UserError('rehome existing tasks through task_update, not discovery approval')
+            if scope_notes:
+                if not isinstance(scope_notes, str) or len(scope_notes) > 16000: raise UserError('scope_notes must be text up to 16000 characters')
+                body += '\n\n## Approved scope\n\n' + scope_notes + '\n'
             dossier_id = 'dos-' + wid[2:]
             revision, block = render_discovery_dossier(research, dossier_id=dossier_id, candidate_source_ids=candidate['source_ids'])
             ids = fm.get('dossier_ids') or []
@@ -154,16 +184,75 @@ class DiscoveryConversion:
                     'task_id': tid, 'path': task_store.rel(path), 'preimage_sha256': tf.content_hash(before) if before else None,
                     'postimage': postimage, 'postimage_sha256': tf.content_hash(postimage.encode()),
                     'dossier_id': dossier_id, 'research_revision': content_revision(research), 'dossier_revision': revision}
+            if old:
+                plan['history'] = [*old.get('history', []), old]
             atomic_json(plan_path, plan)  # UUID, path and FULL postimage persisted BEFORE any task write
             return plan
 
+    def _unwritten(self, plan, run, wid, expected):
+        if content_revision(plan) != expected: raise UserError('stale conversion plan revision')
+        _, receipt_path = self._paths(run, wid)
+        path = self.rt.store().root / plan['path']
+        actual = path.read_bytes() if path.exists() else None
+        if read_json(receipt_path) or (tf.content_hash(actual) if actual is not None else None) != plan['preimage_sha256']:
+            raise UserError('conversion may already be written or task changed; cannot revise/cancel pending plan')
+        if plan.get('merge_group'): raise UserError('revise/cancel the whole merge group, not one member')
+
+    def revise(self, run, wid, *, expected_plan_revision, edits, reason):
+        plan = read_json(self._paths(run, wid)[0])
+        if not plan: raise UserError('no prepared plan to revise')
+        if set(edits) - {'choice', 'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated', 'scope_notes'}:
+            raise UserError('unsupported pending plan edits')
+        request = {**plan['request'], **edits, 'reason': reason, 'user_approved': True}
+        return self.prepare(run, wid, **request, expected_plan_revision=expected_plan_revision)
+
+    def cancel(self, run, wid, *, expected_plan_revision, reason):
+        if not reason: raise UserError('explicit cancellation reason required')
+        plan_path, _ = self._paths(run, wid)
+        with self.store._lock('conversion:' + run + ':' + wid):
+            plan = read_json(plan_path)
+            if not plan: raise UserError('no prepared plan to cancel')
+            self._unwritten(plan, run, wid, expected_plan_revision)
+            plan.update(state='cancelled', cancellation_reason=reason)
+            atomic_json(plan_path, plan)
+            return plan
+
+    def preflight(self, bindings):
+        """Validate the complete approved batch, including all CASes, before writes."""
+        destinations = {}
+        for run, wid in bindings:
+            _, research = self.joined(run, wid)
+            plan_path, receipt_path = self._paths(run, wid)
+            plan = read_json(plan_path)
+            if not plan or plan.get('state') == 'cancelled': raise UserError('missing or cancelled conversion plan')
+            if content_revision(research) != plan['research_revision'] or tf.content_hash(plan['postimage'].encode()) != plan['postimage_sha256']:
+                raise UserError('prepared plan hash/research binding mismatch')
+            path = (self.rt.store().root / plan['path']).resolve()
+            if not any(path.is_relative_to(folder.resolve()) for _, folder in self.rt.store().task_dirs()):
+                raise UserError('conversion path outside task directories')
+            prior = destinations.setdefault(str(path), plan['postimage_sha256'])
+            if prior != plan['postimage_sha256']: raise UserError('several plans target same task; explicit combined merge required')
+            actual = path.read_bytes() if path.exists() else None
+            hash_ = tf.content_hash(actual) if actual is not None else None
+            receipt = read_json(receipt_path)
+            if hash_ != plan['postimage_sha256']:
+                if receipt or hash_ != plan['preimage_sha256']:
+                    raise tf.ConcurrentEditError('whole batch preflight CAS failed')
+                outcome = self.match(run, wid)
+                if outcome['kind'] == 'conflict' or (plan['request']['choice'] == 'create' and outcome['kind'] == 'exact'):
+                    raise UserError('destination identity changed during batch preflight')
+            self._validate_dossiers(plan['postimage'])
+        return {'state': 'verified', 'count': len(bindings)}
+
     def apply(self, run, wid):
+        self.preflight([(run, wid)])
         _, research = self.joined(run, wid)
         plan_path, receipt_path = self._paths(run, wid)
         with self.store._lock('conversion:' + run + ':' + wid):
             plan = read_json(plan_path)
             if not plan:
                 raise UserError('prepare immutable approved conversion first')
+            if plan.get('state') == 'cancelled': raise UserError('conversion plan cancelled')
             if content_revision(research) != plan['research_revision']:
                 raise UserError('accepted research binding changed')
             old = read_json(receipt_path)
@@ -203,8 +292,8 @@ class DiscoveryConversion:
         with self.store._lock('conversion:' + run + ':' + wid):
             receipt = read_json(receipt_path)
             if receipt['git']['state'] == 'verified':
-                return receipt
-            if self.rt.settings.git_transport == 'none':
+                pass
+            elif self.rt.settings.git_transport == 'none':
                 receipt['git'] = {'state': 'deferred', 'reason': 'Git delivery disabled by task settings'}
             else:
                 delivery = self.rt.git()
@@ -224,6 +313,9 @@ class DiscoveryConversion:
                                       'branch': branch, 'sha256': tf.content_hash(committed)}
                 except Exception as exc:
                     receipt['git'] = {'state': 'pending', 'reason': str(exc)[:500]}
-            receipt['state'] = 'complete' if receipt['git']['state'] in {'verified', 'deferred'} else 'git_pending'
+            from .ios_sync import discovery_mirror_status
+            receipt['phone'] = discovery_mirror_status(self.rt, receipt['task_id'])
+            receipt['state'] = ('git_pending' if receipt['git']['state'] not in {'verified', 'deferred'} else
+                                'phone_pending' if receipt['phone']['state'] not in {'verified', 'deferred'} else 'complete')
             atomic_json(receipt_path, receipt)
             return receipt

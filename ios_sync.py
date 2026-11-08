@@ -204,6 +204,33 @@ def status(rt: Runtime) -> dict[str, Any]:
             "last_sync": st.get("last_sync")}
 
 
+def discovery_mirror_status(rt: Runtime, task_id: str) -> dict[str, Any]:
+    """Observe/queue the existing approved mirror; never call the device here."""
+    st = load(rt)
+    cfg = st['config']
+    if not cfg.get('enabled'):
+        return {'state': 'deferred', 'reason': 'Optional phone mirror is disabled or not configured'}
+    doc = rt.store().resolve(task_id)
+    if doc.fm.get('area') not in cfg.get('areas', []):
+        return {'state': 'deferred', 'reason': 'Task outside explicitly approved phone mirror areas'}
+    wanted = {'projection': rm.local_projection(doc.fm), 'notes': rm.compose_notes(doc.fm, doc.body, task_id),
+              'device_id': cfg.get('device_id'), 'list_id': cfg.get('list_id')}
+    mapping = st['mappings'].get(task_id, {})
+    proof = mapping.get('verified_readback') or {}
+    if (mapping.get('reminder_id') and proof.get('id') == mapping['reminder_id']
+            and all(proof.get(k) == v for k, v in wanted.items())
+            and not any(op.get('task_id') == task_id for op in st['ops'].values())
+            and not st['conflicts'].get(task_id)):
+        return {'state': 'verified', 'reminder_id': proof['id'], 'device_id': proof['device_id'],
+                'list_id': proof['list_id'], 'readback_sha256': hashlib.sha256(json.dumps(proof, sort_keys=True).encode()).hexdigest()}
+    if any(op.get('task_id') == task_id and op.get('state') in {'uncertain', 'dispatching'} for op in st['ops'].values()):
+        return {'state': 'unknown', 'reason': 'Existing mirror outcome unknown; no new create authorized'}
+    st.setdefault('discovery_pending', {})[task_id] = wanted
+    save(rt, st, keep_disk_config=True)
+    return {'state': 'queued', 'reason': 'Awaiting existing user-triggered approved phone sync and exact target readback',
+            'device_id': cfg.get('device_id'), 'list_id': cfg.get('list_id')}
+
+
 def resolve(rt: Runtime, task: str, choices: dict[str, str]) -> dict[str, Any]:
     """Settle a conflict: per field, 'local' (task file wins) or 'native' (Reminders wins). Applied on next sync."""
     st = load(rt)
@@ -346,6 +373,8 @@ def _sync(rt: Runtime, st: dict[str, Any], cfg: dict[str, Any], deadline: float)
         if rem.get("list_id") != m["list_id"]:
             rep["skipped"].append(f"{doc.title}: its reminder moved to another list; left alone")
             continue
+        m['verified_readback'] = {'id': rem['id'], 'list_id': rem['list_id'], 'device_id': cfg['device_id'],
+                                  'projection': rm.remote_projection(rem, tz)[0], 'notes': rem.get('notes')}
         if doc.status in ("cancelled", "canceled"):
             rep["skipped"].append(f"{doc.title}: cancelled here; its reminder is left as it is")
             continue
@@ -567,6 +596,10 @@ def _settle(rt, st, key, op, resp, rep, by_id, changed_paths, store, tz) -> None
             if len(verified) < len(op["push"]):
                 rep["problems"].append(f"\"{op.get('title')}\": the phone did not confirm every change")
         rep["updated"] += 1
+    m = st['mappings'].get(op['task_id'])
+    if m and data.get('id') == m.get('reminder_id') and data.get('list_id') == m.get('list_id') and op['args'].get('device_id') == cfg.get('device_id'):
+        m['verified_readback'] = {'id': data['id'], 'list_id': data['list_id'], 'device_id': cfg['device_id'],
+                                  'projection': rm.remote_projection(data, rt.settings.timezone or 'UTC')[0], 'notes': data.get('notes')}
     op["state"] = "done"
 
 

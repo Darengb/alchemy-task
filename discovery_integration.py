@@ -329,22 +329,39 @@ class DiscoveryIntegration:
             raise UserError('delivery binding requires actual send AND exact readback tools/mappings')
         if set(binding['read_response']) != {'message_id', 'target', 'text'}:
             raise UserError('readback must verify message_id, origin target and full text')
+        if current.get('job_id'):
+            from .jobs import read_discovery_job
+            read_discovery_job(self.rt, current)
+            raw = self.rt.ctx.dispatch_tool('cronjob_manage', {'action': 'update', 'job_id': current['job_id'], 'deliver': 'local'})
+            result = json.loads(raw) if isinstance(raw, str) else raw
+            if result.get('error') or result.get('success') is False or read_discovery_job(self.rt, current).get('deliver') != 'local':
+                raise UserError('cannot enable explicit delivery until scheduler local-only readback succeeds')
         configs = self.rt.ctx.state.get('discovery_delivery', default={}) or {}
         configs[current['name']] = copy.deepcopy(binding)
         self.rt.ctx.state.set('discovery_delivery', configs)
         return {'configured': True, 'stream': current['name'], 'origin_session': current['origin_session']}
 
     def deliver(self, run_id, *, session_id):
+        with self.store._lock('delivery-send:' + run_id):
+            return self._deliver(run_id, session_id=session_id)
+
+    def _deliver(self, run_id, *, session_id):
         digest = self.digest.get(run_id)
-        if digest['origin']['session_id'] != session_id:
-            raise UserError('only exact origin chat can dispatch digest delivery')
         receipt = self.digest.delivery(run_id)
-        if receipt['state'] == 'delivered': return receipt
         binding = receipt.get('binding') or (self.rt.ctx.state.get('discovery_delivery', default={}) or {}).get(digest['stream'])
+        stream = self._stream(digest['stream'])
+        scheduled = self._scheduled_identity(stream)
+        if digest['origin']['session_id'] != session_id and not (scheduled and binding and binding.get('scheduled_approved') is True):
+            raise UserError('only origin or an explicitly approved bound scheduled occurrence may deliver')
+        if receipt['state'] == 'delivered': return receipt
         if not binding:
             return {**receipt, 'reason': 'No approved origin sender/readback binding. Scheduler/final-response delivery is not verified by digest preparation.'}
-        if binding['origin_session'] != session_id:
+        if binding['origin_session'] != digest['origin']['session_id']:
             raise UserError('delivery mapping origin mismatch')
+        if stream.get('job_id'):
+            from .jobs import read_discovery_job
+            if read_discovery_job(self.rt, stream).get('deliver') != 'local':
+                raise UserError('explicit send blocked: scheduler final delivery must be local-only')
         values = {'target': binding['target'], 'text': digest['text']}
         try:
             if receipt['state'] == 'prepared':
@@ -466,12 +483,13 @@ class DiscoveryIntegration:
                     raise UserError('semantic proposal requires explicit update or create choice')
                 if kind == 'selection' and choice == 'update' and not edit.get('target_task_id'):
                     raise UserError('select one of ALL nominated target_task_id options')
-                allowed = {'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated'}
+                allowed = {'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated', 'scope_notes'}
                 if set(edit) - allowed: raise UserError('unsupported approval edits: ' + ', '.join(sorted(set(edit) - allowed)))
                 self.conversion.prepare(run_id, unit_id, choice=choice, reason='User approved exact immutable proposal ' + proposal['proposal_id'],
                                         user_approved=True, **edit)
             prepared.append((proposal, run_id, unit_id, False))
         # Validate/prepare the complete selected batch before the FIRST task write.
+        self.conversion.preflight([(r, w) for _, r, w, _ in prepared])
         for proposal, run_id, unit_id, completed in prepared:
             if not completed: self.digest.decide(proposal['proposal_id'], 'approved')
             receipt = self.conversion.deliver_git(run_id, unit_id) if hasattr(self.rt, 'git') else self.conversion.apply(run_id, unit_id)
@@ -530,7 +548,7 @@ SCHEMAS = {
  'discovery_match': _schema('discovery_match', 'Post-join typed exact matching and all semantic target options; returns full body resources, no mutation.', {**RUN, 'unit_id': STR}, ['run_id', 'unit_id']),
  'discovery_digest': _schema('discovery_digest', 'Prepare/read immutable review digest after all match decisions. Preparation is not delivery proof.', {**RUN, 'action': {'type': 'string', 'enum': ['prepare', 'get', 'delivery', 'send']}}, ['run_id']),
  'discovery_decision': _schema('discovery_decision', 'Parent post-join disposition. Unique exact requires useful delta auto or byte-preserving noop; semantic/new remains proposal; multiple exact conflict.', {**RUN, 'unit_id': STR, 'decision': {'type': 'string', 'enum': ['propose', 'auto', 'noop', 'conflict']}, 'reason': STR, 'target_task_id': STR, 'expected_revision': STR, 'useful_delta': BOOL}, ['run_id', 'unit_id', 'decision', 'reason']),
- 'discovery_conversion_recover': _schema('discovery_conversion_recover', 'Resume exact prebound approved conversion and verify local/Git postimages. Never creates a fresh plan.', {**RUN, 'unit_id': STR}, ['run_id', 'unit_id']),
+ 'discovery_conversion_recover': _schema('discovery_conversion_recover', 'Inspect/resume exact conversion, or explicitly revise/cancel an unwritten plan with CAS and origin approval.', {**RUN, 'unit_id': STR, 'action': {'type': 'string', 'enum': ['resume', 'inspect', 'revise', 'cancel']}, 'expected_plan_revision': STR, 'edits': OBJ, 'reason': STR, 'user_approved': BOOL}, ['run_id', 'unit_id']),
  'discovery_runs': _schema('discovery_runs', 'Backend API: list full run records or get exact run including research, proposals, conflicts, recovery and delivery.', {'run_id': STR}),
 }
 
@@ -562,8 +580,10 @@ def register(ctx, *, integration=None):
             return getattr(get_service(Runtime(ctx)), name)
     service = integration or DeferredIntegration()
     handlers = make_tool_handlers(service.runner)
-    def config_call(a, **_):
+    def config_call(a, session_id='', **_):
         action = a['action']
+        if action in {'source', 'delivery'} and session_id != service._stream(a['stream'])['origin_session']:
+            raise UserError('source/delivery approval must be configured from actual origin session, never scheduled claims')
         if action == 'source':
             return service.configure(a['stream'], a['config'], user_approved=a.get('user_approved', False))
         if action == 'delivery':
@@ -576,7 +596,7 @@ def register(ctx, *, integration=None):
     def digest_call(a, session_id='', **_):
         ledger = service.store.get_run(a['run_id'])
         if session_id not in {ledger['origin'].get('session_id'), ledger['origin'].get('stream_origin_session')}:
-            raise UserError('digest belongs to another origin')
+            service.runner._parent(a['run_id'], session_id)
         action = a.get('action', 'prepare')
         if action == 'prepare': return service.finalize(a['run_id'], session_id=session_id)
         if action == 'get': return service.digest.get(a['run_id'])
@@ -585,6 +605,19 @@ def register(ctx, *, integration=None):
         raise UserError('unknown digest action')
     def conversion_recover(a, session_id='', **_):
         service.backend(a['run_id'], session_id=session_id)  # exact origin authorization
+        action = a.get('action', 'resume')
+        if action == 'inspect':
+            plan = read_json(service.conversion._paths(a['run_id'], a['unit_id'])[0])
+            return {'plan': plan, 'plan_revision': content_revision(plan) if plan else None}
+        if action != 'resume':
+            ledger = service.store.get_run(a['run_id'])
+            origin = ledger['origin'].get('stream_origin_session', ledger['origin'].get('session_id'))
+            if session_id != origin or a.get('user_approved') is not True:
+                raise UserError('pending-plan changes require explicit approval from actual origin session')
+            params = {k: a[k] for k in ('expected_plan_revision', 'reason')}
+            if action == 'revise': return service.conversion.revise(a['run_id'], a['unit_id'], edits=a.get('edits', {}), **params)
+            if action == 'cancel': return service.conversion.cancel(a['run_id'], a['unit_id'], **params)
+            raise UserError('unknown plan action')
         return service.conversion.deliver_git(a['run_id'], a['unit_id'])
     handlers.update({
         'discovery_config': config_call,
