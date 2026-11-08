@@ -51,7 +51,14 @@ researches it in the background, and keeps it current while you work on it.
   `/task ios`. Open tasks from the areas you choose appear in your default Reminders list (or another list you
   name); title, due date and the checkbox stay in sync both ways each time you sync, and everything else stays
   in the task file. Checking a reminder off marks the task done. Only open tasks get a new reminder, and not
-  ones more than 14 days overdue. Your own reminders are never touched.
+  ones more than 14 days overdue. Your own reminders are never touched. Each reminder's notes show the task's
+  summary and its next step.
+
+  *Where it works:* tested end to end on a real iPhone with self-hosted Hermes, from a chat in the Hermes app:
+  creating reminders in a chosen list, all-day due dates with no alert, renames and summary notes reaching the
+  phone, and checking a reminder off on the phone marking the task done. On Nous Cloud agents the connector
+  installs and runs on the server, but the current beta of the Hermes app does not yet offer Device Access for
+  Cloud agents, so Reminders sync there waits on that app update.
 - **Validator:** `/task validate` checks hand-edited files, reports problems and assigns missing IDs with
   one-line edits that keep your comments and formatting.
 
