@@ -29,9 +29,9 @@ CREATE_SCHEMA = {
         "properties": {
             "title": {"type": "string", "description": "Short imperative title, cleaned up from the user's wording."},
             "area": {"type": "string", "description": "Area slug. Infer from context when clear; omit to get the list."},
-            "due": {**_DATE, "description": "Due date YYYY-MM-DD in the user's timezone. Required unless undated."},
+            "due": {"type": "string", "description": "Deadline: YYYY-MM-DD, or words like 'Friday', 'tomorrow', 'Nov 13'. Required unless undated."},
             "undated": {"type": "boolean", "description": "True only if the user explicitly said this task has no due date."},
-            "scheduled": {**_DATE, "description": "Date the user plans to work on it (optional, differs from due)."},
+            "scheduled": {"type": "string", "description": "Day the user plans to work on it (optional, differs from due); same formats as due."},
             "priority": {"type": "string", "enum": list(tf.PRIORITIES)},
             "project": {"type": "string", "description": "Optional project link or slug."},
             "notes": {"type": "string", "description": "Context: why it matters, links, what the user said. Markdown."},
@@ -54,7 +54,8 @@ CREATE_SCHEMA = {
 UPDATE_SCHEMA = {
     "name": "task_update",
     "description": (
-        "Change an existing task: status, dates, priority, title, area, notes. Changes only the fields you pass "
+        "Change an existing task: status, dates, priority, title, area, notes. Rescheduling: 'move X to Friday' "
+        "changes scheduled; 'X is now due Friday' changes due. Changes only the fields you pass "
         "and appends a dated log line. Marking done sets the completed date. Reopening a done or cancelled task "
         "needs reopen=true. Cancelled and waiting need a reason. Use this instead of editing task files."),
     "parameters": {
@@ -67,9 +68,9 @@ UPDATE_SCHEMA = {
             "completed": {**_DATE, "description": "Completion date if not today."},
             "title": _STR,
             "rename_file": {"type": "boolean", "description": "Also rename the file to match a new title."},
-            "due": {"type": "string", "description": "YYYY-MM-DD, or 'none' to clear (needs undated=true)."},
+            "due": {"type": "string", "description": "New deadline: YYYY-MM-DD or words ('Friday', 'Nov 13'); 'none' clears it (needs undated=true)."},
             "undated": {"type": "boolean"},
-            "scheduled": {"type": "string", "description": "YYYY-MM-DD, or 'none' to clear."},
+            "scheduled": {"type": "string", "description": "New planned day: YYYY-MM-DD or words ('tomorrow', 'next Monday'); 'none' clears it."},
             "priority": {"type": "string", "enum": list(tf.PRIORITIES)},
             "project": _STR,
             "estimate": _STR,

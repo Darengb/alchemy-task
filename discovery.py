@@ -485,9 +485,9 @@ def decide(rt: Runtime, args: dict[str, Any], session_id: str = "") -> dict[str,
         e = edits.get(ref, edits.get(str(p["num"]), {}))
         if e.get("due"):
             try:
-                tf.validate_date(e["due"], "due")
-            except tf.TaskFormatError:
-                invalid.append(f"{ref}: due must be YYYY-MM-DD, got {e['due']!r}")
+                e["due"] = tf.parse_date_words(e["due"], _today(rt), "due")
+            except tf.TaskFormatError as exc:
+                invalid.append(f"{ref}: {exc}")
         if e.get("priority") and str(e["priority"]).lower() not in tf.PRIORITIES:
             invalid.append(f"{ref}: priority must be one of {', '.join(tf.PRIORITIES)}")
         if e.get("area") and str(e["area"]).lower() not in known:

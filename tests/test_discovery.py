@@ -158,7 +158,7 @@ def test_invalid_edit_creates_nothing_and_failures_stay_open(ctx, settings):
     tool(task_tools.discovery_submit, stream="work", candidates=CANDS[:2], coverage=[])
     tasks = settings.root() / "areas/work/tasks"
     before = len(list(tasks.glob("*.md")))
-    bad = tool(task_tools.discovery_decide, approve=["1", "2"], edits={"2": {"due": "Nov 13"}})
+    bad = tool(task_tools.discovery_decide, approve=["1", "2"], edits={"2": {"due": "someday soon"}})
     assert bad["needs"] == "fix_call" and len(list(tasks.glob("*.md"))) == before
     bad = tool(task_tools.discovery_decide, approve=["2"], edits={"2": {"due": "2026-11-13", "area": "garden"}})
     assert bad["needs"] == "fix_call"

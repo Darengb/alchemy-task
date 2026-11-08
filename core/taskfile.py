@@ -301,6 +301,58 @@ def validate_date(value: Any, name: str) -> str | None:
     return text
 
 
+_MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct",
+                                       "nov", "dec"], start=1)}
+_WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
+def parse_date_words(value: Any, today: str, name: str = "date") -> str | None:
+    """Accept what people say: YYYY-MM-DD, today, tomorrow, a weekday ("friday", "next friday"), "in 3 days",
+    "next week" (its Monday), or a month and day ("Nov 13", "13 November", "November 13th, 2026").
+    Numeric day/month forms like 11/13 are refused because they are ambiguous across countries."""
+    import datetime as _dt
+    if value in (None, ""):
+        return None
+    text = " ".join(str(value).strip().lower().replace(",", " ").split())
+    if _DATE_RE.match(text):
+        return validate_date(text, name)
+    base = _dt.date.fromisoformat(today)
+    if text in ("today", "tonight"):
+        return base.isoformat()
+    if text == "tomorrow":
+        return (base + _dt.timedelta(days=1)).isoformat()
+    if text == "next week":
+        return (base + _dt.timedelta(days=7 - base.weekday())).isoformat()
+    m = re.match(r"^in (\d{1,3}) (day|days|week|weeks)$", text)
+    if m:
+        n = int(m.group(1)) * (7 if m.group(2).startswith("week") else 1)
+        return (base + _dt.timedelta(days=n)).isoformat()
+    m = re.match(r"^(?:(next|this) )?(" + "|".join(_WEEKDAYS) + r"|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)$", text)
+    if m:
+        word = m.group(2)
+        idx = next(i for i, d in enumerate(_WEEKDAYS) if d.startswith(word[:3]))
+        ahead = (idx - base.weekday()) % 7
+        if m.group(1) == "next" and ahead == 0:
+            ahead = 7
+        return (base + _dt.timedelta(days=ahead)).isoformat()
+    m = re.match(r"^([a-z]{3,9})\.? (\d{1,2})(?:st|nd|rd|th)?(?: (\d{4}))?$", text) or \
+        re.match(r"^(\d{1,2})(?:st|nd|rd|th)? ([a-z]{3,9})\.?(?: (\d{4}))?$", text)
+    if m:
+        a, b, year = m.groups()
+        month_word, day = (a, b) if a.isalpha() else (b, a)
+        month = _MONTHS.get(month_word[:3])
+        if month:
+            yr = int(year) if year else base.year
+            try:
+                cand = _dt.date(yr, month, int(day))
+            except ValueError as exc:
+                raise TaskFormatError(f"{name}: {value!r} is not a real date") from exc
+            if not year and cand < base - _dt.timedelta(days=60):
+                cand = _dt.date(yr + 1, month, int(day))  # "Jan 5" said in November means next year
+            return cand.isoformat()
+    raise TaskFormatError(f"{name}: could not read {value!r}; use a date like 2026-11-13, 'Nov 13' or 'Friday'")
+
+
 def slugify(title: str, max_len: int = 60) -> str:
     import unicodedata
     text = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode()

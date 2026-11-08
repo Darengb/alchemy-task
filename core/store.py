@@ -225,15 +225,19 @@ class TaskStore:
                 continue
             due = tf.norm_date(t.fm.get("due"))
             sched = tf.norm_date(t.fm.get("scheduled"))
+            # Overdue follows Google Tasks: a task's date is its scheduled date if set, else its due date.
+            # Rescheduling a task therefore takes it off the overdue list.
+            effective = sched or due
             reasons, key = [], None
             if sched and start_v <= sched <= end_v:
-                reasons.append(f"scheduled {sched}")
+                note = f" (deadline {due} passed)" if due and due < today else ""
+                reasons.append(f"scheduled {sched}{note}")
                 key = sched
             if due and start_v <= due <= end_v:
                 reasons.append(f"due {due}")
                 key = min(key, due) if key else due
-            if not reasons and include_overdue and due and due < min(start_v, today):
-                reasons.append(f"overdue (was due {due})")
+            if not reasons and include_overdue and effective and effective < min(start_v, today):
+                reasons.append(f"overdue (was {'scheduled' if sched else 'due'} {effective})")
                 key = "0000"
             if reasons:
                 prio = {"urgent": 0, "high": 1, "normal": 2, "low": 3}.get(str(t.fm.get("priority") or "normal"), 2)
@@ -281,11 +285,12 @@ class TaskStore:
         if len(title) > 200:
             raise NeedsInput("title", "Title is too long (200 characters max); put detail in notes.")
         area = self._pick_area(area, create_area)
-        due_v = tf.validate_date(due, "due")
+        today_s = self.s.today()
+        due_v = tf.parse_date_words(due, today_s, "due")
         if not due_v and not undated:
             raise NeedsInput("due", "Ask the user when this is due (a date). Only pass undated=true if the user "
                              "explicitly said this task has no due date.")
-        sched_v = tf.validate_date(scheduled, "scheduled")
+        sched_v = tf.parse_date_words(scheduled, today_s, "scheduled")
         priority = (priority or "normal").strip().lower()
         if priority not in tf.PRIORITIES:
             raise NeedsInput("priority", f"priority must be one of {', '.join(tf.PRIORITIES)}")
@@ -409,7 +414,7 @@ class TaskStore:
                                              "user said the task has no due date.")
                         setf(key, None)
                     else:
-                        setf(key, tf.validate_date(raw, key))
+                        setf(key, tf.parse_date_words(raw, today, key))
 
             if changes.get("priority") is not None:
                 p = str(changes["priority"]).strip().lower()
@@ -454,13 +459,13 @@ class TaskStore:
                     raise NeedsInput("reason", "Give a reason: why it was cancelled, or what or whom it is waiting on.")
                 setf("status", new)
                 if new == "done":
-                    completed = tf.validate_date(changes.get("completed"), "completed") or \
+                    completed = tf.parse_date_words(changes.get("completed"), today, "completed") or \
                         tf.norm_date(fm.get("completed")) or today
                     setf("completed", completed)
                 elif old_closed and new not in tf.CLOSED_STATUSES:
                     setf("completed", None)
             elif changes.get("completed"):
-                setf("completed", tf.validate_date(changes["completed"], "completed"))
+                setf("completed", tf.parse_date_words(changes["completed"], today, "completed"))
 
             if changes.get("notes_append"):
                 body = tf.append_to_section(body, "Notes", str(changes["notes_append"]))

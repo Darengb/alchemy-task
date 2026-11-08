@@ -276,6 +276,32 @@ def test_agenda_scheduled_due_overdue(settings, data_dir):
         {"Pay the electric bill", "Call the landlord"}
 
 
+def test_date_words():
+    sun = "2026-11-08"
+    p = lambda v: tf.parse_date_words(v, sun)  # noqa: E731
+    assert p("Friday") == "2026-11-13" and p("fri") == "2026-11-13" and p("sunday") == sun
+    assert p("next sunday") == "2026-11-15" and p("tomorrow") == "2026-11-09" and p("next week") == "2026-11-09"
+    assert p("Nov 13") == "2026-11-13" and p("13 November") == "2026-11-13" and p("November 13th, 2026") == "2026-11-13"
+    assert p("Jan 5") == "2027-01-05" and p("in 3 days") == "2026-11-11" and p("2026-12-01") == "2026-12-01"
+    for bad in ("11/13", "someday", "Feb 30"):
+        with pytest.raises(tf.TaskFormatError):
+            p(bad)
+
+
+def test_overdue_follows_google_and_reschedule_by_words(settings, data_dir):
+    store = TaskStore(settings, data_dir)
+    t = store.create(title="Fix the gate latch", area="home", due="2026-10-01", research=False)
+    today = settings.today()
+    assert any(d.task_id == t.task_id and w.startswith("overdue") for d, w in store.agenda(today, today))
+    store.update(t.task_id, {"scheduled": "tomorrow", "log": "Rescheduled"})
+    assert not any(d.task_id == t.task_id and w.startswith("overdue") for d, w in store.agenda(today, today))
+    tomorrow = tf.parse_date_words("tomorrow", today)
+    why = dict((d.task_id, w) for d, w in store.agenda(tomorrow, tomorrow))[t.task_id]
+    assert why == f"scheduled {tomorrow} (deadline 2026-10-01 passed)"
+    doc, _, _ = store.update(t.task_id, {"due": "Nov 30"})
+    assert doc.fm["due"].endswith("-11-30")
+
+
 def test_period_ranges(settings, data_dir):
     store = TaskStore(settings, data_dir)
     sunday, wednesday = "2026-11-08", "2026-11-11"
