@@ -863,6 +863,36 @@ class DiscoveryStore:
             atomic_json(self.state_root / 'reviews' / (run_id + '.json'), review)
             return review
 
+    @staticmethod
+    def _process_incarnation(pid=None):
+        """OS liveness evidence for this plugin process, not host-manager internals."""
+        pid = os.getpid() if pid is None else pid
+        try:
+            stat_text = Path(f'/proc/{pid}/stat').read_text()
+            return {'pid': pid, 'start_ticks': stat_text.rsplit(')', 1)[1].split()[19],
+                    'boot_id': Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+                    'pid_namespace': os.stat('/proc/self/ns/pid').st_ino}
+        except (OSError, IndexError, ValueError):
+            return None  # unsupported/unknown never proves an invocation dead
+
+    @classmethod
+    def _lease_process_proof(cls, incarnation):
+        here = cls._process_incarnation()
+        if not incarnation or not here or any(incarnation.get(k) != here.get(k) for k in ('boot_id', 'pid_namespace')):
+            return {'state': 'unknown', 'reason': 'no comparable process incarnation evidence'}
+        pid = incarnation.get('pid')
+        if type(pid) is not int or pid < 1: return {'state': 'unknown'}
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return {'state': 'dead', 'reason': 'OS reports recorded process absent', 'incarnation': incarnation}
+        except (OSError, PermissionError):
+            return {'state': 'unknown'}
+        actual = cls._process_incarnation(pid)
+        if actual and actual['start_ticks'] != incarnation.get('start_ticks'):
+            return {'state': 'dead', 'reason': 'PID reused; recorded process incarnation has exited', 'incarnation': incarnation}
+        return {'state': 'live' if actual else 'unknown'}
+
     def claim_lease(self, run_id: str, *, owner: str, expires_at: str) -> dict[str, Any]:
         """Short supervisor claim; an expired claim does not release attempts."""
         expiry = dt.datetime.fromisoformat(expires_at)
@@ -871,9 +901,13 @@ class DiscoveryStore:
         with self._lock(self._run_lock_name(run_id)):
             ledger = self._load(run_id, open_only=True)
             lease = ledger.get('lease')
-            if lease and lease['owner'] != owner and dt.datetime.fromisoformat(lease['expires_at']) > dt.datetime.now(dt.timezone.utc):
-                raise UserError('supervisor already claimed')
-            lease = {'owner': owner, 'expires_at': expires_at}
+            if lease and lease['owner'] != owner:
+                proof = self._lease_process_proof(lease.get('process_incarnation'))
+                if proof['state'] == 'dead':
+                    ledger.setdefault('lease_recoveries', []).append({'previous': lease, 'new_owner': owner, 'proof': proof, 'at': now()})
+                elif proof['state'] == 'live' or dt.datetime.fromisoformat(lease['expires_at']) > dt.datetime.now(dt.timezone.utc):
+                    raise UserError('supervisor already claimed')
+            lease = {'owner': owner, 'expires_at': expires_at, 'process_incarnation': self._process_incarnation()}
             ledger['lease'] = lease
             self._save(run_id, ledger)
             return lease
