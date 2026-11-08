@@ -145,6 +145,10 @@ def create_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
               "timezone": tz["timezone"], "deliver": deliver, "origin_session": session_id, "job_id": job_id,
               "research_cap": max(0, min(int(args.get("research_cap", DEFAULT_CAP)), 200)),
               "created_at": time.time(), "last_run": None, "label": ""}
+    from .jobs import read_discovery_job
+    read_discovery_job(rt, stream)
+    stream['job_binding'] = {'job_id': job_id, 'origin_session': session_id,
+                             'profile': rt.ctx.profile_name, 'verified': True}
     with _lock:
         streams = _streams(rt)
         streams[name] = stream
@@ -220,14 +224,23 @@ def update_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
         raise DiscoveryError("a stream needs at least one source; remove the stream instead")
     from .setup_flow import _timezone_state
     tz = _timezone_state(rt)["timezone"] or current.get("timezone") or "UTC"
+    from .jobs import discovery_job_config
+    readers = [t for source in sources for t in source.get('toolsets', [])]
+    configs = (rt.ctx.state.get('discovery_sources', default={}) or {}).get(current['name'], {})
+    readers += [t for config in configs.values() if any(s['name'] == config.get('name') and s['scope'] == config.get('scope') for s in sources) for t in config.get('toolsets', [])]
     raw = rt.ctx.dispatch_tool("cronjob_manage", {"action": "update", "job_id": current["job_id"],
-                                                  "schedule": cron, "timezone": tz})
+                                                  "schedule": cron, "timezone": tz,
+                                                  **discovery_job_config(current['name'], readers)})
     try:
         result = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
     except (TypeError, ValueError):
         result = {"error": str(raw)[:300]}
     if result.get("success") is False or result.get("error"):
         raise DiscoveryError(f"could not update the scheduled job: {str(result.get('error') or raw)[:300]}")
+    from .jobs import read_discovery_job
+    observed = read_discovery_job(rt, current)
+    if observed.get('enabled_toolsets') != discovery_job_config(current['name'], readers)['enabled_toolsets']:
+        raise DiscoveryError('scheduled toolsets readback mismatch; retry in-place reconciliation')
     with _lock:
         streams = _streams(rt)
         s = streams[current["name"]]

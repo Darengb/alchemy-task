@@ -114,6 +114,33 @@ def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None) 
                    'preparation is not a verified delivery receipt. If blocked, report the exact pending saved run rather than creating another run.')}
 
 
+def read_discovery_job(rt, stream):
+    """Read only the exact bound job via the public cron tool, never cron files."""
+    raw = rt.ctx.dispatch_tool('cronjob_manage', {'action': 'list', 'include_disabled': True})
+    data = json.loads(raw) if isinstance(raw, str) else raw
+    matches = [j for j in data.get('jobs', []) if j.get('job_id') == stream['job_id']]
+    if len(matches) != 1 or matches[0].get('name') != f"{PREFIX}: discovery {stream['name']}":
+        raise ValueError('bound discovery job identity readback failed')
+    return matches[0]
+
+
+def reconcile_discovery_job(rt, stream):
+    if not stream.get('job_id'): return {'state': 'not_configured'}
+    read_discovery_job(rt, stream)
+    configs = (rt.ctx.state.get('discovery_sources', default={}) or {}).get(stream['name'], {})
+    readers = [t for s in stream['sources'] for t in s.get('toolsets', [])]
+    readers += [t for c in configs.values() if any(s['name'] == c.get('name') and s['scope'] == c.get('scope') for s in stream['sources']) for t in c.get('toolsets', [])]
+    desired = discovery_job_config(stream['name'], readers)
+    raw = rt.ctx.dispatch_tool('cronjob_manage', {'action': 'update', 'job_id': stream['job_id'], **desired})
+    result = json.loads(raw) if isinstance(raw, str) else raw
+    if result.get('error') or result.get('success') is False:
+        raise ValueError('discovery job reconciliation failed: ' + str(result))
+    observed = read_discovery_job(rt, stream)
+    if observed.get('enabled_toolsets') != desired['enabled_toolsets']:
+        raise ValueError('discovery reader toolsets readback mismatch')
+    return {'state': 'verified', 'job_id': stream['job_id'], 'enabled_toolsets': observed['enabled_toolsets']}
+
+
 def parse_job_id(result: Any) -> str:
     try:
         data = json.loads(result) if isinstance(result, str) else dict(result or {})

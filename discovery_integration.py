@@ -41,7 +41,41 @@ class DiscoveryIntegration:
         configured_transport = rt.ctx.get_config('discovery_transport_receipt', '')
         transport = json.loads(configured_transport) if configured_transport else {}
         if not isinstance(transport, dict): raise UserError('transport receipt must be an operator-configured JSON object')
-        self.runner = DiscoveryRunner(rt.ctx, rt, store=self.store, transport_receipt=transport)
+        self.runner = DiscoveryRunner(rt.ctx, rt, store=self.store, transport_receipt=transport,
+                                      recovery_authorizer=self._authorize_recovery)
+
+    def _scheduled_identity(self, stream):
+        """Only the public host execution identity can grant scheduled authority."""
+        method = getattr(self.rt.ctx, 'current_cron_execution', None)
+        execution = method() if callable(method) else None
+        if execution is None: return None
+        from .discovery_runner import normalize
+        # normalize supports host Records/dataclasses, not arbitrary model args.
+        receipt = normalize(execution)
+        if not isinstance(receipt, dict): return None
+        binding = stream.get('job_binding') or {}
+        if (binding.get('verified') is not True or binding.get('job_id') != stream.get('job_id')
+                or binding.get('origin_session') != stream.get('origin_session')
+                or binding.get('profile') != getattr(self.rt.ctx, 'profile_name', None)
+                or receipt.get('profile') != binding.get('profile')
+                or receipt.get('job_id') != binding.get('job_id')
+                or not receipt.get('execution_id') or not receipt.get('scheduled_instant')):
+            return None
+        return receipt
+
+    def _authorize_recovery(self, run_id, old_parent, session_id):
+        run = self.store.get_run(run_id)
+        stream = self._stream(run['config'].get('stream_name', run['stream']))
+        execution = self._scheduled_identity(stream)
+        frozen = run['origin'].get('job_binding')
+        if not execution or not frozen or frozen != stream.get('job_binding'):
+            return False
+        if run['origin'].get('stream_origin_session') != stream['origin_session']:
+            return False
+        with self.runner._state(run_id) as state:
+            state.setdefault('adoptions', []).append({'from_session': old_parent, 'to_session': session_id,
+                                                      'execution': execution, 'job_binding': frozen})
+        return True
 
     def _stream(self, stream):
         from .discovery import _get
@@ -93,6 +127,8 @@ class DiscoveryIntegration:
         configs = self.rt.ctx.state.get('discovery_sources', default={}) or {}
         configs.setdefault(current['name'], {})[configured['source_key']] = configured
         self.rt.ctx.state.set('discovery_sources', configs)
+        from .jobs import reconcile_discovery_job
+        reconcile_discovery_job(self.rt, current)
         return configured
 
     def _all_runs(self):
@@ -102,13 +138,18 @@ class DiscoveryIntegration:
         current = self._stream(stream)
         storage_stream = current['name'] if ' ' not in current['name'] else 'stream-' + content_revision(current['name']).split(':')[-1][:24]
         if not session_id: raise UserError('actual parent session required')
+        if session_id != current['origin_session'] and not self._scheduled_identity(current):
+            raise UserError('only origin chat or verified bound scheduled occurrence can start/resume stream')
         with self.store._lock('start:' + current['name']):
             # A finalized digest is distinct from unresolved conversion/delivery.
             # Resume unfinished scan/research on its ORIGINAL window and config.
             pending = [r for r in self._all_runs() if r['config'].get('stream_name', r['stream']) == current['name'] and not r.get('review')]
             if pending:
                 run = pending[0]
-                self.runner._parent(run['run_id'], session_id)
+                try:
+                    self.runner._parent(run['run_id'], session_id)
+                except UserError:
+                    self.runner.recover(run['run_id'], session_id=session_id, adopt=True)
                 return {'run_id': run['run_id'], 'resumed': True, 'stream': current['name'],
                         'sources': run['config']['sources'], 'windows': run['config']['windows'],
                         'index_revision': run.get('index_revision'), 'recovery_required': True}
@@ -125,7 +166,9 @@ class DiscoveryIntegration:
                       'research_cap': current['research_cap'], 'timezone': current.get('timezone', self.rt.settings.timezone)}
             run = self.store.init_run(stream=storage_stream, business_date=self.rt.settings.today(), config=config,
                                       origin={'session_id': session_id, 'deliver': current.get('deliver', 'origin'),
-                                              'stream_origin_session': current['origin_session']})
+                                              'stream_origin_session': current['origin_session'],
+                                              'job_binding': copy.deepcopy(current.get('job_binding')),
+                                              'cron_execution': self._scheduled_identity(current)})
             return {'run_id': run, 'resumed': False, 'stream': current['name'], 'sources': config['sources'],
                     'windows': windows, 'research_remaining_today': current['research_cap']}
 
@@ -405,7 +448,7 @@ class DiscoveryIntegration:
             # UI sees full records; child capability tokens/launch capabilities remain internal.
             run = ledger['run_id']
             if session_id not in {ledger['origin'].get('session_id'), ledger['origin'].get('stream_origin_session')}:
-                raise UserError('run belongs to another origin session')
+                self.runner._parent(run, session_id)
             attempts = [{k: v for k, v in a.items() if k not in {'token', 'handle'}} for a in ledger['attempts'].values()]
             decisions = [read_json(p) for p in sorted((self.store.run_dir(run) / 'decisions').glob('*.json'))]
             conversions = [read_json(p) for p in sorted((self.store.run_dir(run) / 'conversions').glob('*.receipt.json'))]
