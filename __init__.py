@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import runtime
+from . import research_agent, runtime
 from .commands import task_command
 from .core.config import Settings
 from .task_tools import register_tools
@@ -28,6 +28,9 @@ def _prompt_section(_info: Any = None) -> str:
 def register(ctx: Any) -> None:
     runtime.bind(ctx)
     register_tools(ctx)
+    research_agent.register(ctx)
+    if research_agent.on_task_created not in runtime.research_listeners:
+        runtime.research_listeners.append(research_agent.on_task_created)
     ctx.register_skill("tasks", _HERE / "skills" / "tasks" / "SKILL.md",
                        description="Use when creating, updating or finding the user's tasks with Alchemy Task.")
     ctx.register_command("task", handler=task_command, description="Alchemy Task: status, validate, push, setup",

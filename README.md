@@ -20,6 +20,17 @@ researches it in the background, and keeps it current while you work on it.
   branch matches your commit. If the remote moved, Alchemy Task rebases when that is safe, and it never
   stashes, resets or force-pushes your work. If a push can't go through, the task is still saved and the push
   is retried.
+- **Background research on every new task:** right after a task is created, a research agent starts in the
+  background on your own model. It reads your skills (how you already do things), checks which tools and
+  integrations your Hermes has, researches the web, and writes a dossier into the task: the recommended
+  approach, context, risks, open questions, sources, and an **access plan**. The plan says whether Hermes can
+  do the task now, what access is missing and how to set it up. When it finishes, your agent mentions it in
+  the same chat and offers to set up missing access now or when you start the task. Say "no research needed"
+  to skip it, or "research it again" to refresh it.
+- **Bounded and safe research:** the research agent can only search the web and read your skills and the
+  names of your tools. It cannot run commands or change files, accounts or settings. Each run is limited to
+  30 tool calls and 10 minutes, with up to 3 attempts. Results from a superseded run are discarded, and the
+  dossier is written into the task's latest content, so research never overwrites edits made while it ran.
 - **Validator:** `/task validate` checks hand-edited files, reports problems and assigns missing IDs with
   one-line edits that keep your comments and formatting.
 
@@ -94,7 +105,20 @@ Setup fills them in for you.
   In `token` mode it reads `ALCHEMY_TASK_GIT_TOKEN` through Hermes's secret API and passes it to git only
   through the child process environment, after resetting other credential helpers so the token is never
   written to disk.
-- **Plugin state:** locks and push receipts live in the plugin's profile-scoped data directory.
+- **Background agents and model use:** after each task is created (and from the optional research sweep job),
+  the plugin starts a Hermes research subagent through the public subagent lifecycle API. It runs on your
+  configured model, with only the `web` toolset and the plugin's read-only research tools, so it spends your
+  model tokens and sends search queries derived from the task text to your configured web search provider.
+- **Reads outside plugin data:** research agents read your skills through Hermes's skill tools, the names
+  and availability of your toolsets, tools and MCP servers (never keys or credentials), and Markdown notes the
+  task links to inside the workspace.
+- **Chat context:** when research finishes, a one-line note is added to your next message in the chat where
+  the task was created, so your agent can tell you about it.
+- **Scheduled job (created only with your approval during setup):** a research sweep every 30 minutes. A
+  pre-check script copied into `$HERMES_HOME/scripts/` runs first and starts the agent only when a task is
+  waiting for research, so idle runs cost nothing.
+- **Plugin state:** locks, push receipts, active research runs, a one-hour capability cache and pending chat
+  notes live in the plugin's profile-scoped data directory.
 - No telemetry.
 
 ## Development

@@ -8,6 +8,15 @@ provides_tools:
   - task_create
   - task_update
   - task_find
+  - task_research
+  - research_skills_list
+  - research_skill_view
+  - research_capabilities
+  - research_submit
+provides_hooks:
+  - pre_tool_call
+  - subagent_stop
+  - pre_llm_call
 config_schema:
   workspace_root:
     type: str

@@ -39,6 +39,14 @@ tools; they validate fields, keep IDs stable, commit and push, and queue researc
 - Reopening a done or cancelled task needs `reopen: true`, only when the user wants it reopened.
 - A user correction ("actually it's due Thursday") updates the existing task; never create a second one.
 
+## Research
+
+- Every new task is researched in the background. The task's `research` field shows `pending`, `running`,
+  `complete`, `failed` or `skipped`; `task_find` with `include_body: true` shows the dossier and access plan.
+- "Research it again" → `task_research` with the task. Never call it right after `task_create`.
+- When a note says research finished, tell the user in a sentence. If access is missing, offer to set it up
+  now or when they start the task; setting up access is not permission to do the task.
+
 ## When a tool says `ok: false`
 
 Read `needs` and `message`: ask the user for the missing piece (`due`, `area`, `reason`, `reopen`), pick from

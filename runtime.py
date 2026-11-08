@@ -9,8 +9,8 @@ from .core.gitops import GitDelivery
 from .core.store import TaskStore
 
 _ctx: Any = None
-# Callbacks run after a task is created with research pending: fn(runtime, doc).
-research_listeners: list[Callable[["Runtime", Any], None]] = []
+# Callbacks run after a task is created with research pending: fn(runtime, doc, origin_session).
+research_listeners: list[Callable[["Runtime", Any, str], None]] = []
 
 
 def bind(ctx: Any) -> None:
@@ -52,11 +52,11 @@ class Runtime:
                 token = None
         return GitDelivery(self.settings, self.data_dir, token=token)
 
-    def notify_research(self, doc: Any) -> list[str]:
+    def notify_research(self, doc: Any, origin_session: str = "") -> list[str]:
         errors = []
         for fn in list(research_listeners):
             try:
-                fn(self, doc)
+                fn(self, doc, origin_session)
             except Exception as exc:  # noqa: BLE001 - research recovery picks it up later
                 errors.append(f"{exc.__class__.__name__}: {exc}")
         return errors

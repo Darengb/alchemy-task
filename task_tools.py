@@ -148,7 +148,7 @@ def _git_note(receipt: dict[str, Any]) -> str:
 
 
 @_guard
-def task_create(args: dict[str, Any], **_: Any) -> str:
+def task_create(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
     rt = Runtime()
     store = rt.store()
     doc = store.create(
@@ -162,11 +162,13 @@ def task_create(args: dict[str, Any], **_: Any) -> str:
         source=args.get("source", ""))
     receipt = rt.git().deliver([store.rel(doc.path)], f"task: create {doc.title[:72]}")
     research = (doc.fm.get("enrichment") or {}).get("status")
-    research_errors = rt.notify_research(doc) if research == "pending" else []
+    research_errors = rt.notify_research(doc, session_id or "") if research == "pending" else []
     summary = store.summary(doc)
     msg = f"Created \"{doc.title}\" in {summary['area']}, due {summary['due'] or 'undated'}. {_git_note(receipt)}"
-    if research == "pending":
-        msg += " Background research is queued; results are added to the task."
+    if research == "pending" and not research_errors:
+        msg += " Background research has started; results are added to the task and you will hear when it is done."
+    elif research == "pending":
+        msg += " Research is queued and will start on the next research sweep."
     return _ok(task=summary, git=receipt, research=research, research_errors=research_errors or None, message=msg)
 
 
@@ -199,10 +201,51 @@ def task_find(args: dict[str, Any], **_: Any) -> str:
                today=rt.settings.today())
 
 
+RESEARCH_SCHEMA = {
+    "name": "task_research",
+    "description": (
+        "Start or retry background research. With a task: research that task again (use when the user asks, or "
+        "after its plan changed a lot). Without a task: run the research queue (tasks still waiting for research "
+        "or whose research stalled) and wait for the results. New tasks are researched automatically; do not "
+        "call this right after task_create."),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "task": {"type": "string", "description": "task_id, path or exact title. Omit to run the queue."},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 8, "description": "Queue mode: tasks to start."},
+            "wait_seconds": {"type": "integer", "minimum": 0, "maximum": 360},
+        },
+        "required": [],
+    },
+}
+
+
+@_guard
+def task_research(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
+    from . import research_agent
+    from .core.research import ResearchError
+    rt = Runtime()
+    try:
+        if args.get("task"):
+            result = research_agent.request_again(rt, args["task"], origin_session=session_id or "")
+            result.pop("handle", None)
+            if not result.get("started"):
+                return _fail("retry", f"Research could not start: {result.get('error')}. It stays queued.")
+            return _ok(**result, message="Research started; results are added to the task.")
+        result = research_agent.recover(rt, limit=int(args.get("limit") or 3),
+                                        wait_seconds=float(args.get("wait_seconds", 300)))
+    except ResearchError as exc:
+        return _fail("research", str(exc))
+    done = sum(1 for s in result["started"] if s.get("research") == "complete")
+    return _ok(**result, message=f"{result['queued']} task(s) waiting; started {len(result['started'])}, "
+               f"{done} finished.")
+
+
 TOOLS = (
     (CREATE_SCHEMA, task_create, "🜂"),
     (UPDATE_SCHEMA, task_update, "🜄"),
     (FIND_SCHEMA, task_find, "🔎"),
+    (RESEARCH_SCHEMA, task_research, "⚗️"),
 )
 
 
