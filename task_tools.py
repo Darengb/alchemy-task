@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from .core import taskfile as tf
@@ -201,6 +202,70 @@ def task_find(args: dict[str, Any], **_: Any) -> str:
                today=rt.settings.today())
 
 
+WORK_SCHEMA = {
+    "name": "task_work_start",
+    "description": (
+        "Start or continue working on a task in this chat (the user says \"work on X\", \"continue X\", \"let's "
+        "do X\"). Links this chat to the task, marks it in progress and returns everything needed to continue: "
+        "notes, research dossier, access plan and the current state with its next step. Then do the work. When it "
+        "is finished, needs the user, waits on someone or is blocked, call task_checkpoint."),
+    "parameters": {"type": "object", "properties": {
+        "task": {"type": "string", "description": "task_id (preferred), path or exact title."}}, "required": ["task"]},
+}
+
+CHECKPOINT_SCHEMA = {
+    "name": "task_checkpoint",
+    "description": (
+        "Record where the work on a task stands. Call it when the work is finished, when you need the user, when "
+        "it waits on someone else, when it is blocked, or before stopping partway. It rewrites the task's Current "
+        "state section, sets the status and logs the step. Marking done requires evidence of what you checked."),
+    "parameters": {"type": "object", "properties": {
+        "task": {"type": "string", "description": "Optional: defaults to the task this chat is working on."},
+        "state": {"type": "string", "enum": ["done", "waiting_user", "waiting_other", "blocked", "in_progress"]},
+        "done": {"type": "string", "description": "What was done in this session, concretely."},
+        "next_step": {"type": "string", "description": "The next concrete step (required unless done)."},
+        "needs_from": {"type": "string", "description": "What is needed and from whom (for waiting or blocked)."},
+        "evidence": {"type": "string", "description": "Required for done: what you checked and how (readback, "
+                                                      "link, test result)."}},
+        "required": ["state", "done"]},
+}
+
+
+@_guard
+def task_work_start(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
+    from . import worksession
+    rt = Runtime()
+    out = worksession.start_work(rt, args.get("task", ""), session_id or "")
+    t = out["task"]
+    state = t.get("current_state")
+    msg = (f"{'Continuing' if out['resumed'] else 'Starting'} \"{t['title']}\". "
+           + (f"Current state: {state}" if state else "No checkpoint yet; read the notes and research below.")
+           + " Do the work now; checkpoint with task_checkpoint when it finishes, needs the user or is blocked.")
+    return _ok(**out, message=msg)
+
+
+@_guard
+def task_checkpoint(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
+    from . import worksession
+    from .core.checkpoint import CheckpointError
+    rt = Runtime()
+    ref = args.get("task") or worksession.linked_task(rt, session_id or "")
+    if not ref:
+        return _fail("task", "Which task is this for? Pass task (this chat is not linked to a task; use "
+                     "task_work_start to link it).")
+    fields = {k: args.get(k) for k in ("state", "done", "next_step", "needs_from", "evidence")}
+    try:
+        out = worksession.write_checkpoint(rt, ref, fields, session_id=session_id or "")
+    except CheckpointError as exc:
+        return _fail("checkpoint", str(exc))
+    if session_id and not worksession.linked_task(rt, session_id) and out["state"] != "done":
+        worksession._update_link(rt, session_id, task_id=out["task"]["task_id"], title=out["task"]["title"],
+                                 started=time.time(), last_activity=time.time(),
+                                 last_checkpoint=time.time())
+    return _ok(**out, message=f"Checkpoint saved: {out['task']['title']} is now {out['task']['status']}. "
+               + _git_note(out["git"]))
+
+
 RESEARCH_SCHEMA = {
     "name": "task_research",
     "description": (
@@ -246,6 +311,8 @@ TOOLS = (
     (UPDATE_SCHEMA, task_update, "🜄"),
     (FIND_SCHEMA, task_find, "🔎"),
     (RESEARCH_SCHEMA, task_research, "⚗️"),
+    (WORK_SCHEMA, task_work_start, "🜁"),
+    (CHECKPOINT_SCHEMA, task_checkpoint, "🜃"),
 )
 
 

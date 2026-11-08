@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import research_agent, runtime
+from . import research_agent, runtime, worksession
 from .commands import task_command
 from .core.config import Settings
 from .task_tools import register_tools
@@ -29,6 +29,7 @@ def register(ctx: Any) -> None:
     runtime.bind(ctx)
     register_tools(ctx)
     research_agent.register(ctx)
+    worksession.register(ctx)
     if research_agent.on_task_created not in runtime.research_listeners:
         runtime.research_listeners.append(research_agent.on_task_created)
     ctx.register_skill("tasks", _HERE / "skills" / "tasks" / "SKILL.md",
