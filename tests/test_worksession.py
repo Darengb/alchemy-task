@@ -117,6 +117,45 @@ def test_safety_net_falls_back_without_model_and_never_marks_done(ctx, settings)
     assert "I sent the campaign." in doc.body and doc.fm["status"] == "in-progress"
 
 
+def test_closed_task_stops_safety_net_without_model_calls(ctx, settings):
+    call(task_tools.task_work_start, task=NEWSLETTER)
+    ws.post_llm_call(session_id="chat-1", user_message="x", assistant_response="y")
+    TaskStore(settings, settings.root().parent / "plugin-data").update(NEWSLETTER, {"status": "done"})
+    assert ws.auto_checkpoint(runtime.Runtime(), "chat-1", "idle") is None
+    assert ctx.llm.calls == [] and ws.linked_task(runtime.Runtime(), "chat-1") is None
+
+
+def test_incomplete_model_output_uses_free_digest(ctx, settings):
+    ctx.llm = FakeLLM({"state": "in_progress", "done": "Reviewed the draft.", "next_step": "", "needs_from": ""})
+    call(task_tools.task_work_start, task=NEWSLETTER)
+    ws.post_llm_call(session_id="chat-1", user_message="looks good", assistant_response="Draft is ready.")
+    out = ws.auto_checkpoint(runtime.Runtime(), "chat-1", "idle")
+    assert out and out["automatic"]
+    doc = tf.parse_file(settings.root() / "areas/work/tasks/2026-11-01-draft-the-spring-newsletter.md")
+    assert "Draft is ready." in doc.body
+
+
+def test_sweeper_standby_takes_over(ctx, data_dir, monkeypatch):
+    import fcntl
+    import os
+    import threading
+    monkeypatch.setattr(ws, "SWEEP_SECONDS", 0.05)
+    swept = threading.Event()
+    monkeypatch.setattr(ws, "sweep", lambda rt: swept.set() or [])
+    os.makedirs(data_dir / "locks", exist_ok=True)
+    holder = os.open(data_dir / "locks" / "sweeper.lock", os.O_RDWR | os.O_CREAT)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    ws._stop.clear()
+    t = threading.Thread(target=ws._sweep_loop, args=(str(data_dir),), daemon=True)
+    t.start()
+    time.sleep(0.2)
+    assert t.is_alive() and not swept.is_set()  # standing by
+    os.close(holder)  # the holder's process exits
+    assert swept.wait(2)
+    ws._stop.set()
+    t.join(2)
+
+
 def test_idle_sweep(ctx, settings):
     call(task_tools.task_work_start, task=NEWSLETTER)
     rt = runtime.Runtime()

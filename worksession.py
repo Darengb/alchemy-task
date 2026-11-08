@@ -171,7 +171,8 @@ def _summarize(rt: Runtime, link: dict[str, Any], session_id: str) -> dict[str, 
                     input=[{"type": "text", "text": text}], json_schema=ck.AUTO_SCHEMA, schema_name="checkpoint",
                     max_tokens=400, timeout=20, purpose="alchemy-task.checkpoint", task=task)
                 if isinstance(result.parsed, dict):
-                    return {**result.parsed, "evidence": ""}
+                    # Incomplete model output counts as a failure, so the free digest still runs.
+                    return ck.normalize({**result.parsed, "evidence": ""}, automatic=True)
             except Exception:  # noqa: BLE001 - try the next route, then the free digest
                 continue
     return ck.mechanical(str(digest.get("user") or ""), str(digest.get("assistant") or ""))
@@ -188,12 +189,25 @@ def auto_checkpoint(rt: Runtime, session_id: str, reason: str) -> dict[str, Any]
         return None
     if _covered(link):
         return None  # nothing happened since the last checkpoint
+    try:
+        doc = rt.store().resolve(link["task_id"])
+    except NeedsInput:
+        _update_link(rt, session_id, _delete=True)  # the task is gone
+        return None
+    if doc.is_closed:
+        _update_link(rt, session_id, _delete=True)  # closed another way: nothing left to checkpoint
+        return None
     fields = _summarize(rt, link, session_id)
+    if _covered(_links(rt).get(session_id) or {}):
+        return None  # another process checkpointed while we summarized
     try:
         out = write_checkpoint(rt, link["task_id"], fields, automatic=True, session_id=session_id)
     except (NeedsInput, ck.CheckpointError, tf.TaskFormatError, tf.ConcurrentEditError) as exc:
         _update_link(rt, session_id, last_checkpoint=time.time(), last_error=str(exc)[:200])
         return {"error": str(exc)}
+    if out.get("skipped"):
+        _update_link(rt, session_id, _delete=True)
+        return None
     out["reason"] = reason
     return out
 
@@ -218,11 +232,14 @@ def _sweep_loop(data_dir: str) -> None:
     lock_path = os.path.join(data_dir, "locks", "sweeper.lock")
     os.makedirs(os.path.dirname(lock_path), exist_ok=True)
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # one sweeper per profile, across processes
-    except BlockingIOError:
-        os.close(fd)
-        return
+    while True:  # one sweeper per profile; a standby takes over when the holder's process exits
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if _stop.wait(SWEEP_SECONDS):
+                os.close(fd)
+                return
     try:
         while not _stop.wait(SWEEP_SECONDS):
             try:
