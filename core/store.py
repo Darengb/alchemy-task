@@ -229,15 +229,15 @@ class TaskStore:
             # Rescheduling a task therefore takes it off the overdue list.
             effective = sched or due
             reasons, key = [], None
-            if sched and start_v <= sched <= end_v:
-                note = f" (deadline {due} passed)" if due and due < today else ""
+            if sched and sched != due and start_v <= sched <= end_v:
+                note = f" (deadline {due} passed)" if due and due < today else (f", due {due}" if due else "")
                 reasons.append(f"scheduled {sched}{note}")
                 key = sched
             if due and start_v <= due <= end_v:
                 reasons.append(f"due {due}")
                 key = min(key, due) if key else due
             if not reasons and include_overdue and effective and effective < min(start_v, today):
-                reasons.append(f"overdue (was {'scheduled' if sched else 'due'} {effective})")
+                reasons.append(f"overdue (was {'scheduled' if sched and sched != due else 'due'} {effective})")
                 key = "0000"
             if reasons:
                 prio = {"urgent": 0, "high": 1, "normal": 2, "low": 3}.get(str(t.fm.get("priority") or "normal"), 2)
@@ -287,10 +287,13 @@ class TaskStore:
         area = self._pick_area(area, create_area)
         today_s = self.s.today()
         due_v = tf.parse_date_words(due, today_s, "due")
+        if not due and scheduled and not undated:
+            due_v = tf.parse_date_words(scheduled, today_s, "scheduled")  # one date given: it is both
         if not due_v and not undated:
             raise NeedsInput("due", "Ask the user when this is due (a date). Only pass undated=true if the user "
                              "explicitly said this task has no due date.")
-        sched_v = tf.parse_date_words(scheduled, today_s, "scheduled")
+        sched_v = tf.parse_date_words(scheduled, today_s, "scheduled") if scheduled else due_v
+        # Due and scheduled are the same date unless the user asked for different ones.
         priority = (priority or "normal").strip().lower()
         if priority not in tf.PRIORITIES:
             raise NeedsInput("priority", f"priority must be one of {', '.join(tf.PRIORITIES)}")
@@ -405,6 +408,15 @@ class TaskStore:
                     prefix = m.group(1) if m else today
                     new_path = _free_path(old_path.parent, f"{prefix}-{tf.slugify(title)}", exclude=old_path)
 
+            given = [k for k in ("due", "scheduled") if changes.get(k) not in (None, "")]
+            if len(given) == 1 and not changes.get("keep_separate"):
+                raw_v = str(changes[given[0]]).strip()
+                if raw_v.lower() in ("none", "null", "clear"):
+                    new_v = None
+                else:
+                    new_v = tf.parse_date_words(raw_v, today, given[0])
+                if new_v != tf.norm_date(fm.get(given[0])):  # a real change moves both; restating changes nothing
+                    changes = {**changes, "due": raw_v, "scheduled": raw_v}
             for key in ("due", "scheduled"):
                 if key in changes and changes[key] is not None:
                     raw = str(changes[key]).strip()

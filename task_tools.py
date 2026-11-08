@@ -31,7 +31,7 @@ CREATE_SCHEMA = {
             "area": {"type": "string", "description": "Area slug. Infer from context when clear; omit to get the list."},
             "due": {"type": "string", "description": "Deadline: YYYY-MM-DD, or words like 'Friday', 'tomorrow', 'Nov 13'. Required unless undated."},
             "undated": {"type": "boolean", "description": "True only if the user explicitly said this task has no due date."},
-            "scheduled": {"type": "string", "description": "Day the user plans to work on it (optional, differs from due); same formats as due."},
+            "scheduled": {"type": "string", "description": "Only if the user names a different work day than the due date; otherwise it equals due."},
             "priority": {"type": "string", "enum": list(tf.PRIORITIES)},
             "project": {"type": "string", "description": "Optional project link or slug."},
             "notes": {"type": "string", "description": "Context: why it matters, links, what the user said. Markdown."},
@@ -54,8 +54,9 @@ CREATE_SCHEMA = {
 UPDATE_SCHEMA = {
     "name": "task_update",
     "description": (
-        "Change an existing task: status, dates, priority, title, area, notes. Rescheduling: 'move X to Friday' "
-        "changes scheduled; 'X is now due Friday' changes due. Changes only the fields you pass "
+        "Change an existing task: status, dates, priority, title, area, notes. Dates: due and scheduled are one "
+        "date unless the user asks for different ones, so 'move X to Friday' or 'X is now due Friday' sets both; "
+        "pass both (or keep_separate) only for 'due Friday, I'll do it Tuesday'. Changes only the fields you pass "
         "and appends a dated log line. Marking done sets the completed date. Reopening a done or cancelled task "
         "needs reopen=true. Cancelled and waiting need a reason. Use this instead of editing task files."),
     "parameters": {
@@ -70,6 +71,8 @@ UPDATE_SCHEMA = {
             "rename_file": {"type": "boolean", "description": "Also rename the file to match a new title."},
             "due": {"type": "string", "description": "New deadline: YYYY-MM-DD or words ('Friday', 'Nov 13'); 'none' clears it (needs undated=true)."},
             "undated": {"type": "boolean"},
+            "keep_separate": {"type": "boolean", "description": "Only when the user explicitly wants the due date and "
+                                                               "the work day to differ; otherwise one change moves both."},
             "scheduled": {"type": "string", "description": "New planned day: YYYY-MM-DD or words ('tomorrow', 'next Monday'); 'none' clears it."},
             "priority": {"type": "string", "enum": list(tf.PRIORITIES)},
             "project": _STR,
@@ -190,6 +193,7 @@ def task_create(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
 
 
 _UPDATE_KEYS = ("status", "reason", "reopen", "completed", "title", "rename_file", "due", "undated", "scheduled",
+                "keep_separate",
                 "priority", "project", "estimate", "area", "contexts", "tags_add", "tags_remove", "notes_append", "log")
 
 

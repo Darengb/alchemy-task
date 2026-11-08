@@ -266,7 +266,7 @@ def test_agenda_scheduled_due_overdue(settings, data_dir):
     items = store.agenda("2026-11-09", "2026-11-09", today="2026-11-09")
     got = {t.title: why for t, why in items}
     assert got["Pay the electric bill"] == "due 2026-11-09"
-    assert got["Draft the grant summary"] == "scheduled 2026-11-09"
+    assert got["Draft the grant summary"] == "scheduled 2026-11-09, due 2026-11-20"
     assert got["Call the landlord"] == "overdue (was due 2026-11-01)"
     assert "Plan next quarter" not in got and "Renew the team software licenses" not in got  # closed
     assert [t.title for t, _ in items][0] == "Call the landlord"  # overdue first
@@ -293,13 +293,29 @@ def test_overdue_follows_google_and_reschedule_by_words(settings, data_dir):
     t = store.create(title="Fix the gate latch", area="home", due="2026-10-01", research=False)
     today = settings.today()
     assert any(d.task_id == t.task_id and w.startswith("overdue") for d, w in store.agenda(today, today))
-    store.update(t.task_id, {"scheduled": "tomorrow", "log": "Rescheduled"})
+    store.update(t.task_id, {"scheduled": "tomorrow", "keep_separate": True, "log": "Rescheduled"})
     assert not any(d.task_id == t.task_id and w.startswith("overdue") for d, w in store.agenda(today, today))
     tomorrow = tf.parse_date_words("tomorrow", today)
     why = dict((d.task_id, w) for d, w in store.agenda(tomorrow, tomorrow))[t.task_id]
     assert why == f"scheduled {tomorrow} (deadline 2026-10-01 passed)"
-    doc, _, _ = store.update(t.task_id, {"due": "Nov 30"})
-    assert doc.fm["due"].endswith("-11-30")
+    doc, _, _ = store.update(t.task_id, {"due": "Nov 30"})  # one change: both dates move together
+    assert doc.fm["due"].endswith("-11-30") and doc.fm["scheduled"] == doc.fm["due"]
+
+
+def test_dates_move_together_unless_separate(settings, data_dir):
+    store = TaskStore(settings, data_dir)
+    a = store.create(title="Mail the permit form", area="home", due="Nov 20", research=False)
+    assert a.fm["scheduled"] == a.fm["due"] == "2026-11-20"
+    b = store.create(title="Prep the board deck", area="work", scheduled="Nov 18", research=False)
+    assert b.fm["due"] == b.fm["scheduled"] == "2026-11-18"
+    c = store.create(title="Write the grant report", area="work", due="Nov 30", scheduled="Nov 25", research=False)
+    assert (c.fm["due"], c.fm["scheduled"]) == ("2026-11-30", "2026-11-25")
+    doc, _, _ = store.update(c.task_id, {"scheduled": "Nov 26"})
+    assert doc.fm["due"] == doc.fm["scheduled"] == "2026-11-26"  # the user did not ask to keep them apart
+    doc, _, _ = store.update(c.task_id, {"scheduled": "Nov 24", "keep_separate": True})
+    assert (doc.fm["due"], doc.fm["scheduled"]) == ("2026-11-26", "2026-11-24")
+    why = dict((d.task_id, w) for d, w in store.agenda("2026-11-20", "2026-11-20", today="2026-11-08"))
+    assert why[a.task_id] == "due 2026-11-20"
 
 
 def test_period_ranges(settings, data_dir):
