@@ -191,7 +191,10 @@ def auto_checkpoint(rt: Runtime, session_id: str, reason: str) -> dict[str, Any]
         return None  # nothing happened since the last checkpoint
     try:
         doc = rt.store().resolve(link["task_id"])
-    except NeedsInput:
+    except NeedsInput as exc:
+        if exc.data.get("candidates"):  # several files carry this ID (e.g. a sync-conflict copy): keep the link
+            _update_link(rt, session_id, last_checkpoint=time.time(), last_error=exc.message[:200])
+            return {"error": exc.message}
         _update_link(rt, session_id, _delete=True)  # the task is gone
         return None
     if doc.is_closed:
