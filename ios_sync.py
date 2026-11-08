@@ -290,6 +290,7 @@ def _sync(rt: Runtime, st: dict[str, Any], cfg: dict[str, Any], deadline: float)
         fenced = op["task_id"] not in by_id or op["args"].get("device_id") != cfg["device_id"]
         if op.get("state") == "dispatching" and fenced:  # scope or phone changed: never re-send
             op["state"] = "uncertain" if op["kind"] == "create" else "dropped"
+            rep["skipped"].append(f"\"{op.get('title')}\": no longer in sync scope, so an unsent change was dropped")
             continue
         if op.get("state") == "dispatching":  # crashed between recording and learning the request ID
             if time.time() - op["created"] > UNKNOWN_DISPATCH_MAX_AGE:
@@ -378,6 +379,7 @@ def _sync(rt: Runtime, st: dict[str, Any], cfg: dict[str, Any], deadline: float)
         existing = by_marker.get(tid)
         if existing:  # created earlier but our record was lost: adopt it instead of making another
             st["mappings"][tid] = _mapping(cfg, existing, rm.remote_projection(existing, tz)[0], doc)
+            rep["skipped"].append(f"{doc.title}: found its existing reminder and linked it again")
             continue
         if left() <= 2 or in_flight >= MAX_IN_FLIGHT or rep["updated"] + rep["created"] >= MAX_WRITES:
             rep["skipped"].append("more reminders to create; run /task ios again")
@@ -623,7 +625,8 @@ def _finish(rt: Runtime, st: dict[str, Any], rep: dict[str, Any], changed_paths:
     git = rep.get("git") or {}
     git_bad = bool(git) and not git.get("pushed") and git.get("state") not in ("local_only", "no_git")
     if git_bad:
-        parts.append(f"task changes saved and committed but not pushed ({git.get('error') or git.get('state')})")
+        done = "saved and committed" if git.get("committed") else "saved"
+        parts.append(f"task changes {done} but not pushed ({git.get('error') or git.get('state')})")
     uncertain = [op["title"] for op in st["ops"].values() if op.get("state") == "uncertain"]
     if rep.get("unavailable"):
         parts.append(f"the iPhone refused: {rep['unavailable']}")
