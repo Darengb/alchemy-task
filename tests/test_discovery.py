@@ -129,6 +129,54 @@ def test_separate_chats_keep_plain_numbers_and_research_cap(ctx):
     assert sum(1 for p in items.values() if p["researched"]) == 1
 
 
+def test_numbers_stay_stable_between_runs(ctx):
+    make_stream()
+    three = [{**CANDS[1], "source_id": f"s{i}", "title": f"Follow up with vendor {i}", "due_hint": "2026-11-20"}
+             for i in range(1, 4)]
+    tool(task_tools.discovery_submit, stream="work", candidates=three, coverage=[])
+    tool(task_tools.discovery_decide, approve=["1"])
+    d = tool(task_tools.discovery_submit, stream="work",
+             candidates=[{**three[0], "source_id": "s4", "title": "Ask the printer about badge stock"}], coverage=[])["digest"]
+    assert "**2.** Follow up with vendor 2" in d and "**4.** Ask the printer about badge stock" in d and "**1.**" not in d
+    out = tool(task_tools.discovery_decide, approve=["3"])
+    assert out["results"][0]["title"] == "Follow up with vendor 3"
+    assert tool(task_tools.discovery_decide, approve=["1"])["needs"] == "discovery"  # already decided
+
+
+def test_invalid_edit_creates_nothing_and_failures_stay_open(ctx, settings):
+    make_stream()
+    tool(task_tools.discovery_submit, stream="work", candidates=CANDS[:2], coverage=[])
+    tasks = settings.root() / "areas/work/tasks"
+    before = len(list(tasks.glob("*.md")))
+    bad = tool(task_tools.discovery_decide, approve=["1", "2"], edits={"2": {"due": "Nov 13"}})
+    assert bad["needs"] == "fix_call" and len(list(tasks.glob("*.md"))) == before
+    bad = tool(task_tools.discovery_decide, approve=["2"], edits={"2": {"due": "2026-11-13", "area": "garden"}})
+    assert bad["needs"] == "fix_call"
+    ok = tool(task_tools.discovery_decide, approve=["1", "1", "2"], edits={"2": {"due": "2026-11-13"}})
+    assert len([r for r in ok["results"] if r.get("task_id")]) == 2
+    assert len(list(tasks.glob("*.md"))) == before + 2
+    assert all(r["due"] for r in ok["results"])
+
+
+def test_bad_due_hint_is_dropped(ctx):
+    make_stream()
+    out = tool(task_tools.discovery_submit, stream="work",
+               candidates=[{**CANDS[1], "due_hint": "next Friday"}], coverage=[])
+    assert out["added"] == 1
+
+
+def test_update_keeps_schedule_parts_and_chat(ctx):
+    make_stream(time="7 PM")
+    jid = next(iter(ctx.cron))
+    out = tool(task_tools.discovery_stream, session="other-chat", action="update", name="work",
+               frequency="weekdays", user_approved=True)
+    assert out["ok"] and out["stream"]["when"] == "weekdays at 7:00 PM"
+    assert list(ctx.cron) == [jid] and ctx.cron[jid]["schedule"] == "0 19 * * 1-5"
+    assert ctx.cron[jid]["deliver"] == "origin"  # same job: still posts to its own chat
+    out = tool(task_tools.discovery_stream, action="update", name="work", time="8 AM", user_approved=True)
+    assert out["stream"]["when"] == "weekdays at 8:00 AM"
+
+
 def test_remove_and_teardown(ctx):
     make_stream()
     assert tool(task_tools.discovery_stream, action="remove", name="work")["ok"] and ctx.cron == {}

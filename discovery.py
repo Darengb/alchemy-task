@@ -117,8 +117,8 @@ def create_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
     from . import setup_flow as sf
     name = _norm_name(args.get("name", ""))
     streams = _streams(rt)
-    if name in streams and not args.get("replace"):
-        raise DiscoveryError(f"a stream named {name!r} exists; use action=update, or replace=true")
+    if name in streams:
+        raise DiscoveryError(f"a stream named {name!r} exists; use action=update to change it")
     if not args.get("user_approved"):
         raise DiscoveryError("show the user the stream (sources, areas, schedule, chat, cost) and ask once; call again "
                              "with user_approved=true after they agree")
@@ -130,24 +130,11 @@ def create_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
     unknown = [a for a in areas if a not in known]
     if unknown:
         raise DiscoveryError(f"unknown area(s) {', '.join(unknown)}; known: {', '.join(known)}")
-    sources = []
-    for src in args.get("sources") or []:
-        if not isinstance(src, dict) or not str(src.get("name") or "").strip():
-            raise DiscoveryError("each source needs a name, type, scope (what to read) and method (which tool)")
-        stype = str(src.get("type") or "other").strip().lower()
-        sources.append({"name": " ".join(str(src["name"]).split())[:80],
-                        "type": stype if stype in SOURCE_TYPES else "other",
-                        "scope": " ".join(str(src.get("scope") or "").split())[:400],
-                        "method": " ".join(str(src.get("method") or "").split())[:300]})
+    sources = create_args_sources(args.get("sources") or [])
     if not sources:
         raise DiscoveryError("a stream needs at least one approved source")
-    if args.get("_cron"):
-        cron, when = args["_cron"], args["_when"]
-    else:
-        cron, when = schedule_for(args.get("frequency", "daily"), args.get("time", "6 PM"))
+    cron, when = schedule_for(args.get("frequency", "daily"), args.get("time", "6 PM"))
     deliver = str(args.get("deliver") or "origin").strip()
-    if name in streams:
-        _remove_job(rt, streams[name].get("job_id"))
     job_args = {"action": "create", "name": f"{PREFIX}: discovery {name}", "schedule": cron,
                 "timezone": tz["timezone"] or "UTC", "deliver": deliver, "attach_to_session": True,
                 "skills": ["alchemy-task:discovery"],
@@ -161,6 +148,7 @@ def create_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
     if not job_id:
         raise DiscoveryError(f"could not create the scheduled job: {str(raw)[:300]}")
     stream = {"name": name, "areas": areas, "sources": sources, "schedule": cron, "when": when,
+              "frequency": args.get("frequency", "daily"), "time": args.get("time", "6 PM"),
               "timezone": tz["timezone"], "deliver": deliver, "origin_session": session_id, "job_id": job_id,
               "research_cap": max(0, min(int(args.get("research_cap", DEFAULT_CAP)), 200)),
               "created_at": time.time(), "last_run": None, "label": ""}
@@ -196,12 +184,53 @@ def _public(s: dict[str, Any]) -> dict[str, Any]:
 
 
 def update_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[str, Any]:
+    """Change a stream in place. The job is updated, not recreated, so it keeps posting to its own chat."""
     current = _get(rt, args.get("name", ""))
-    merged = {**current, **{k: v for k, v in args.items() if v not in (None, "", [])},
-              "replace": True, "user_approved": bool(args.get("user_approved"))}
-    if not (args.get("time") or args.get("frequency")):
-        merged["_cron"], merged["_when"] = current["schedule"], current["when"]
-    return create_stream(rt, merged, current.get("origin_session") or session_id)
+    if not args.get("user_approved"):
+        raise DiscoveryError("confirm the change with the user, then call again with user_approved=true")
+    frequency = args.get("frequency") or current.get("frequency") or "daily"
+    at = args.get("time") or current.get("time") or "6 PM"
+    cron, when = (schedule_for(frequency, at) if (args.get("frequency") or args.get("time"))
+                  else (current["schedule"], current["when"]))
+    known = rt.settings.known_areas()
+    areas = [validate_area_name(a) for a in (args.get("areas") or current["areas"])]
+    if [a for a in areas if a not in known]:
+        raise DiscoveryError(f"unknown area; known: {', '.join(known)}")
+    sources = current["sources"]
+    if args.get("sources"):
+        probe = create_args_sources(args["sources"])
+        sources = probe
+    from .setup_flow import _timezone_state
+    tz = _timezone_state(rt)["timezone"] or current.get("timezone") or "UTC"
+    raw = rt.ctx.dispatch_tool("cronjob_manage", {"action": "update", "job_id": current["job_id"],
+                                                  "schedule": cron, "timezone": tz})
+    try:
+        result = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
+    except (TypeError, ValueError):
+        result = {"error": str(raw)[:300]}
+    if result.get("success") is False or result.get("error"):
+        raise DiscoveryError(f"could not update the scheduled job: {str(result.get('error') or raw)[:300]}")
+    with _lock:
+        streams = _streams(rt)
+        s = streams[current["name"]]
+        s.update({"schedule": cron, "when": when, "frequency": frequency, "time": at, "timezone": tz,
+                  "areas": areas, "sources": sources,
+                  "research_cap": max(0, min(int(args.get("research_cap", s["research_cap"])), 200))})
+        _save_streams(rt, streams)
+    return {"stream": _public(s), "message": f"Updated '{s['name']}': {when} ({tz}), still posting to its own chat."}
+
+
+def create_args_sources(raw_sources: list[Any]) -> list[dict[str, str]]:
+    sources = []
+    for src in raw_sources or []:
+        if not isinstance(src, dict) or not str(src.get("name") or "").strip():
+            raise DiscoveryError("each source needs a name, type, scope (what to read) and method (which tool)")
+        stype = str(src.get("type") or "other").strip().lower()
+        sources.append({"name": " ".join(str(src["name"]).split())[:80],
+                        "type": stype if stype in SOURCE_TYPES else "other",
+                        "scope": " ".join(str(src.get("scope") or "").split())[:400],
+                        "method": " ".join(str(src.get("method") or "").split())[:300]})
+    return sources
 
 
 def remove_stream(rt: Runtime, name: str) -> dict[str, Any]:
@@ -244,7 +273,7 @@ def _today(rt: Runtime) -> str:
 
 
 def _researched_today(props: dict[str, Any], today: str) -> int:
-    return sum(1 for p in props["items"].values() if p.get("researched") and p.get("day") == today)
+    return int((props.get("researched_by_day") or {}).get(today, 0))
 
 
 def start(rt: Runtime, name: str) -> dict[str, Any]:
@@ -278,6 +307,12 @@ def submit(rt: Runtime, name: str, candidates: list[dict[str, Any]], coverage: l
         props = _props(rt, stream["name"])
         seen = _seen(rt)
         cap_left = max(0, stream["research_cap"] - _researched_today(props, today))
+        if not any(p["state"] == "open" for p in props["items"].values()):
+            props["next_num"] = 1  # numbering restarts only when nothing is waiting for a reply
+        for p in sorted(props["items"].values(), key=lambda x: x["at"]):  # items saved before stable numbers
+            if not p.get("num"):
+                p["num"] = int(props.get("next_num") or 1)
+                props["next_num"] = p["num"] + 1
         added, skipped = 0, []
         for raw in (candidates or [])[:40]:
             if not isinstance(raw, dict):
@@ -303,8 +338,16 @@ def submit(rt: Runtime, name: str, candidates: list[dict[str, Any]], coverage: l
             researched = bool(research) and cap_left > 0
             if researched:
                 cap_left -= 1
+                counts = props.setdefault("researched_by_day", {})
+                counts[today] = counts.get(today, 0) + 1
             elif research:
                 research = ""
+            try:
+                due = tf.validate_date(raw.get("due_hint"), "due_hint") if raw.get("due_hint") else None
+            except tf.TaskFormatError:
+                due = None  # a malformed hint is dropped, not fatal
+            num = int(props.get("next_num") or 1)
+            props["next_num"] = num + 1
             stype = str(raw.get("source_type") or "other").lower()
             props["items"][source_id] = {
                 "title": title, "area": area, "source_id": source_id,
@@ -313,7 +356,7 @@ def submit(rt: Runtime, name: str, candidates: list[dict[str, Any]], coverage: l
                 "link": str(raw.get("link") or "").strip()[:500],
                 "summary": " ".join(str(raw.get("summary") or "").split())[:1000],
                 "why": " ".join(str(raw.get("why") or "").split())[:500],
-                "due": tf.validate_date(raw.get("due_hint"), "due_hint") if raw.get("due_hint") else None,
+                "due": due, "num": num,
                 "research_notes": research, "researched": researched, "day": today, "at": now, "state": "open"}
             seen[source_id] = {"stream": stream["name"], "at": now, "outcome": "proposed"}
             added += 1
@@ -322,8 +365,9 @@ def submit(rt: Runtime, name: str, candidates: list[dict[str, Any]], coverage: l
             props["items"].pop(sid)
         for sid in [k for k, v in seen.items() if v.get("at", 0) < now - 60 * 86400]:
             seen.pop(sid)
-        ordered = sorted(props["items"].values(), key=lambda p: (p["day"] != today, p["at"]))
+        ordered = sorted(props["items"].values(), key=lambda p: (p["day"] != today, p.get("num", 0)))
         props["digest"] = [p["source_id"] for p in ordered]
+        props["researched_by_day"] = {d: n for d, n in (props.get("researched_by_day") or {}).items() if d >= today}
         props["digest_at"] = now
         _save_props(rt, stream["name"], props)
         rt.ctx.state.set("discovery_seen", seen)
@@ -344,6 +388,7 @@ def render_digest(stream: dict[str, Any], items: list[dict[str, Any]], coverage:
     if not items:
         lines.append("Nothing new that needs a task.")
     n = 0
+    first_nums: list[int] = []
     for group, heading in ((new, None), (old, "Still waiting from earlier:")):
         if not group:
             continue
@@ -351,7 +396,9 @@ def render_digest(stream: dict[str, Any], items: list[dict[str, Any]], coverage:
             lines.append(heading)
         for p in group:
             n += 1
-            bits = [f"**{label}{n}.** {p['title']}"]
+            num = p.get("num") or n
+            first_nums.append(num)
+            bits = [f"**{label}{num}.** {p['title']}"]
             meta = [x for x in (p["area"], f"due {p['due']}" if p["due"] else "", p["source"]) if x]
             if meta:
                 bits.append(f"({', '.join(meta)})")
@@ -368,7 +415,7 @@ def render_digest(stream: dict[str, Any], items: list[dict[str, Any]], coverage:
     for c in problems:
         lines.append(f"⚠️ {c.get('source')}: {c.get('status')}" + (f" ({c.get('note')})" if c.get("note") else ""))
     if items:
-        example = f"{label}1" + (f" and {label}2" if n > 1 else "")
+        example = f"{label}{first_nums[0]}" + (f" and {label}{first_nums[1]}" if n > 1 else "")
         lines.append(f"Reply with the numbers to add as tasks (for example \"{example}\"), or \"none\".")
     return "\n".join(lines)
 
@@ -389,7 +436,8 @@ def _resolve_numbers(rt: Runtime, refs: list[Any], stream_name: str) -> list[tup
         elif letter:
             candidates = [s for s in streams.values() if s.get("label") == letter]
         else:
-            live = [s for s in streams.values() if _props(rt, s["name"])["digest"]]
+            live = [s for s in streams.values()
+                if any(p["state"] == "open" for p in _props(rt, s["name"])["items"].values())]
             candidates = live if len(live) == 1 else []
             if len(live) > 1:
                 raise DiscoveryError("several streams have open proposals; pass stream, or use the letter prefix")
@@ -397,9 +445,13 @@ def _resolve_numbers(rt: Runtime, refs: list[Any], stream_name: str) -> list[tup
             raise DiscoveryError(f"no open discovery digest matches {ref!r}")
         stream = candidates[0]
         props = _props(rt, stream["name"])
-        if not 1 <= num <= len(props["digest"]):
-            raise DiscoveryError(f"{ref!r}: the latest {stream['name']} digest has {len(props['digest'])} item(s)")
-        out.append((stream, props["items"][props["digest"][num - 1]]))
+        match = [p for p in props["items"].values() if p.get("num") == num and p["state"] == "open"]
+        if not match:
+            open_nums = sorted(p.get("num") for p in props["items"].values() if p["state"] == "open")
+            raise DiscoveryError(f"{ref!r} is not an open {stream['name']} proposal (open: "
+                                 f"{', '.join(str(n) for n in open_nums) or 'none'})")
+        if all(p["source_id"] != match[0]["source_id"] for _, p in out):
+            out.append((stream, match[0]))
     return out
 
 
@@ -408,23 +460,34 @@ def decide(rt: Runtime, args: dict[str, Any], session_id: str = "") -> dict[str,
     approve = _resolve_numbers(rt, args.get("approve") or [], stream_name)
     dismiss = _resolve_numbers(rt, args.get("dismiss") or [], stream_name)
     edits = {str(k).strip().upper(): v for k, v in (args.get("edits") or {}).items() if isinstance(v, dict)}
-    numbered = {id(p): str(r).strip().upper() for (s, p), r in zip(approve, args.get("approve") or [])}
-    missing = []
+    numbered = {p["source_id"]: f"{s.get('label') or ''}{p['num']}" for s, p in approve}
+    known = rt.settings.known_areas()
+    missing, invalid = [], []
     for stream, p in approve:
-        e = edits.get(numbered[id(p)], {})
+        ref = numbered[p["source_id"]]
+        e = edits.get(ref, edits.get(str(p["num"]), {}))
+        if e.get("due"):
+            try:
+                tf.validate_date(e["due"], "due")
+            except tf.TaskFormatError:
+                invalid.append(f"{ref}: due must be YYYY-MM-DD, got {e['due']!r}")
+        if e.get("area") and str(e["area"]).lower() not in known:
+            invalid.append(f"{ref}: unknown area {e['area']!r} (known: {', '.join(known)})")
         if not (e.get("due") or p.get("due") or e.get("undated")):
-            missing.append(numbered[id(p)])
+            missing.append(ref)
         if not (e.get("area") or p.get("area")):
-            missing.append(numbered[id(p)] + " (area)")
+            missing.append(ref + " (area)")
+    if invalid:
+        raise NeedsInput("fix_call", "Fix these edits and call again (nothing was created): " + "; ".join(invalid))
     if missing:
         raise NeedsInput("due", "Ask the user for a due date (or 'no due date') for: " + ", ".join(missing) +
                          ", then pass them in edits, e.g. {\"1\": {\"due\": \"2026-11-20\"}}.",
                          areas=rt.settings.known_areas())
     store = rt.store()
-    created, results = [], []
+    created, results, done = [], [], []
     for stream, p in approve:
-        ref = numbered[id(p)]
-        e = edits.get(ref, {})
+        ref = numbered[p["source_id"]]
+        e = edits.get(ref, edits.get(str(p["num"]), {}))
         notes = [f"Found by the {stream['name']} discovery stream on {p['day']} from {p['source'] or p['source_type']}."]
         if p["summary"]:
             notes.append(p["summary"])
@@ -440,12 +503,14 @@ def decide(rt: Runtime, args: dict[str, Any], session_id: str = "") -> dict[str,
                                due=e.get("due") or p.get("due") or "", undated=bool(e.get("undated")),
                                priority=e.get("priority", "normal"), notes="\n\n".join(notes), confirm_new=True,
                                source=f"{stream['name']} discovery")
-        except NeedsInput as exc:
-            results.append({"number": ref, "error": exc.message})
+        except (NeedsInput, tf.TaskFormatError) as exc:
+            results.append({"number": ref, "error": getattr(exc, "message", str(exc))})
             continue
         created.append(doc)
-        results.append({"number": ref, "task_id": doc.task_id, "title": doc.title})
-    _mark(rt, approve, "approved")
+        done.append((stream, p))
+        results.append({"number": ref, "task_id": doc.task_id, "title": doc.title, "area": doc.fm.get("area"),
+                        "due": tf.norm_date(doc.fm.get("due"))})
+    _mark(rt, done, "approved")  # failures stay open for a retry
     _mark(rt, dismiss, "dismissed")
     return {"created": created, "results": results, "dismissed": [p["title"] for _, p in dismiss]}
 
@@ -472,7 +537,7 @@ def pre_llm_call(session_id: str = "", **_: Any):
         streams = [s for s in _streams(rt).values() if s.get("origin_session") == session_id]
     except Exception:  # noqa: BLE001
         return None
-    live = [s for s in streams if _props(rt, s["name"])["digest"]]
+    live = [s for s in streams if any(p["state"] == "open" for p in _props(rt, s["name"])["items"].values())]
     if not live:
         return None
     names = ", ".join(f"{s['name']}" + (f" (numbers start with {s['label']})" if s.get("label") else "") for s in live)

@@ -462,8 +462,9 @@ def discovery_decide(args: dict[str, Any], session_id: str) -> str:
             research_errors += rt.notify_research(doc, session_id or "")
     receipt = rt.git().deliver([rt.store().rel(d.path) for d in created], "task: add from discovery") if created \
         else {}
+    added = "; ".join(f"{r['title']} ({r['area']}, due {r['due'] or 'none'})" for r in out["results"] if r.get("task_id"))
     return _ok(**out, git=receipt or None, research_errors=research_errors or None,
-               message=f"Added {len(created)} task(s)" + (f", dismissed {len(out['dismissed'])}" if out["dismissed"]
+               message=(f"Added: {added}. " if added else "") + f"Added {len(created)} task(s)" + (f", dismissed {len(out['dismissed'])}" if out["dismissed"]
                                                           else "") + ". " + (_git_note(receipt) if receipt else ""))
 
 

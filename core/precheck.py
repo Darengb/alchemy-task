@@ -48,11 +48,15 @@ def research_wake(settings: Settings | None = None, data_dir: str = "") -> dict[
 def _token(s: Settings) -> str | None:
     if s.git_transport != "token":
         return None
+    from .config import TOKEN_ENV
     try:
         from agent.secret_scope import get_secret  # public Hermes module
-        from .config import TOKEN_ENV
+    except ImportError:
+        import os
+        return os.environ.get(TOKEN_ENV)
+    try:
         return get_secret(TOKEN_ENV)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - unscoped under multiplexing: report "no token" once
         return None
 
 
@@ -85,7 +89,8 @@ def maintenance(data_dir: str, settings: Settings | None = None, token: str | No
                     lines.append("Pushed task changes that were waiting.")
                 else:
                     err = str(r.get("error") or r.get("state") or "")
-                    push_state = err.split(":")[0][:80] or "not pushed"
+                    import re
+                    push_state = re.split(r":| \(", err)[0].strip()[:80] or "not pushed"
         condition["push"] = push_state
         condition["problems"] = {k: report[k] for k in ("unsupported", "malformed", "unknown_status",
                                                          "done_without_completed", "area_mismatch",
@@ -96,6 +101,7 @@ def maintenance(data_dir: str, settings: Settings | None = None, token: str | No
         summary = ""
     digest = hashlib.sha256(json.dumps(condition, sort_keys=True, default=str).encode()).hexdigest()
     marker = data / "maintenance-state.sha"
+    (data / "maintenance-problems.sha").unlink(missing_ok=True)  # pre-0.1 marker name
     previous = marker.read_text().strip() if marker.exists() else ""
     if digest != previous:
         marker.parent.mkdir(parents=True, exist_ok=True)

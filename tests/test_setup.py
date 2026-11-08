@@ -34,6 +34,9 @@ class SetupCtx:
             return json.dumps({"success": True, "job_id": jid})
         if args["action"] == "list":
             return json.dumps({"jobs": [{"job_id": k, "name": v["name"]} for k, v in self.cron.items()]})
+        if args["action"] == "update":
+            self.cron[args["job_id"]].update({k: v for k, v in args.items() if k not in ("action", "job_id")})
+            return json.dumps({"success": True, "job_id": args["job_id"]})
         if args["action"] == "remove":
             self.cron.pop(args["job_id"], None)
             return json.dumps({"success": True})
