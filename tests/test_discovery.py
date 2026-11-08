@@ -61,118 +61,64 @@ def test_create_requires_approval_sources_and_timezone(ctx):
     job = next(iter(ctx.cron.values()))
     assert job["deliver"] == "origin" and job["attach_to_session"] and job["timezone"] == "America/New_York"
     assert job["schedule"] == "0 18 * * *" and "discovery_start" in job["prompt"]
+    assert 'discovery_research_run' in job['prompt'] and 'discovery_join' in job['prompt']
+    assert 'alchemy-task-discovery' in job['enabled_toolsets']
+    assert 'alchemy-task-discovery-child' in job['enabled_toolsets']
 
 
-def test_run_digest_dedupe_and_decide(ctx, settings):
+def test_freeform_research_is_not_a_discovery_acceptance(ctx):
     make_stream()
-    start = tool(task_tools.discovery_start, stream="work")
-    assert start["sources"] == [dict(s) for s in SRC] and start["research_remaining_today"] == 50
-    assert any(t["title"] == "Draft the spring newsletter" for t in start["open_tasks"])
-    sub = tool(task_tools.discovery_submit, stream="work", candidates=CANDS,
-               coverage=[{"source": "Work email", "status": "ok"},
-                         {"source": "Team chat", "status": "failed", "note": "token expired"}])
-    assert sub["added"] == 2 and sub["skipped"][0]["why"].startswith("open task exists")
-    d = sub["digest"]
-    assert "**1.** Send Sam the revised quote (work, due 2026-11-12, email from Sam)" in d
-    assert "**2.** Book the launch retro" in d and "⚠️ Team chat: failed (token expired)" in d
-    assert "Checked: Work email." in d
-    # same source never proposed twice
-    again = tool(task_tools.discovery_submit, stream="work", candidates=CANDS[:1], coverage=[])
-    assert again["added"] == 0 and again["skipped"][0]["why"] == "already proposed"
-    # the digest chat gets a hint for numeric replies
-    assert "discovery_decide" in dv.pre_llm_call(session_id="disc-chat")["context"]
-    # approving #2 needs a due date; #1 has a hint
-    need = tool(task_tools.discovery_decide, approve=["1", "2"])
-    assert need["needs"] == "due" and "2" in need["message"]
-    done = tool(task_tools.discovery_decide, approve=["1", "2"], edits={"2": {"due": "2026-11-15"}})
-    assert done["ok"] and len(done["results"]) == 2 and done["git"]["pushed"]
-    doc = tf.parse_file(settings.root() / "areas/work/tasks" /
-                        next(p.name for p in (settings.root() / "areas/work/tasks").glob("*send-sam*")))
-    assert "Found by the work discovery stream" in doc.body and "Source ID: `msg-1`" in doc.body
-    assert "Discovery research: Quote template exists." in doc.body and doc.fm["due"] == "2026-11-12"
-    # a later run lists only new items
-    nxt = tool(task_tools.discovery_submit, stream="work", candidates=[], coverage=[])
-    assert "Nothing new" in nxt["digest"]
-    assert tool(task_tools.discovery_decide, approve=["1"])["needs"] == "discovery"  # already added
+    before = len(runtime.Runtime().store().scan().tasks)
+    result = tool(task_tools.discovery_submit, stream="work", candidates=CANDS, coverage=[])
+    assert result["ok"] is False and "research" in result["message"]
+    assert len(runtime.Runtime().store().scan().tasks) == before
 
 
-def test_unpicked_items_are_not_relisted_but_stay_replyable(ctx):
+def test_title_similarity_never_skips_unresearched_source(ctx):
     make_stream()
-    tool(task_tools.discovery_submit, stream="work", candidates=CANDS[:2], coverage=[])
-    tool(task_tools.discovery_decide, approve=["1"])  # the user ignores 2
-    out = tool(task_tools.discovery_submit, stream="work", candidates=[], coverage=[])
-    assert "Book the launch" not in out["digest"]
-    later = tool(task_tools.discovery_decide, approve=["2"], edits={"2": {"due": "2026-11-20"}})
-    assert later["results"][0]["title"] == "Book the launch retro"
+    result = tool(task_tools.discovery_submit, stream="work", candidates=[CANDS[2]], coverage=[])
+    assert result["ok"] is False
+    assert not ctx.state.get("discovery_seen")
 
 
-def test_two_streams_in_one_chat_get_letters_and_cross_stream_dedupe(ctx):
+def test_unconfigured_prose_reader_does_not_fake_complete_start(ctx):
+    make_stream()
+    result = tool(task_tools.discovery_start, stream="work")
+    assert result["ok"] is False and "configure" in result["message"]
+
+
+def test_two_streams_preserve_origin_labels_not_source_skip(ctx):
     make_stream("work")
-    make_stream("bakery", areas=["home"])
+    make_stream("home")
     streams = dv._streams(runtime.Runtime())
-    assert {streams["work"]["label"], streams["bakery"]["label"]} == {"W", "B"}
-    tool(task_tools.discovery_submit, stream="work", candidates=CANDS[:1], coverage=[])
-    other = tool(task_tools.discovery_submit, stream="bakery", candidates=CANDS[:1], coverage=[])
-    assert other["added"] == 0  # same message already proposed by the work stream
-    assert "**W1.**" in dv.render_digest(streams["work"], list(dv._props(runtime.Runtime(), "work")["items"]
-                                                             .values()), [], "x")
-    tool(task_tools.discovery_submit, stream="bakery", candidates=[{**CANDS[1], "source_id": "b-1"}], coverage=[])
-    assert tool(task_tools.discovery_decide, approve=["1"])["needs"] == "discovery"  # ambiguous without letter
-    ok = tool(task_tools.discovery_decide, dismiss=["B1"])
-    assert ok["ok"] and ok["dismissed"] == ["Book the launch retro"]
+    assert streams["work"]["label"] == "W" and streams["home"]["label"] == "H"
+    for stream in streams:
+        result = tool(task_tools.discovery_submit, stream=stream, candidates=CANDS[:1], coverage=[])
+        assert result["ok"] is False
+    assert not ctx.state.get("discovery_seen")
 
 
-def test_separate_chats_keep_plain_numbers_and_research_cap(ctx):
-    make_stream("work", session="chat-a", research_cap=1)
-    make_stream("bakery", session="chat-b", areas=["home"])
-    assert dv._streams(runtime.Runtime())["work"]["label"] == ""
-    many = [{**CANDS[0], "source_id": f"m{i}", "title": f"Reply to client {i}"} for i in range(3)]
-    tool(task_tools.discovery_submit, stream="work", candidates=many, coverage=[])
-    items = dv._props(runtime.Runtime(), "work")["items"]
-    assert sum(1 for p in items.values() if p["researched"]) == 1
+def test_separate_origin_chats_keep_plain_labels(ctx):
+    make_stream("work", session="one")
+    make_stream("home", session="two")
+    assert all(not s["label"] for s in dv._streams(runtime.Runtime()).values())
 
 
-def test_numbers_continue_through_the_day_and_restart_next_day(ctx, monkeypatch):
+def test_empty_submit_still_requires_saved_joined_run(ctx):
     make_stream()
-    v = [{**CANDS[1], "source_id": f"s{i}", "title": f"Call supplier number {i}", "due_hint": "2026-11-20"}
-         for i in range(1, 6)]
-    d1 = tool(task_tools.discovery_submit, stream="work", candidates=v[:3], coverage=[])["digest"]
-    d2 = tool(task_tools.discovery_submit, stream="work", candidates=[{**v[3], "title": "Ask the printer about badge stock"}],
-              coverage=[])["digest"]
-    assert "**3.**" in d1 and "**4.** Ask the printer about badge stock" in d2 and "**1.**" not in d2
-    assert tool(task_tools.discovery_decide, approve=["2"])["results"][0]["title"] == "Call supplier number 2"
-    # next day: numbers restart; a bare number means today's, day=yesterday reaches back
-    monkeypatch.setattr(dv, "_today", lambda rt: "2099-01-02")
-    d3 = tool(task_tools.discovery_submit, stream="work", candidates=[{**v[4], "title": "Renew the domain"}],
-              coverage=[])["digest"]
-    assert "**1.** Renew the domain" in d3
-    assert tool(task_tools.discovery_decide, approve=["1"])["results"][0]["title"] == "Renew the domain"
-    earlier = runtime.Runtime().settings.today()
-    back = tool(task_tools.discovery_decide, approve=["3"], day=earlier)
-    assert back["results"][0]["title"] == "Call supplier number 3"
-    monkeypatch.setattr(dv, "_today", lambda rt: __import__("datetime").date.today().isoformat())
+    assert tool(task_tools.discovery_submit, stream="work", candidates=[], coverage=[])["ok"] is False
 
 
-def test_invalid_edit_creates_nothing_and_failures_stay_open(ctx, settings):
+def test_missing_or_wrong_proposal_approval_never_creates_task(ctx):
     make_stream()
-    tool(task_tools.discovery_submit, stream="work", candidates=CANDS[:2], coverage=[])
-    tasks = settings.root() / "areas/work/tasks"
-    before = len(list(tasks.glob("*.md")))
-    bad = tool(task_tools.discovery_decide, approve=["1", "2"], edits={"2": {"due": "someday soon"}})
-    assert bad["needs"] == "fix_call" and len(list(tasks.glob("*.md"))) == before
-    bad = tool(task_tools.discovery_decide, approve=["2"], edits={"2": {"due": "2026-11-13", "area": "garden"}})
-    assert bad["needs"] == "fix_call"
-    ok = tool(task_tools.discovery_decide, approve=["1", "1", "2"], edits={"2": {"due": "2026-11-13"}})
-    assert len([r for r in ok["results"] if r.get("task_id")]) == 2
-    assert len(list(tasks.glob("*.md"))) == before + 2
-    assert all(r["due"] for r in ok["results"])
+    before = len(runtime.Runtime().store().scan().tasks)
+    assert tool(task_tools.discovery_decide, approve=["1"], edits={"1": {"undated": True}})["ok"] is False
+    assert len(runtime.Runtime().store().scan().tasks) == before
 
 
-def test_bad_due_hint_is_dropped(ctx):
+def test_malformed_hint_cannot_be_converted_from_freeform(ctx):
     make_stream()
-    out = tool(task_tools.discovery_submit, stream="work",
-               candidates=[{**CANDS[1], "due_hint": "next Friday"}], coverage=[])
-    assert out["added"] == 1
+    assert tool(task_tools.discovery_submit, stream="work", candidates=[{**CANDS[1], "due_hint": "not a date"}], coverage=[])["ok"] is False
 
 
 def test_update_keeps_schedule_parts_and_chat(ctx):

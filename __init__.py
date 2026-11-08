@@ -33,6 +33,8 @@ def register(ctx: Any) -> None:
     research_agent.register(ctx)
     worksession.register(ctx)
     discovery.register(ctx)
+    from . import discovery_integration
+    discovery_integration.register(ctx)
     ctx.register_skill("discovery", _HERE / "skills" / "discovery" / "SKILL.md",
                        description="Use when setting up or running Alchemy Task discovery streams, or when the user "
                                    "replies to a discovery digest.")

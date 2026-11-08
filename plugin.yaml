@@ -18,6 +18,23 @@ provides_tools:
   - discovery_start
   - discovery_submit
   - discovery_decide
+  - discovery_config
+  - discovery_collect
+  - discovery_context
+  - discovery_research_run
+  - discovery_research_fetch
+  - discovery_research_submit
+  - discovery_research_accept
+  - discovery_actions
+  - discovery_reconcile
+  - discovery_join
+  - discovery_recover
+  - discovery_release_hold
+  - discovery_match
+  - discovery_decision
+  - discovery_conversion_recover
+  - discovery_digest
+  - discovery_runs
   - research_skills_list
   - research_skill_view
   - research_capabilities
@@ -31,6 +48,10 @@ provides_hooks:
   - on_session_finalize
   - post_compaction
 config_schema:
+  discovery_transport_receipt:
+    type: str
+    default: ""
+    description: "Operator-installed JSON evidence for supported host timeouts: sequential_call, concurrent_batch (seconds), long_canary (evidence reference). Empty blocks lifecycle dispatch. This does not set host timeouts or prove a canary ran."
   workspace_root:
     type: str
     default: ""

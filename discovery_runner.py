@@ -458,7 +458,7 @@ class DiscoveryRunner:
                 while self.clock.monotonic() < admit_until and len(active) < self.policy.slots and eligible:
                     cid = eligible.pop(0)
                     try:
-                        a = self.store.reserve_attempt(run_id, cid, owner_session=session_id, daily_limit=self.policy.daily_limit)
+                        a = self.store.reserve_attempt(run_id, cid, owner_session=session_id, daily_limit=ledger['config'].get('research_cap', self.policy.daily_limit))
                     except UserError as exc:
                         if 'daily research budget deferred' in str(exc):
                             deferred.extend([cid, *eligible]); break

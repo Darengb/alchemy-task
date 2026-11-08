@@ -136,6 +136,11 @@ def _fail(kind: str, message: str, **data: Any) -> str:
 def _guard(fn):
     def wrapper(args: dict[str, Any] | None = None, **kwargs: Any) -> str:
         try:
+            if fn.__name__ != 'task_find' and kwargs.get('session_id'):
+                from .discovery_integration import get_service
+                service = get_service(Runtime())
+                if service.runner._child_for(kwargs.get('session_id', ''), kwargs.get('task_id', '')):
+                    return _fail('discovery', 'Discovery research is read-only; no task or integration mutations.')
             return fn(dict(args or {}), **kwargs)
         except NeedsInput as exc:
             return _fail(exc.kind, exc.message, **exc.data)
@@ -400,6 +405,7 @@ _SOURCE = {"type": "object", "properties": {
     "name": {"type": "string", "description": "Short label, e.g. 'Work email' or 'Team Slack'."},
     "type": {"type": "string", "enum": ["email", "chat", "transcript", "meeting_notes", "document", "tracker", "other"]},
     "scope": {"type": "string", "description": "Exactly what to read: label, channels, sender filter, folder."},
+    "toolsets": {"type": "array", "items": {"type": "string"}, "description": "Actual currently available toolsets exposing this approved reader; inherited by research children."},
     "method": {"type": "string", "description": "Which tool or skill reads it (e.g. gmail MCP, slack skill)."}},
     "required": ["name", "type", "scope", "method"]}
 
@@ -439,27 +445,8 @@ DISCOVERY_START_SCHEMA = {
 
 DISCOVERY_SUBMIT_SCHEMA = {
     "name": "discovery_submit",
-    "description": "Discovery runs only: submit candidate tasks found in the sources, plus coverage for every source. "
-                   "Returns the numbered digest; reply with it unchanged.",
-    "parameters": {"type": "object", "properties": {
-        "stream": {"type": "string"},
-        "candidates": {"type": "array", "items": {"type": "object", "properties": {
-            "title": {"type": "string", "description": "Imperative task title."},
-            "area": {"type": "string"},
-            "source_type": {"type": "string", "enum": ["email", "chat", "transcript", "meeting_notes", "document",
-                                                       "tracker", "other"]},
-            "source": {"type": "string", "description": "Human label: 'email from Sam', '#launch thread'."},
-            "source_id": {"type": "string", "description": "Stable ID: message ID, thread permalink, file path."},
-            "link": {"type": "string"},
-            "summary": {"type": "string", "description": "What was asked or committed, by whom."},
-            "why": {"type": "string", "description": "One line: why this is the user's task."},
-            "due_hint": {"type": "string", "description": "YYYY-MM-DD only if the source states or implies it."},
-            "research_notes": {"type": "string", "description": "Optional, within today's research budget."}},
-            "required": ["title", "source_id", "summary"]}},
-        "coverage": {"type": "array", "items": {"type": "object", "properties": {
-            "source": {"type": "string"}, "status": {"type": "string", "enum": ["ok", "partial", "failed"]},
-            "note": {"type": "string"}}, "required": ["source", "status"]}}},
-        "required": ["stream", "candidates", "coverage"]},
+    "description": "Compatibility alias for immutable discovery_digest preparation. Requires full research/global join and post-join decisions; freeform candidates/research_notes are rejected.",
+    "parameters": {"type": "object", "properties": {"run_id": {"type": "string"}, "stream": {"type": "string"}}, "required": ["run_id"], "additionalProperties": False},
 }
 
 DISCOVERY_DECIDE_SCHEMA = {
@@ -484,9 +471,10 @@ def _discovery(fn):
     @_guard
     def wrapper(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
         from .discovery import DiscoveryError
+        from .core.discovery_identity import UserError
         try:
             return fn(args, session_id)
-        except DiscoveryError as exc:
+        except (DiscoveryError, UserError) as exc:
             return _fail("discovery", str(exc))
     wrapper.__name__ = fn.__name__
     return wrapper
@@ -515,32 +503,22 @@ def discovery_stream(args: dict[str, Any], session_id: str) -> str:
 @_discovery
 def discovery_start(args: dict[str, Any], session_id: str) -> str:
     from . import discovery as dv
-    return _ok(**dv.start(Runtime(), args.get("stream", "")))
+    return _ok(**dv.start(Runtime(), args.get("stream", ""), session_id=session_id))
 
 
 @_discovery
 def discovery_submit(args: dict[str, Any], session_id: str) -> str:
     from . import discovery as dv
-    out = dv.submit(Runtime(), args.get("stream", ""), args.get("candidates") or [], args.get("coverage") or [])
-    return _ok(**out, message="Reply with the digest text exactly as given, and nothing else.")
+    out = dv.submit(Runtime(), args.get("stream", ""), args.get("candidates"), args.get("coverage"),
+                    run_id=args.get("run_id", ""), session_id=session_id)
+    return _ok(**out)
 
 
 @_discovery
 def discovery_decide(args: dict[str, Any], session_id: str) -> str:
     from . import discovery as dv
-    rt = Runtime()
-    out = dv.decide(rt, args, session_id)
-    created = out.pop("created")
-    research_errors = []
-    for doc in created:
-        if (doc.fm.get("enrichment") or {}).get("status") == "pending":
-            research_errors += rt.notify_research(doc, session_id or "")
-    receipt = rt.git().deliver([rt.store().rel(d.path) for d in created], "task: add from discovery") if created \
-        else {}
-    added = "; ".join(f"{r['title']} ({r['area']}, due {r['due'] or 'none'})" for r in out["results"] if r.get("task_id"))
-    return _ok(**out, git=receipt or None, research_errors=research_errors or None,
-               message=(f"Added: {added}. " if added else "") + f"Added {len(created)} task(s)" + (f", dismissed {len(out['dismissed'])}" if out["dismissed"]
-                                                          else "") + ". " + (_git_note(receipt) if receipt else ""))
+    # Discovery promotes EXACT accepted research; never launch generic research.
+    return _ok(**dv.decide(Runtime(), args, session_id))
 
 
 IOS_SCHEMA = {

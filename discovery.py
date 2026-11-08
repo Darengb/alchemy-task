@@ -1,13 +1,8 @@
-"""Discovery streams: scheduled task suggestions from sources the user already reads with Hermes.
+"""Discovery stream setup and compatibility entrypoints.
 
-A stream is a named configuration (areas, approved sources, schedule, delivery
-chat, research cap). Each stream runs as its own cron job created from inside
-the chat that should receive its digest (``deliver: origin``). The job's agent
-reads only the stream's approved sources with the user's own tools, then
-submits candidates here. The plugin de-duplicates them (against earlier
-proposals in every stream and against existing tasks), numbers them and returns
-the digest the job delivers. Replies such as "1 and 3" in that chat go to
-``discovery_decide``, which creates the tasks (with research, as usual).
+Saved source-first runs, research acceptance, global join, guarded conversion and
+immutable numbered reviews are implemented by discovery_integration. Stream
+schedule, labels and origin-chat UX remain here.
 """
 from __future__ import annotations
 
@@ -137,11 +132,9 @@ def create_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
     deliver = str(args.get("deliver") or "origin").strip()
     job_args = {"action": "create", "name": f"{PREFIX}: discovery {name}", "schedule": cron,
                 "timezone": tz["timezone"] or "UTC", "deliver": deliver, "attach_to_session": True,
-                "skills": ["alchemy-task:discovery"],
-                "prompt": (f"Run the Alchemy Task discovery stream \"{name}\". Load the skill alchemy-task:discovery "
-                           f"and follow it: call discovery_start with stream \"{name}\", read only the approved "
-                           "sources it lists, then call discovery_submit. Your final reply is the digest the tool "
-                           "returns, unchanged.")}
+                "skills": ["alchemy-task:discovery"]}
+    from .jobs import discovery_job_config
+    job_args.update(discovery_job_config(name, [toolset for source in sources for toolset in source.get('toolsets', [])]))
     from .jobs import parse_job_id
     raw = rt.ctx.dispatch_tool("cronjob_manage", job_args)
     job_id = parse_job_id(raw)
@@ -261,6 +254,10 @@ def create_args_sources(raw_sources: list[Any]) -> list[dict[str, str]]:
                         "type": stype if stype in SOURCE_TYPES else "other",
                         "scope": " ".join(str(src.get("scope") or "").split())[:400],
                         "method": " ".join(str(src.get("method") or "").split())[:300]})
+        if src.get('toolsets'):
+            if not isinstance(src['toolsets'], list) or any(not isinstance(t, str) or not t for t in src['toolsets']):
+                raise DiscoveryError('source toolsets must name the existing approved reader toolsets')
+            sources[-1]['toolsets'] = list(dict.fromkeys(src['toolsets']))
     return sources
 
 
@@ -297,298 +294,42 @@ def status_summary(rt: Runtime) -> dict[str, Any]:
             "names": [f"{n} ({s['when']})" for n, s in streams.items()]}
 
 
-# ------------------------------------------------------------------ a run
+# ------------------------------------------------------------------ saved-run compatibility
 
 def _today(rt: Runtime) -> str:
     return rt.settings.today()
 
 
-def _researched_today(props: dict[str, Any], today: str) -> int:
-    return int((props.get("researched_by_day") or {}).get(today, 0))
+def start(rt: Runtime, name: str, session_id: str = "") -> dict[str, Any]:
+    from .discovery_integration import get_service
+    return get_service(rt).start(name, session_id=session_id)
 
 
-def start(rt: Runtime, name: str) -> dict[str, Any]:
-    stream = _get(rt, name)
-    props = _props(rt, stream["name"])
-    today = _today(rt)
-    since = stream.get("last_run")
-    window = (f"since {dt.datetime.fromtimestamp(since).isoformat(timespec='minutes')}" if since
-              else "the last 24 hours (first run)")
-    open_tasks = [{"task_id": t.task_id, "title": t.title, "area": t.fm.get("area")}
-                  for t in rt.store().find(status="open", limit=100)
-                  if not stream["areas"] or t.fm.get("area") in stream["areas"]]
-    return {"stream": stream["name"], "areas": stream["areas"], "sources": stream["sources"], "window": window,
-            "since_epoch": since, "today": today,
-            "research_remaining_today": max(0, stream["research_cap"] - _researched_today(props, today)),
-            "already_proposed_source_ids": sorted(_seen(rt))[-300:],
-            "open_tasks": open_tasks,
-            "instructions": ("Read only these sources, only the window given, with the tools named in each source's "
-                             "method. Look for commitments, requests, decisions and follow-ups that belong to the "
-                             "user. Skip anything in already_proposed_source_ids and anything an open task covers. "
-                             "Then call discovery_submit with candidates and a coverage entry for every source.")}
-
-
-def submit(rt: Runtime, name: str, candidates: list[dict[str, Any]], coverage: list[dict[str, Any]]) -> dict[str, Any]:
-    stream = _get(rt, name)
-    today = _today(rt)
-    now = time.time()
-    store = rt.store()
-    open_docs = store.find(status="open", limit=100)
-    with _lock:
-        props = _props(rt, stream["name"])
-        seen = _seen(rt)
-        cap_left = max(0, stream["research_cap"] - _researched_today(props, today))
-        if props.get("num_day") != today:  # numbers restart each day and run on through that day's digests
-            props["num_day"], props["next_num"] = today, 1
-        added, skipped, new_items = 0, [], []
-        for raw in (candidates or [])[:40]:
-            if not isinstance(raw, dict):
-                continue
-            title = " ".join(str(raw.get("title") or "").split())[:200]
-            source_id = " ".join(str(raw.get("source_id") or "").split())[:300]
-            if not title or not source_id:
-                skipped.append({"title": title, "why": "missing title or source_id"})
-                continue
-            if source_id in seen or source_id in props["items"]:
-                skipped.append({"title": title, "why": "already proposed"})
-                continue
-            dup = next((d for d in open_docs if tf.title_similarity(d.title, title) >= 0.6 or
-                        (source_id and source_id in d.body)), None)
-            if dup:
-                skipped.append({"title": title, "why": f"open task exists: {dup.title}"})
-                seen[source_id] = {"stream": stream["name"], "at": now, "outcome": "existing"}
-                continue
-            area = str(raw.get("area") or "").strip().lower()
-            if area not in stream["areas"]:
-                area = stream["areas"][0] if len(stream["areas"]) == 1 else ""
-            research = " ".join(str(raw.get("research_notes") or "").split())[:2000]
-            researched = bool(research) and cap_left > 0
-            if researched:
-                cap_left -= 1
-                counts = props.setdefault("researched_by_day", {})
-                counts[today] = counts.get(today, 0) + 1
-            elif research:
-                research = ""
-            try:
-                due = tf.validate_date(raw.get("due_hint"), "due_hint") if raw.get("due_hint") else None
-            except tf.TaskFormatError:
-                due = None  # a malformed hint is dropped, not fatal
-            num = int(props.get("next_num") or 1)
-            props["next_num"] = num + 1
-            stype = str(raw.get("source_type") or "other").lower()
-            props["items"][source_id] = {
-                "title": title, "area": area, "source_id": source_id,
-                "source_type": stype if stype in SOURCE_TYPES else "other",
-                "source": " ".join(str(raw.get("source") or "").split())[:200],
-                "link": str(raw.get("link") or "").strip()[:500],
-                "summary": " ".join(str(raw.get("summary") or "").split())[:1000],
-                "why": " ".join(str(raw.get("why") or "").split())[:500],
-                "due": due, "num": num,
-                "research_notes": research, "researched": researched, "day": today, "at": now, "state": "open"}
-            seen[source_id] = {"stream": stream["name"], "at": now, "outcome": "proposed"}
-            new_items.append(props["items"][source_id])
-            added += 1
-        cutoff = now - KEEP_DAYS * 86400
-        for sid in [k for k, p in props["items"].items() if p["at"] < cutoff or not p.get("num")]:
-            props["items"].pop(sid)  # unpicked items stay replyable for 7 days but are never re-listed
-        for sid in [k for k, v in seen.items() if v.get("at", 0) < now - 60 * 86400]:
-            seen.pop(sid)
-        props["digest"] = [p["source_id"] for p in new_items]
-        props["researched_by_day"] = {d: n for d, n in (props.get("researched_by_day") or {}).items() if d >= today}
-        props["digest_at"] = now
-        _save_props(rt, stream["name"], props)
-        rt.ctx.state.set("discovery_seen", seen)
-        streams = _streams(rt)
-        if stream["name"] in streams:
-            streams[stream["name"]]["last_run"] = now
-            _save_streams(rt, streams)
-    digest = render_digest(stream, new_items, coverage or [], today)
-    return {"added": added, "skipped": skipped, "digest": digest}
-
-
-def render_digest(stream: dict[str, Any], items: list[dict[str, Any]], coverage: list[dict[str, Any]],
-                  today: str) -> str:
-    """One digest lists only this run's new items. Numbers restart each day and continue across that day's runs."""
-    label = stream.get("label") or ""
-    lines = [f"**{stream['name'].title()} discovery** · {today}"]
-    if not items:
-        lines.append("Nothing new that needs a task.")
-    for p in items:
-        bits = [f"**{label}{p['num']}.** {p['title']}"]
-        meta = [x for x in (p["area"], f"due {p['due']}" if p["due"] else "", p["source"]) if x]
-        if meta:
-            bits.append(f"({', '.join(meta)})")
-        line = " ".join(bits)
-        if p["why"]:
-            line += f": {p['why']}"
-        if p["link"]:
-            line += f" [source]({p['link']})"
-        lines.append(line)
-    problems = [c for c in coverage if isinstance(c, dict) and str(c.get("status") or "ok").lower() != "ok"]
-    covered = [str(c.get("source")) for c in coverage if isinstance(c, dict) and str(c.get("status")).lower() == "ok"]
-    if covered:
-        lines.append("Checked: " + ", ".join(covered) + ".")
-    for c in problems:
-        lines.append(f"⚠️ {c.get('source')}: {c.get('status')}" + (f" ({c.get('note')})" if c.get("note") else ""))
-    if items:
-        example = f"{label}{items[0]['num']}" + (f" and {label}{items[1]['num']}" if len(items) > 1 else "")
-        lines.append(f"Reply with the numbers you want as tasks (for example \"{example}\"); the rest are left alone.")
-    return "\n".join(lines)
-
-
-# ------------------------------------------------------------------ decisions
-
-def _day_of(rt: Runtime, day: str) -> str:
-    text = str(day or "").strip().lower()
-    if not text or text == "today":
-        return ""
-    if text == "yesterday":
-        return (dt.date.fromisoformat(_today(rt)) - dt.timedelta(days=1)).isoformat()
-    try:
-        return tf.validate_date(text, "day") or ""
-    except tf.TaskFormatError as exc:
-        raise DiscoveryError("day must be today, yesterday or YYYY-MM-DD") from exc
-
-
-def _recent(props: dict[str, Any]) -> list[dict[str, Any]]:
-    return [p for p in props["items"].values() if p.get("num")]
-
-
-def _resolve_numbers(rt: Runtime, refs: list[Any], stream_name: str, day: str = "") -> list[tuple[dict[str, Any],
-                                                                                               dict[str, Any]]]:
-    """A bare number means today's numbering, or the latest day with a digest if none posted today yet."""
-    streams = _streams(rt)
-    want_day = _day_of(rt, day)
-    today = _today(rt)
-    out = []
-    for ref in refs:
-        text = str(ref).strip().upper()
-        m = re.match(r"^([A-Z]?)(\d+)$", text)
-        if not m:
-            raise DiscoveryError(f"{ref!r} is not a proposal number")
-        letter, num = m.group(1), int(m.group(2))
-        if stream_name:
-            candidates = [_get(rt, stream_name)]
-        elif letter:
-            candidates = [s for s in streams.values() if s.get("label") == letter]
-        else:
-            live = [s for s in streams.values() if _recent(_props(rt, s["name"]))]
-            candidates = live if len(live) == 1 else []
-            if len(live) > 1:
-                raise DiscoveryError("several streams have recent digests; pass stream, or use the letter prefix")
-        if not candidates:
-            raise DiscoveryError(f"no recent discovery digest matches {ref!r}")
-        stream = candidates[0]
-        items = _recent(_props(rt, stream["name"]))
-        target = want_day or (today if any(p["day"] == today for p in items)
-                              else max((p["day"] for p in items), default=today))
-        match = [p for p in items if p["day"] == target and p["num"] == num]
-        if not match:
-            nums = sorted(p["num"] for p in items if p["day"] == target)
-            raise DiscoveryError(f"{ref!r} is not in the {stream['name']} digest for {target} (numbers: "
-                                 f"{', '.join(str(n) for n in nums) or 'none'})")
-        if match[0]["state"] == "approved":
-            raise DiscoveryError(f"{ref!r} ({match[0]['title']}) was already added as a task")
-        if all(p["source_id"] != match[0]["source_id"] for _, p in out):
-            out.append((stream, match[0]))
-    return out
+def submit(rt: Runtime, name: str, candidates=None, coverage=None, *, run_id="", session_id="") -> dict[str, Any]:
+    """Compatibility alias only. Freeform notes cannot bypass research/join."""
+    from .core.discovery_identity import UserError
+    from .discovery_integration import get_service
+    if candidates or coverage or not run_id:
+        raise UserError("discovery_submit requires saved run_id after full source-first research/global join; freeform candidates are not proposals")
+    return get_service(rt).finalize(run_id, session_id=session_id)
 
 
 def decide(rt: Runtime, args: dict[str, Any], session_id: str = "") -> dict[str, Any]:
-    stream_name = args.get("stream", "")
-    approve = _resolve_numbers(rt, args.get("approve") or [], stream_name, args.get("day", ""))
-    dismiss = _resolve_numbers(rt, args.get("dismiss") or [], stream_name, args.get("day", ""))
-    approved_ids = {p["source_id"] for _, p in approve}
-    dismiss = [(s, p) for s, p in dismiss if p["source_id"] not in approved_ids]
-    edits = {str(k).strip().upper(): v for k, v in (args.get("edits") or {}).items() if isinstance(v, dict)}
-    numbered = {p["source_id"]: f"{s.get('label') or ''}{p['num']}" for s, p in approve}
-    known = rt.settings.known_areas()
-    missing, invalid = [], []
-    for stream, p in approve:
-        ref = numbered[p["source_id"]]
-        e = edits.get(ref, edits.get(str(p["num"]), {}))
-        if e.get("due"):
-            try:
-                e["due"] = tf.parse_date_words(e["due"], _today(rt), "due")
-            except tf.TaskFormatError as exc:
-                invalid.append(f"{ref}: {exc}")
-        if e.get("priority") and str(e["priority"]).lower() not in tf.PRIORITIES:
-            invalid.append(f"{ref}: priority must be one of {', '.join(tf.PRIORITIES)}")
-        if e.get("area") and str(e["area"]).lower() not in known:
-            invalid.append(f"{ref}: unknown area {e['area']!r} (known: {', '.join(known)})")
-        if not (e.get("due") or p.get("due") or e.get("undated")):
-            missing.append(ref)
-        if not (e.get("area") or p.get("area")):
-            missing.append(ref + " (area)")
-    if invalid:
-        raise NeedsInput("fix_call", "Fix these edits and call again (nothing was created): " + "; ".join(invalid))
-    if missing:
-        raise NeedsInput("due", "Ask the user for a due date (or 'no due date') for: " + ", ".join(missing) +
-                         ", then pass them in edits, e.g. {\"1\": {\"due\": \"2026-11-20\"}}.",
-                         areas=rt.settings.known_areas())
-    store = rt.store()
-    created, results, done = [], [], []
-    for stream, p in approve:
-        ref = numbered[p["source_id"]]
-        e = edits.get(ref, edits.get(str(p["num"]), {}))
-        notes = [f"Found by the {stream['name']} discovery stream on {p['day']} from {p['source'] or p['source_type']}."]
-        if p["summary"]:
-            notes.append(p["summary"])
-        if p["why"]:
-            notes.append(f"Why it matters: {p['why']}")
-        if p["link"]:
-            notes.append(f"Source: {p['link']}")
-        notes.append(f"Source ID: `{p['source_id']}`")
-        if p["research_notes"]:
-            notes.append("Discovery research: " + p["research_notes"])
-        try:
-            doc = store.create(title=e.get("title") or p["title"], area=e.get("area") or p["area"],
-                               summary=e.get("summary") or p["summary"],
-                               due=e.get("due") or p.get("due") or "", undated=bool(e.get("undated")),
-                               priority=e.get("priority", "normal"), notes="\n\n".join(notes), confirm_new=True,
-                               source=f"{stream['name']} discovery")
-        except (NeedsInput, tf.TaskFormatError) as exc:
-            results.append({"number": ref, "error": getattr(exc, "message", str(exc))})
-            continue
-        created.append(doc)
-        done.append((stream, p))
-        results.append({"number": ref, "task_id": doc.task_id, "title": doc.title, "area": doc.fm.get("area"),
-                        "due": tf.norm_date(doc.fm.get("due"))})
-    _mark(rt, done, "approved")  # failures stay open for a retry
-    _mark(rt, dismiss, "dismissed")
-    return {"created": created, "results": results, "dismissed": [p["title"] for _, p in dismiss]}
-
-
-def _mark(rt: Runtime, pairs: list[tuple[dict[str, Any], dict[str, Any]]], state: str) -> None:
-    if not pairs:
-        return
-    with _lock:
-        seen = _seen(rt)
-        for stream, p in pairs:
-            props = _props(rt, stream["name"])
-            if p["source_id"] in props["items"]:
-                props["items"][p["source_id"]]["state"] = state
-            _save_props(rt, stream["name"], props)
-            seen[p["source_id"]] = {"stream": stream["name"], "at": time.time(), "outcome": state}
-        rt.ctx.state.set("discovery_seen", seen)
+    from .discovery_integration import get_service
+    return get_service(rt).decide(args, session_id=session_id)
 
 
 def pre_llm_call(session_id: str = "", **_: Any):
     if not session_id:
         return None
-    try:
-        rt = Runtime()
-        streams = [s for s in _streams(rt).values() if s.get("origin_session") == session_id]
-    except Exception:  # noqa: BLE001
-        return None
-    live = [s for s in streams if _recent(_props(rt, s["name"]))]
-    if not live:
-        return None
-    names = ", ".join(f"{s['name']}" + (f" (numbers start with {s['label']})" if s.get("label") else "") for s in live)
-    return {"context": f"[Alchemy Task] This chat receives discovery digests for: {names}. If the user replies with "
-                       "proposal numbers, call discovery_decide with approve. Numbers restart each day: a bare number means "
-                       "today's digests (or the latest day if none posted today); pass day=yesterday or a date when the "
-                       "user refers to an earlier digest. Unpicked items need no action."}
+    from .discovery_integration import get_service
+    service = get_service(Runtime())
+    data = service.digest._load()
+    pending = [p for p in data['proposals'].values() if p['binding']['origin']['session_id'] == session_id
+               and p['binding']['expires'] >= service.rt.settings.today() and p['state'] in {'pending', 'approved'}]
+    if pending:
+        return {"context": "[Alchemy Task] This chat has immutable discovery proposals. Resolve replies by exact proposal number/day/stream with discovery_decide. Selecting one never closes the others. Semantic matches need update/create choice and exact target_task_id; never use title guesses. Ignored items remain replyable seven days."}
+    return None
 
 
 def register(ctx: Any) -> None:

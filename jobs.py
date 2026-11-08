@@ -99,6 +99,21 @@ def inventory(timezone: str) -> list[dict[str, str]]:
             for key, spec in JOBS.items()]
 
 
+def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None) -> dict[str, Any]:
+    """One supported source-first scheduled workflow, no separate executor."""
+    return {
+        'enabled_toolsets': list(dict.fromkeys(['alchemy-task', 'alchemy-task-discovery', 'alchemy-task-discovery-child',
+                                              'skills', 'web', 'file', 'session_search', *(reader_toolsets or [])])),
+        'prompt': (f'Run the Alchemy Task discovery stream "{stream}". Load alchemy-task:discovery. '
+                   'Call discovery_start and resume its SAME saved run/window before scanning anything new. '
+                   'Collect every approved source with discovery_collect; freeze complete source/task/skill context with discovery_context. '
+                   'Use discovery_research_run, fetch every full callback, perform substantive parent semantic acceptance/repair, '
+                   'reconcile all cohorts, then discovery_join. Only after global join perform serial discovery_match/discovery_decision. '
+                   'Prepare discovery_digest. No freeform discovery_submit candidates, no task creation before approval, '
+                   'no generic post-creation research replacing accepted dossiers. Return the immutable digest text unchanged for origin delivery; '
+                   'preparation is not a verified delivery receipt. If blocked, report the exact pending saved run rather than creating another run.')}
+
+
 def parse_job_id(result: Any) -> str:
     try:
         data = json.loads(result) if isinstance(result, str) else dict(result or {})
