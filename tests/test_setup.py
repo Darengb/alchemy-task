@@ -101,9 +101,19 @@ def test_fresh_setup_flow(home, tmp_path, data_dir):
     assert final["receipt"]["jobs"]["ready"] and final["receipt"]["git"]["ready"]
     assert "✅ Git:" in final["text"]
     # teardown removes jobs and stubs, keeps tasks and settings
-    td = call(action="teardown")
+    assert call(action="teardown")["needs"] == "confirm" and len(ctx.cron) == 2
+    td = call(action="teardown", user_confirmed=True)
     assert ctx.cron == {} and not any((home / "scripts").iterdir()) and len(td["removed_jobs"]) == 2
     assert ctx.get_config("workspace_root") == str(ws.resolve())
+
+
+def test_check_files_and_push_actions(home, workspace, data_dir, settings):
+    make_ctx(data_dir, workspace_root=str(workspace), timezone="America/New_York")
+    out = call(action="check_files")
+    assert out["ok"] and "need an ID" in out["summary"] and out["problems"]["unsupported"]
+    fixed = call(action="check_files", fix=True)
+    assert "Assigned IDs to 1" in fixed["summary"] and fixed["git"]["pushed"]
+    assert call(action="push")["message"].startswith("Everything is pushed")
 
 
 def test_existing_vault_inspect(home, workspace, data_dir):

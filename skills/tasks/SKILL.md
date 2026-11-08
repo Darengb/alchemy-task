@@ -57,6 +57,26 @@ tools; they validate fields, keep IDs stable, commit and push, and queue researc
 - When a note says research finished, tell the user in a sentence. If access is missing, offer to set it up
   now or when they start the task; setting up access is not permission to do the task.
 
+## Plain-language requests (users rarely remember slash commands)
+
+Map what people say to tools; never tell them to type a command when you can do it yourself.
+
+| The user says something like | Do |
+|---|---|
+| "set up my tasks", "get Alchemy Task working", "start over with setup" | load `alchemy-task:setup` and follow it |
+| "is everything working?", "what's set up?", "is it syncing?", "task status" | `task_setup` `status`; show its receipt text |
+| "sync my tasks", "push my changes", "why isn't GitHub updated?" | `task_setup` `push` (then `status` if it fails) |
+| "check my task files", "anything broken in my tasks?", "fix the IDs" | `task_setup` `check_files` (`fix: true` when they ask to fix) |
+| "what's on my plate", "what's due this week", "show my open work" | `task_find` with the right filters |
+| "research X again", "redo the research" | `task_research` with the task |
+| "work on X", "pick up X", "continue X", "where was I on X?" | `task_work_start` |
+| "I'm done with X", "X is finished", "drop X", "X is waiting on Sam" | `task_update` (or `task_checkpoint` inside a work session) |
+| "set up a daily digest from my email", "add a discovery for work" | load `alchemy-task:discovery`; `discovery_stream` `create` |
+| "change my digest to 7 PM", "make it weekdays only", "stop the work digest" | `discovery_stream` `update` / `remove` (confirm first) |
+| "run my digest now", "check my email for tasks now" | `discovery_stream` `run_now` |
+| "turn off Alchemy Task's schedules", "stop the background jobs", "uninstall" | confirm, then `task_setup` `teardown` with `user_confirmed: true`; for uninstalling, mention `hermes plugins remove alchemy-task` afterwards |
+| "change my timezone / default area / workspace" | `task_setup` `save` |
+
 ## When a tool says `ok: false`
 
 Read `needs` and `message`: ask the user for the missing piece (`due`, `area`, `reason`, `reopen`), pick from

@@ -273,13 +273,17 @@ def task_checkpoint(args: dict[str, Any], session_id: str = "", **_: Any) -> str
 SETUP_SCHEMA = {
     "name": "task_setup",
     "description": (
-        "Set up Alchemy Task with the user (load the skill alchemy-task:setup first). Actions: status (readiness "
-        "receipt and what is next), inspect (look at a folder before using it), save (validate and save "
-        "settings), git_check (verify Git push, or create a deploy key), jobs_preview (list the scheduled jobs to "
-        "ask the user about), jobs_create (create them, only after the user approved), teardown (remove jobs)."),
+        "Set up, check and maintain Alchemy Task (the user never needs slash commands). Actions: status (is "
+        "everything working? what is set up? readiness of each part), check_files (check task files for problems; "
+        "fix=true also gives hand-made tasks their ID), push (sync now / push waiting changes), inspect, save "
+        "(change a setting), git_check, jobs_preview, jobs_create (only after the user approved), teardown "
+        "(stop/remove the scheduled jobs; only after the user confirmed). For first-time setup load the skill "
+        "alchemy-task:setup."),
     "parameters": {"type": "object", "properties": {
-        "action": {"type": "string", "enum": ["status", "inspect", "save", "git_check", "jobs_preview",
-                                              "jobs_create", "teardown"]},
+        "action": {"type": "string", "enum": ["status", "check_files", "push", "inspect", "save", "git_check",
+                                              "jobs_preview", "jobs_create", "teardown"]},
+        "fix": {"type": "boolean", "description": "check_files: also assign missing task IDs."},
+        "user_confirmed": {"type": "boolean", "description": "teardown: true only after the user confirmed."},
         "path": {"type": "string", "description": "inspect: absolute folder path."},
         "workspace_root": {"type": "string"},
         "create_workspace": {"type": "boolean", "description": "save: create a new workspace folder and Git repo."},
@@ -321,7 +325,26 @@ def task_setup(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
             return _ok(**sf.jobs_preview(rt))
         if action == "jobs_create":
             return _ok(**sf.jobs_create(rt, user_approved=bool(args.get("user_approved")), session_id=session_id))
+        if action == "check_files":
+            from .core import validator
+            report = validator.validate(rt.store(), apply=bool(args.get("fix")))
+            receipt = rt.git().deliver(report["changed_paths"], "task: assign missing task IDs") \
+                if report["changed_paths"] else None
+            details = {k: report[k][:20] for k in ("unsupported", "malformed", "unknown_status",
+                                                   "done_without_completed", "area_mismatch", "needs_identity")
+                       if report[k]}
+            return _ok(summary=validator.summarize(report), problems=details,
+                       duplicate_task_ids=report["duplicate_task_ids"] or None, git=receipt)
+        if action == "push":
+            r = rt.git().retry()
+            msg = "Everything is pushed; the remote is up to date." if r.get("pushed") else \
+                f"Not pushed ({r.get('state')}): {r.get('error') or r.get('note') or 'no details'}"
+            return _ok(**r, message=msg)
         if action == "teardown":
+            if not args.get("user_confirmed"):
+                return _fail("confirm", "Removing the scheduled jobs stops the research sweep, the hourly check and "
+                             "every discovery stream (task files and settings stay). Ask the user to confirm, then call "
+                             "again with user_confirmed=true.")
             return _ok(**sf.teardown(rt))
     except sf.SetupError as exc:
         return _fail("setup", str(exc))

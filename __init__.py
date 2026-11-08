@@ -22,7 +22,9 @@ def _prompt_section(_info: Any = None) -> str:
                 "to set it up. To set it up, load the skill alchemy-task:setup and follow it.")
     return ("Alchemy Task manages the user's tasks as Markdown files. Create, change and look up tasks only "
             "with task_create, task_update and task_find; do not edit task files with file tools. Ask for a due "
-            "date when the user gives none. For conventions load the skill alchemy-task:tasks.")
+            "date when the user gives none. Users speak plainly instead of using /task commands: \"is everything "
+            "working\", \"sync my tasks\", \"check my task files\", \"work on X\", \"set up a daily digest\" all map "
+            "to the plugin's tools. For the full mapping and conventions load the skill alchemy-task:tasks.")
 
 
 def register(ctx: Any) -> None:
