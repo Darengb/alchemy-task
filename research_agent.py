@@ -47,7 +47,8 @@ def _run_for(task_id: str = "", run_id: str = "", session_id: str = "") -> tuple
             return task_id, _runs[task_id]
         if session_id and session_id in _by_child_session:
             sid = _by_child_session[session_id]
-            return sid, _runs[sid]
+            if sid in _runs:
+                return sid, _runs[sid]
         if run_id:
             for sid, run in _runs.items():
                 if run["run_id"] == run_id:
