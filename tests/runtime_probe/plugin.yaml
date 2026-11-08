@@ -1,0 +1,10 @@
+name: alchemy-discovery-probe
+version: "0.0.1"
+description: "Temporary synthetic lifecycle compatibility probe."
+author: "Daren Broxmeyer"
+license: MIT
+requires_hermes: ">=0.22.5"
+provides_tools:
+  - discovery_runtime_probe
+  - discovery_probe_read
+  - discovery_probe_submit
