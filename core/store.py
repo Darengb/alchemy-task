@@ -449,7 +449,7 @@ class TaskStore:
                 if "summary" not in fm and new_summary:
                     fm.insert(1, "summary", new_summary) if hasattr(fm, "insert") else fm.__setitem__("summary",
                                                                                                     new_summary)
-                    notes.append("summary added")
+                    notes.append("summary: added")
                 else:
                     setf("summary", new_summary)
             if changes.get("contexts") is not None:
