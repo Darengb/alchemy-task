@@ -204,7 +204,8 @@ def test_first_sync_creates_open_tasks_only_and_second_sync_writes_nothing(ctx, 
     assert phone.reminders["X"]["notes"] == "my own reminder"
     writes = phone.writes
     again = ios_call()
-    assert again["created"] == again["updated"] == 0 and phone.writes == writes and "already matches" in again["message"]
+    assert again["created"] == again["updated"] == 0 and phone.writes == writes
+    assert again["problems"] == ["1 task(s) have no ID yet and were skipped (say \"fix my task files\")"]
 
 
 def test_native_completion_and_reopen_come_back(ctx, phone, settings, data_dir):
