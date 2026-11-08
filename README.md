@@ -43,11 +43,37 @@ researches it in the background, and keeps it current while you work on it.
 - **Validator:** `/task validate` checks hand-edited files, reports problems and assigns missing IDs with
   one-line edits that keep your comments and formatting.
 
+## Setup
+
+Say **"set up my tasks"**. Your agent walks you through it in a few minutes, and every answer is checked and
+saved by the plugin:
+
+1. **Timezone** first. A fresh Cloud agent usually has none, so it asks rather than assuming UTC.
+2. **Workspace:** point it at an existing notes repository (an Obsidian vault works; only the task folders are
+   used) or start fresh in a new Git repository.
+3. **Areas**, such as work and personal.
+4. **Git delivery:** your own Git setup if it already pushes; otherwise Alchemy Task makes a deploy key
+   for one repository and shows you where to add it on GitHub. Nothing secret goes through chat.
+5. **Scheduled jobs**, listed with what they do and what they cost, created only after you say yes.
+
+`/task status` shows the readiness of each part at any time. `/task teardown` removes the scheduled jobs
+(run it before `hermes plugins remove`); task files and settings stay.
+
+### Scheduled jobs
+
+| Job | When | What it does | Cost |
+|---|---|---|---|
+| Research sweep | every 30 minutes | Researches tasks whose research could not start or stopped early | Free when nothing waits (a script checks first) |
+| Task file check and push retry | hourly | Gives hand-made tasks an ID, pushes commits that failed to push, tells you about new file problems | Free (script, no model) |
+
+Each job's small loader script is copied into `$HERMES_HOME/scripts/` (cron only runs scripts from there).
+
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `/task status` | Workspace, areas, task counts, timezone and Git delivery state |
+| `/task status` | Readiness of each part: timezone, workspace, areas, Git, jobs, discovery |
+| `/task teardown` | Remove the scheduled jobs and their scripts (tasks and settings are kept) |
 | `/task validate [apply]` | Check task files; `apply` assigns missing IDs |
 | `/task push` | Retry pushing committed task changes |
 | `/task setup` | Start setup (or say "set up my tasks") |
@@ -129,9 +155,13 @@ Setup fills them in for you.
 - **Chat context:** in a chat linked to a task, a one-line reminder to checkpoint is added to each message;
   when research finishes, a one-line note is added to your next message in the chat where
   the task was created, so your agent can tell you about it.
-- **Scheduled job (created only with your approval during setup):** a research sweep every 30 minutes. A
-  pre-check script copied into `$HERMES_HOME/scripts/` runs first and starts the agent only when a task is
-  waiting for research, so idle runs cost nothing.
+- **Scheduled jobs (created only after you approve them during setup):** see the table above. Their loader
+  scripts are written to `$HERMES_HOME/scripts/`; the hourly check messages the setup chat only when
+  something changes. The research sweep's script starts the agent only when a task is waiting.
+- **Setup writes:** plugin settings through Hermes's plugin settings API; Hermes's own `timezone` only if you
+  agree during setup; a new workspace folder and Git repository if you start fresh; a
+  `.alchemy-task-owner` marker in the workspace (listed in `.git/info/exclude`) so two installs do not
+  silently share one workspace.
 - **Plugin state:** locks, push receipts, active research runs, a one-hour capability cache and pending chat
   notes live in the plugin's profile-scoped data directory.
 - No telemetry.

@@ -166,6 +166,10 @@ def task_create(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
     research_errors = rt.notify_research(doc, session_id or "") if research == "pending" else []
     summary = store.summary(doc)
     msg = f"Created \"{doc.title}\" in {summary['area']}, due {summary['due'] or 'undated'}. {_git_note(receipt)}"
+    others = [a for a in rt.settings.known_areas() if a != summary["area"]]
+    if not args.get("area") and others:
+        msg += (f" No area was given, so it went to the default area ({summary['area']}). If it fits "
+                f"{', '.join(others)} better, move it with task_update area=... and tell the user.")
     if research == "pending" and not research_errors:
         msg += " Background research has started; results are added to the task and you will hear when it is done."
     elif research == "pending":
