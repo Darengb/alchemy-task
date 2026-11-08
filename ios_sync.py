@@ -29,7 +29,7 @@ MAX_IN_FLIGHT = 4
 MAX_WRITES = 20
 BUDGET_SECONDS = 60
 UNKNOWN_DISPATCH_MAX_AGE = 20 * 3600  # re-sending the same key is safe well inside the connector's retention
-WAITING = "Waiting for your iPhone. Open the Hermes app and run /task ios (or say \"sync reminders\") again."
+WAITING = "Waiting for your iPhone. Open the Hermes app and run /task ios (or say \"sync reminders\") again"
 
 
 class SyncError(ValueError):
