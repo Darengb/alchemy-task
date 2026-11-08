@@ -188,6 +188,13 @@ def update_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
     current = _get(rt, args.get("name", ""))
     if not args.get("user_approved"):
         raise DiscoveryError("confirm the change with the user, then call again with user_approved=true")
+    if args.get("deliver") and args["deliver"] != current.get("deliver"):
+        raise DiscoveryError("a stream posts where it was created; to move it, remove it and create it again from "
+                             "the chat (or Telegram topic) that should receive it")
+    try:
+        cap = max(0, min(int(args.get("research_cap", current["research_cap"])), 200))
+    except (TypeError, ValueError) as exc:
+        raise DiscoveryError("research_cap must be a whole number") from exc
     frequency = args.get("frequency") or current.get("frequency") or "daily"
     at = args.get("time") or current.get("time") or "6 PM"
     cron, when = (schedule_for(frequency, at) if (args.get("frequency") or args.get("time"))
@@ -215,7 +222,7 @@ def update_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
         s = streams[current["name"]]
         s.update({"schedule": cron, "when": when, "frequency": frequency, "time": at, "timezone": tz,
                   "areas": areas, "sources": sources,
-                  "research_cap": max(0, min(int(args.get("research_cap", s["research_cap"])), 200))})
+                  "research_cap": cap})
         _save_streams(rt, streams)
     return {"stream": _public(s), "message": f"Updated '{s['name']}': {when} ({tz}), still posting to its own chat."}
 
@@ -459,6 +466,8 @@ def decide(rt: Runtime, args: dict[str, Any], session_id: str = "") -> dict[str,
     stream_name = args.get("stream", "")
     approve = _resolve_numbers(rt, args.get("approve") or [], stream_name)
     dismiss = _resolve_numbers(rt, args.get("dismiss") or [], stream_name)
+    approved_ids = {p["source_id"] for _, p in approve}
+    dismiss = [(s, p) for s, p in dismiss if p["source_id"] not in approved_ids]
     edits = {str(k).strip().upper(): v for k, v in (args.get("edits") or {}).items() if isinstance(v, dict)}
     numbered = {p["source_id"]: f"{s.get('label') or ''}{p['num']}" for s, p in approve}
     known = rt.settings.known_areas()
@@ -471,6 +480,8 @@ def decide(rt: Runtime, args: dict[str, Any], session_id: str = "") -> dict[str,
                 tf.validate_date(e["due"], "due")
             except tf.TaskFormatError:
                 invalid.append(f"{ref}: due must be YYYY-MM-DD, got {e['due']!r}")
+        if e.get("priority") and str(e["priority"]).lower() not in tf.PRIORITIES:
+            invalid.append(f"{ref}: priority must be one of {', '.join(tf.PRIORITIES)}")
         if e.get("area") and str(e["area"]).lower() not in known:
             invalid.append(f"{ref}: unknown area {e['area']!r} (known: {', '.join(known)})")
         if not (e.get("due") or p.get("due") or e.get("undated")):

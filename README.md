@@ -40,6 +40,13 @@ researches it in the background, and keeps it current while you work on it.
   one itself from the conversation, using your checkpoint model (by default the same model as compression)
   or a free digest of the last exchange when no model call is available. Automatic checkpoints never mark a
   task done.
+- **Discovery streams:** a scheduled digest of things that look like your tasks, found in sources your
+  agent can already read: email, chat, meeting transcripts and notes, shared documents. Each stream has its
+  own sources and scope, areas, schedule (6 PM by default, in your timezone) and chat, so a work stream and a
+  side-business stream stay separate. A digest is a short numbered list with the reason for each item and
+  which sources were checked; reply "1 and 3" and those become tasks, with their source recorded and the
+  usual research. Nothing becomes a task without your reply, a message is never suggested twice (across
+  streams too), and items already covered by an open task are skipped.
 - **Validator:** `/task validate` checks hand-edited files, reports problems and assigns missing IDs with
   one-line edits that keep your comments and formatting.
 
@@ -67,6 +74,11 @@ saved by the plugin:
 | Task file check and push retry | hourly | Gives hand-made tasks an ID, pushes commits that failed to push, tells you about new file problems | Free (script, no model) |
 
 Each job's small loader script is copied into `$HERMES_HOME/scripts/` (cron only runs scripts from there).
+
+Each **discovery stream** is one more job, created only when you set the stream up (say "set up a
+discovery stream" in the chat that should receive it). It runs one agent turn on your model per run and reads
+only the sources and scopes you approved, with the tools you already have. Up to 50 suggestions a day per
+stream get a quick extra check (configurable).
 
 ## Commands
 
@@ -158,6 +170,10 @@ Setup fills them in for you.
 - **Scheduled jobs (created only after you approve them during setup):** see the table above. Their loader
   scripts are written to `$HERMES_HOME/scripts/`; the hourly check messages the setup chat only when
   something changes. The research sweep's script starts the agent only when a task is waiting.
+- **Discovery reads and writes:** discovery jobs read only the sources you approve for each stream, through
+  your existing tools and connectors; the plugin itself connects to nothing. Digests are written into the
+  chat where the stream was created (`deliver: origin`). Suggestions and their source IDs are kept in plugin
+  state for 7 and 60 days to avoid repeats.
 - **Setup writes:** plugin settings through Hermes's plugin settings API; Hermes's own `timezone` only if you
   agree during setup; a new workspace folder and Git repository if you start fresh; a
   `.alchemy-task-owner` marker in the workspace (listed in `.git/info/exclude`) so two installs do not
