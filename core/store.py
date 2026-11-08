@@ -182,6 +182,39 @@ class TaskStore:
             ordered = sorted(tasks, key=_due_key)
         return ordered[: max(1, min(int(limit or 20), 100))]
 
+    def agenda(self, start: str, end: str, *, area: str = "", include_overdue: bool = True,
+               today: str = "") -> list[tuple[tf.TaskDoc, str]]:
+        """Open tasks scheduled or due between start and end (inclusive), plus overdue ones, each with a reason."""
+        start_v = tf.validate_date(start, "from") or ""
+        end_v = tf.validate_date(end, "to") or start_v
+        if not start_v:
+            raise NeedsInput("fix_call", "agenda needs a from date (YYYY-MM-DD)")
+        if end_v < start_v:
+            start_v, end_v = end_v, start_v
+        today = today or self.s.today()
+        out: list[tuple[str, int, tf.TaskDoc, str]] = []
+        area = validate_area_name(area) if area else ""
+        for t in self.scan().tasks:
+            if t.is_closed or (area and str(t.fm.get("area") or self.area_of(t.path)) != area):
+                continue
+            due = tf.norm_date(t.fm.get("due"))
+            sched = tf.norm_date(t.fm.get("scheduled"))
+            reasons, key = [], None
+            if sched and start_v <= sched <= end_v:
+                reasons.append(f"scheduled {sched}")
+                key = sched
+            if due and start_v <= due <= end_v:
+                reasons.append(f"due {due}")
+                key = min(key, due) if key else due
+            if not reasons and include_overdue and due and due < min(start_v, today):
+                reasons.append(f"overdue (was due {due})")
+                key = "0000"
+            if reasons:
+                prio = {"urgent": 0, "high": 1, "normal": 2, "low": 3}.get(str(t.fm.get("priority") or "normal"), 2)
+                out.append((key or "9999", prio, t, ", ".join(reasons)))
+        out.sort(key=lambda x: (x[0], x[1], x[2].title.lower()))
+        return [(t, why) for _, _, t, why in out]
+
     def summary(self, doc: tf.TaskDoc, *, include_body: bool = False) -> dict[str, Any]:
         fm = doc.fm
         enrichment = fm.get("enrichment") if isinstance(fm.get("enrichment"), dict) else None

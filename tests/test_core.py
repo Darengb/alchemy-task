@@ -256,6 +256,26 @@ def test_same_date_on_unquoted_file_is_noop(settings, data_dir):
     assert store.update(NEWSLETTER, {"due": "2026-11-12"})[1] == []
 
 
+def test_agenda_scheduled_due_overdue(settings, data_dir):
+    store = TaskStore(settings, data_dir)
+    a = store.create(title="Pay the electric bill", area="home", due="2026-11-09", research=False)
+    b = store.create(title="Draft the grant summary", area="work", due="2026-11-20", scheduled="2026-11-09",
+                     research=False)
+    store.create(title="Call the landlord", area="home", due="2026-11-01", research=False)
+    store.create(title="Plan next quarter", area="work", due="2026-12-15", research=False)
+    items = store.agenda("2026-11-09", "2026-11-09", today="2026-11-09")
+    got = {t.title: why for t, why in items}
+    assert got["Pay the electric bill"] == "due 2026-11-09"
+    assert got["Draft the grant summary"] == "scheduled 2026-11-09"
+    assert got["Call the landlord"] == "overdue (was due 2026-11-01)"
+    assert "Plan next quarter" not in got and "Renew the team software licenses" not in got  # closed
+    assert [t.title for t, _ in items][0] == "Call the landlord"  # overdue first
+    week = {t.title for t, _ in store.agenda("2026-11-09", "2026-11-15", include_overdue=False, today="2026-11-09")}
+    assert week == {"Pay the electric bill", "Draft the grant summary", "Draft the spring newsletter"}
+    assert {t.title for t, _ in store.agenda("2026-11-09", "2026-11-15", area="home", today="2026-11-09")} == \
+        {"Pay the electric bill", "Call the landlord"}
+
+
 # ---------------------------------------------------------------- validator
 
 def test_validator_dry_run_and_apply(settings, data_dir):

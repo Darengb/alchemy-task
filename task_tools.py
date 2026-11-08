@@ -89,7 +89,9 @@ FIND_SCHEMA = {
     "description": (
         "Look up tasks in the user's Alchemy Task workspace by title words, task_id, area, status or due "
         "date. Use it before creating a task (to avoid duplicates) and to get the task_id for task_update. "
-        "Set include_body=true for one task to read its notes, research and current state."),
+        "Set include_body=true for one task to read its notes, research and current state. For \"today's "
+        "tasks\", \"this week\", \"tasks for Monday\": pass agenda_from and agenda_to (YYYY-MM-DD; the same date "
+        "for one day) to get open tasks scheduled or due then, plus overdue ones, each with the reason."),
     "parameters": {
         "type": "object",
         "properties": {
@@ -101,6 +103,9 @@ FIND_SCHEMA = {
             "due_after": _DATE,
             "limit": {"type": "integer", "minimum": 1, "maximum": 100},
             "include_body": {"type": "boolean"},
+            "agenda_from": {**_DATE, "description": "Agenda: first day (YYYY-MM-DD)."},
+            "agenda_to": {**_DATE, "description": "Agenda: last day; omit for a single day."},
+            "include_overdue": {"type": "boolean", "description": "Agenda: also list overdue tasks (default true)."},
         },
         "required": [],
     },
@@ -198,12 +203,22 @@ def task_update(args: dict[str, Any], **_: Any) -> str:
 def task_find(args: dict[str, Any], **_: Any) -> str:
     rt = Runtime()
     store = rt.store()
+    if args.get("agenda_from"):
+        items = store.agenda(args["agenda_from"], args.get("agenda_to") or args["agenda_from"],
+                             area=args.get("area", ""), include_overdue=args.get("include_overdue", True))
+        limit = max(1, min(int(args.get("limit") or 60), 200))
+        tasks = [{**store.summary(d), "why": why} for d, why in items[:limit]]
+        return _ok(count=len(items), tasks=tasks, today=rt.settings.today(),
+                   weekday=__import__("datetime").date.fromisoformat(rt.settings.today()).strftime("%A"),
+                   note=("Group the answer: overdue first, then by day. Scheduled means the user planned to work on "
+                         "it that day; due is the deadline.") if tasks else "Nothing scheduled or due then.")
     docs = store.find(query=args.get("query", ""), task_id=args.get("task_id", ""), area=args.get("area", ""),
                       status=args.get("status", "open"), due_before=args.get("due_before", ""),
                       due_after=args.get("due_after", ""), limit=args.get("limit", 20))
     include_body = bool(args.get("include_body")) and len(docs) <= 3
     return _ok(count=len(docs), tasks=[store.summary(d, include_body=include_body) for d in docs],
-               today=rt.settings.today())
+               today=rt.settings.today(),
+               weekday=__import__("datetime").date.fromisoformat(rt.settings.today()).strftime("%A"))
 
 
 WORK_SCHEMA = {
