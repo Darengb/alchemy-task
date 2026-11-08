@@ -119,6 +119,41 @@ def register(ctx):
         audit('stress-' + attempt['token'], raw)
         return json.dumps(raw)
     register_tool('runner_probe_stress', stress, {'payload': {'type': 'object'}}, ['payload'], 'Authenticated child-only512KiB protocol stress: expand small researched payload and dispatch real callback direct or lossless multipart; stop afterwards.')
+    def late_probe(args, session_id='', task_id='', **kw):
+        import time
+        found = runner._child_for(session_id, task_id)
+        if not found or not found[1]: return json.dumps({'error': 'Authentic bound child required'})
+        run, a = found
+        runner._authorize(run, a['token'], session_id=session_id, task_id=task_id)
+        audit('late-start', {'run_id': run, 'session_id': session_id, 'task_id': task_id, 'at': time.time()})
+        time.sleep(90)
+        from .discovery_runner import BINDING_KEYS
+        resource = store.resource_info(run, 'manifest')
+        result = ctx.dispatch_tool('discovery_research_fetch', {'run_id': run, 'resource': 'manifest', 'revision': resource['sha256'], 'token': a['token'], 'binding': {k: a[k] for k in BINDING_KEYS}}, session_id=session_id, task_id=task_id)
+        receipt = {'run_id': run, 'actual_child_session': session_id, 'task_id': task_id, 'late_dispatch': json.loads(result), 'at': time.time(), 'pid': os.getpid()}
+        audit('late-result', receipt)
+        return json.dumps(receipt)
+    register_tool('runner_probe_late', late_probe, {}, [], 'For cancellation test ONLY:90s synthetic blocking I/O then real authenticated late fetch, which must be fenced. No source or task access.')
+    def cancel_case(args, session_id='', **kw):
+        import time
+        if not session_id: return json.dumps({'error': 'Actual parent required'})
+        run = store.init_run(origin={'session_id': session_id}, stream='cancel-probe')
+        store.add_candidates(run, [{'title': 'Synthetic cancellation evidence', 'source_ids': ['source:synthetic:sample:thread:cancel']}])
+        store.freeze_index(run, rubric='Cancellation canary ONLY. FIRST ACTION call runner_probe_late with empty arguments before any research fetch. It sleeps90s to simulate blocking source I/O. Do not use any other tool,source or write. Finish after its result. This child is intentionally cancelled by a scaled60s RUNNING deadline.')
+        short = DiscoveryRunner(ctx, SimpleNamespace(data_dir=root), store=store,
+            policy=RunnerPolicy(admission_seconds=1, pending_seconds=10, running_seconds=60, poll_seconds=.2, transport_seconds=180),
+            transport_receipt={'sequential_call':2040,'concurrent_batch':2040})
+        response = make_tool_handlers(short)['discovery_research_run']({'run_id': run}, session_id=session_id)
+        # New coordinator object models loss of plugin-local timers, not an actual service restart.
+        fresh = DiscoveryRunner(ctx, SimpleNamespace(data_dir=root), store=store, policy=short.policy)
+        reconnect = fresh.recover(run, session_id=session_id)
+        time.sleep(95)
+        reconciled = fresh.recover(run, session_id=session_id)
+        owner_restart = fresh.recover(run, session_id=session_id, owner_restarted=True)
+        result = {'run_id': run, 'scaled_policy': {'running_seconds':60}, 'supervisor_result': json.loads(response), 'same_owner_new_coordinator_reconnect': reconnect, 'reconciled_after_wait': reconciled, 'simulated_owner_restart': owner_restart, 'late_start': ctx.state.get('latest-late-start',default={}), 'late_result':ctx.state.get('latest-late-result',default={}), 'ledger':store.get_run(run), 'warning':'cooperative cancel only; not physical kill; new coordinator/recover flag simulation, not service or plugin-host restart'}
+        audit('cancel', result)
+        return json.dumps(result)
+    register_tool('runner_probe_cancel_case', cancel_case, {}, [], 'Actual shortened60s RUNNING cancellation and real late callback fencing, followed by public same-owner reconnect and coordinator-state restart simulation. No service restart.')
     def wire_payload(args, **kw):
         raw = (json.dumps(args['payload'], indent=2, sort_keys=True, ensure_ascii=False) + '\n').encode()
         ctx.state.set('wire-payload', args['payload'])
@@ -130,5 +165,5 @@ def register(ctx):
         latest = ctx.state.get('latest-run', default={}) or {}
         run = args.get('run_id') or latest.get('run_id')
         ledger = store.get_run(run) if run else {}
-        return json.dumps({'run_id': run, 'ledger': ledger, 'last_start_hook': ctx.state.get('latest-start', default={}), 'guard': ctx.state.get('latest-guard', default={}), 'sentinel': ctx.state.get('latest-sentinel', default={}), 'source_pages': {a['token']: ctx.state.get('source:' + a['token'], default=[]) for a in ledger.get('attempts', {}).values()}, 'stress': {a['token']: ctx.state.get('latest-stress-' + a['token'], default={}) for a in ledger.get('attempts', {}).values()}, 'runtime': {'pid': os.getpid(), 'thread': threading.current_thread().name}}, default=str)
+        return json.dumps({'run_id': run, 'ledger': ledger, 'last_start_hook': ctx.state.get('latest-start', default={}), 'guard': ctx.state.get('latest-guard', default={}), 'sentinel': ctx.state.get('latest-sentinel', default={}), 'source_pages': {a['token']: ctx.state.get('source:' + a['token'], default=[]) for a in ledger.get('attempts', {}).values()}, 'late_result': ctx.state.get('latest-late-result', default={}), 'cancel_case': ctx.state.get('latest-cancel', default={}), 'stress': {a['token']: ctx.state.get('latest-stress-' + a['token'], default={}) for a in ledger.get('attempts', {}).values()}, 'runtime': {'pid': os.getpid(), 'thread': threading.current_thread().name}}, default=str)
     register_tool('runner_probe_receipt', receipt, {'run_id': {'type': 'string'}}, [], 'Read exact persisted synthetic runner ledger and actual hook/caller receipts.')
