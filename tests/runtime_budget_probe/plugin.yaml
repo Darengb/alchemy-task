@@ -1,0 +1,9 @@
+name: alchemy-discovery-budget-probe
+version: "0.0.1"
+description: "Temporary synthetic registered-handler duration canary."
+author: "Hermes Agent"
+license: MIT
+requires_hermes: ">=0.22.5"
+provides_tools:
+  - discovery_budget_sleep
+  - discovery_budget_receipt
