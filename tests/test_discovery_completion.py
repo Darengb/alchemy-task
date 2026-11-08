@@ -6,6 +6,35 @@ from test_discovery_integration import service, configure
 from alchemy_task.core.discovery_identity import UserError
 
 
+def test_generic_item_mapping_retains_full_actual_reader_evidence(settings, data_dir, tmp_path):
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    config = configure(integration)
+    config['binding']['response_fields']['items'] = 'data.issues'
+    config['binding']['item_fields'] = {'title': 'fields.summary', 'source_revision': 'updated', 'body': 'fields.description'}
+    config['binding']['item_identity'] = {'type': {'literal': 'source'}, 'source_key': {'config': 'source_key'}, 'account_key': {'config': 'account_key'}, 'object_kind': {'literal': 'issue'}, 'object_id': {'path': 'id'}}
+    config['binding']['capability'] = {'tool': 'describe_reader', 'arguments': {'tool': 'reader'}}
+    integration.configure('work', config, user_approved=True)
+    run = integration.start('work', session_id='parent')['run_id']
+    calls = []
+    def dispatch(tool, args):
+        calls.append(tool)
+        if tool == 'describe_reader': return {'name': 'reader', 'available': True, 'supports': ['issues', 'full-body']}
+        return {'account_key': 'account', 'scope': args['scope'], 'start': args['start'], 'end': args['end'], 'data': {'issues': [{'id': 'issue-7', 'updated': 'r7', 'fields': {'summary': 'Resolve issue', 'description': 'Full text on final page'}, 'arbitrary_provider_detail': {'owner': 'user-4'}}]}, 'next_cursor': None, 'pagination_exhausted': True}
+    ctx.dispatch_tool = dispatch
+    receipt = integration.collect(run, 'feed', session_id='parent')
+    assert receipt['status'] == 'complete', receipt
+    item = integration.store.source_state('work', 'feed')['backlog'][0]['candidate']
+    assert item['source_ids'] == ['source:feed:account:issue:issue-7']
+    assert item['reader_item']['arbitrary_provider_detail']['owner'] == 'user-4'
+    assert item['body'] == 'Full text on final page'
+    assert calls == ['describe_reader', 'reader']
+    evidence = receipt['pages'][0]['evidence']
+    from alchemy_task.core.discovery_state import read_json
+    raw = read_json(integration.store.state_root / evidence['path'])
+    assert raw['capability']['supports'] == ['issues', 'full-body']
+    assert raw['response']['data']['issues'][0]['updated'] == 'r7'
+
+
 def test_source_change_reconciles_existing_job_reader_toolsets(settings, data_dir, tmp_path):
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     streams = ctx.state.get('streams')

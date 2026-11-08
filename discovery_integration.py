@@ -186,13 +186,49 @@ class DiscoveryIntegration:
         values = {**config, 'start': start, 'end': end, 'cursor': cursor}
         for parameter, field in binding.get('request_fields', {}).items():
             args[parameter] = values[field]
+        capability = None
+        if binding.get('capability'):
+            probe = binding['capability']
+            capability = self.rt.ctx.dispatch_tool(probe['tool'], copy.deepcopy(probe.get('arguments') or {}))
+            capability = json.loads(capability) if isinstance(capability, str) else capability
+            if not isinstance(capability, dict) or capability.get('error') or capability.get('available') is False:
+                raise UserError('approved live capability probe failed')
         returned = self.rt.ctx.dispatch_tool(binding['tool'], args)
         raw = json.loads(returned) if isinstance(returned, str) else returned
+        if binding.get('response_root'):
+            raw = _pick(raw, binding['response_root'])
+            raw = json.loads(raw) if isinstance(raw, str) else raw
         if not isinstance(raw, dict) or raw.get('error') or raw.get('ok') is False:
             raise UserError('approved reader returned failure/nonstructured response')
         # Missing fields remain missing. Never echo request account/window into a
         # provider receipt or invent pagination_exhausted from a short page.
         result = {name: _pick(raw, path) for name, path in binding['response_fields'].items()}
+        if binding.get('item_fields') or binding.get('item_identity'):
+            from .core.discovery_identity import canonical_source_id
+            items = result.get('items')
+            if not isinstance(items, list): raise UserError('reader item mapping requires structured array')
+            normalized = []
+            for item in items:
+                mapped = {k: _pick(item, path) for k, path in binding.get('item_fields', {}).items()}
+                identity = binding.get('item_identity')
+                if identity:
+                    fields = {}
+                    for key, selector in identity.items():
+                        if not isinstance(selector, dict) or len(selector) != 1:
+                            raise UserError('identity selector requires exactly path, config or literal')
+                        kind, value = next(iter(selector.items()))
+                        if kind == 'path': fields[key] = _pick(item, value)
+                        elif kind == 'config' and value in {'account_key', 'source_key'}: fields[key] = config[value]
+                        elif kind == 'literal' and key in {'type', 'object_kind'}: fields[key] = value
+                        else: raise UserError('identity authority must come from actual item or scoped config')
+                    mapped['source_ids'] = [canonical_source_id(fields)]
+                if not mapped.get('source_revision'):
+                    mapped['source_revision'] = content_revision(item)
+                if not mapped.get('title'): raise UserError('reader item lacks mapped title')
+                mapped['reader_item'] = copy.deepcopy(item)
+                normalized.append(mapped)
+            result['items'] = normalized
+        result['reader_evidence'] = {'tool': binding['tool'], 'arguments': args, 'response': raw, 'capability': capability}
         return result
 
     def collect(self, run_id, source_key, *, session_id, envelope=None, max_pages=None):

@@ -262,7 +262,13 @@ class SourceAdapter:
                     raise UserError('reader truncated or failed')
                 state = _persist_items(self.store, stream, self.config, page['items'])
                 ids = [x['backlog_id'] for x in state['backlog']]
-                receipts.append({'read_started': read_started, 'read_ended': read_ended, 'cursor': cursor, 'sha256': hashlib.sha256(json.dumps(page, sort_keys=True).encode()).hexdigest(), 'count': len(page['items'])})
+                page_hash = hashlib.sha256(json.dumps(page, sort_keys=True).encode()).hexdigest()
+                proof = {'read_started': read_started, 'read_ended': read_ended, 'cursor': cursor, 'sha256': page_hash, 'count': len(page['items'])}
+                if 'reader_evidence' in page:
+                    relative = 'source-evidence/' + page_hash + '.json'
+                    atomic_json(self.store.state_root / relative, page['reader_evidence'])
+                    proof['evidence'] = {'path': relative, 'page_sha256': page_hash}
+                receipts.append(proof)
                 if 'next_cursor' not in page or type(page.get('pagination_exhausted')) is not bool:
                     error = 'reader lacks pagination exhaustion evidence'
                     break
