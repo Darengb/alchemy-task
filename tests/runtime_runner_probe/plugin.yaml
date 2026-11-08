@@ -1,0 +1,20 @@
+name: alchemy-discovery-runner-probe
+version: "0.0.1"
+description: "Temporary synthetic canary of the unchanged discovery runner."
+author: "Hermes Agent"
+license: MIT
+requires_hermes: ">=0.22.5"
+provides_tools:
+  - runner_probe_start
+  - runner_probe_receipt
+  - runner_probe_source
+  - runner_probe_example
+  - discovery_research_run
+  - discovery_research_fetch
+  - discovery_research_submit
+  - discovery_research_accept
+  - discovery_actions
+  - discovery_reconcile
+  - discovery_join
+  - discovery_recover
+  - discovery_release_hold
