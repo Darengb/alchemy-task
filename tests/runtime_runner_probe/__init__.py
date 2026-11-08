@@ -24,6 +24,15 @@ def register(ctx):
         def wrapped(_hook=hook, _name=name, **kw):
             if _name == 'subagent_start': audit('start', kw)
             result = _hook(**kw)
+            if _name == 'pre_tool_call' and not result and runner._child_for(kw.get('session_id', ''), kw.get('task_id', '')):
+                # Test-only containment preserves the inherited catalog but prevents
+                # synthetic canary agents from touching unrelated instance state.
+                allowed = {'tool_search', 'tool_describe', 'tool_call', 'discovery_research_fetch', 'discovery_research_submit', 'discovery_join', 'runner_probe_source', 'runner_probe_example', 'runner_probe_stress', 'runner_probe_late'}
+                name = kw.get('tool_name', '')
+                nested = (kw.get('args') or {}).get('calls', []) if name == 'tool_call' else []
+                if name not in allowed or any(c.get('name') not in allowed for c in nested):
+                    result = {'action': 'block', 'message': 'Synthetic TEST containment: use ONLY this probe source/read/fetch/submit tools. No terminal, code execution, other probes or external source tools. Preserve exact failure rather than bypassing the public handler.'}
+                    audit('test-containment', {'kwargs': kw, 'result': result})
             if result and _name == 'pre_tool_call': audit('guard', {'kwargs': kw, 'result': result})
             return result
         ctx.register_hook(name, wrapped)
