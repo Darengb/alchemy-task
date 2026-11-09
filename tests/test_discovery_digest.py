@@ -57,6 +57,9 @@ def test_newest_same_day_digest_does_not_depend_on_run_id_sort_order(tmp_path):
     assert old['items'][0]['number'] == 1 and new['items'][0]['number'] == 2
     assert new['text'].splitlines()[0] == 'Task Discovery: work (2030-01-01)'
     assert digest.resolve('2', stream='work', session_id='anywhere', today='2030-01-03')['unit_id'] == 'new'
-    with pytest.raises(UserError, match='missing'):
-        digest.resolve('1', stream='work', session_id='anywhere', today='2030-01-03')
+    # Same-day numbers continue across invocations. An empty/no-new-items rerun
+    # must not close earlier pending items or prevent idempotent re-approval.
+    assert digest.resolve('1', stream='work', session_id='anywhere', today='2030-01-03')['unit_id'] == 'old'
+    digest.prepare('empty', stream='work', day='2030-01-01', origin={'session_id': 'origin'}, items=[])
+    assert digest.resolve('2', stream='work', session_id='anywhere', today='2030-01-03')['unit_id'] == 'new'
     assert digest.resolve('1', day='2030-01-01', session_id='anywhere', today='2030-01-03')['unit_id'] == 'old'

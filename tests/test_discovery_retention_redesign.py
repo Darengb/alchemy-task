@@ -9,14 +9,15 @@ import pytest
 from test_discovery_dashboard import fixture_service, client_for
 
 
-@pytest.mark.parametrize('age,protect', [(40, ''), (61, ''), (61, 'approved'), (61, 'plan'), (61, 'unknown'), (61, 'inflight')])
+@pytest.mark.parametrize('age,protect', [(40, ''), (61, ''), (61, 'approved'), (61, 'plan'), (61, 'local_verified'), (61, 'unknown'), (61, 'inflight')])
 def test_pending_runs_prune_at_sixty_days_without_losing_unfinished_work(tmp_path, settings, data_dir, monkeypatch, age, protect):
     service, rt, run, wid, proposal = fixture_service(tmp_path, settings, data_dir)
     service.utcnow = lambda: dt.datetime(2031, 1, 1, tzinfo=dt.timezone.utc)
     before = {t.path: t.path.read_bytes() for t in rt.store().scan().tasks}
-    if protect == 'approved': service.digest.decide(proposal['proposal_id'], 'approved')
-    if protect == 'plan':
+    if protect in {'approved', 'local_verified'}: service.digest.decide(proposal['proposal_id'], 'approved')
+    if protect in {'plan', 'local_verified'}:
         service.conversion.prepare(run, wid, choice='create', area='work', undated=True, user_approved=True, reason='User approved')
+    if protect == 'local_verified': assert service.conversion.apply(run, wid)['state'] == 'local_verified'
     if protect in {'unknown', 'inflight'}: service._delivery_record(run, {'state': protect})
     service.reconcile_endstate(run)
     path = service.store.run_dir(run) / 'ledger.json'

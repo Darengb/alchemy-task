@@ -138,8 +138,9 @@ class DiscoveryDigest:
         if runs is not None and not day and not str(ref).startswith('p_'):
             hits = [x for x in hits if x['run_id'] in runs]
         elif not day and not str(ref).startswith('p_'):
-            # One newest digest per stream, including empty digests. Never fall back to
-            # an older numbered list because the newest list has no matching item.
+            # The newest digest selects each stream's daily numbering. Numbers continue
+            # across same-day invocations, including an empty rerun; old days never
+            # become an implicit fallback. Explicit review/transcript runs stay exact.
             newest = {}
             for digest in data['digests'].values():
                 name = digest['stream']
@@ -150,7 +151,7 @@ class DiscoveryDigest:
                       if (dt.date.fromisoformat(d['day']) + dt.timedelta(days=7)).isoformat() >= today}
             # Preserve an expired-list error when there is only one old stream.
             selected = recent or newest
-            hits = [x for x in hits if x['run_id'] in {d['run_id'] for d in selected.values()}]
+            hits = [x for x in hits if x['stream'] in selected and x['day'] == selected[x['stream']]['day']]
             if not stream and str(ref).isdigit() and len(selected) > 1:
                 raise UserError('ambiguous reply; which stream? ' + ', '.join(sorted(selected)))
         if len(hits) != 1:

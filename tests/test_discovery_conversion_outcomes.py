@@ -465,10 +465,14 @@ def test_link_audit_honours_a_later_refresh_whose_run_was_pruned(settings, data_
     conv.prepare(run1, wid, choice='auto', useful_delta=True, reason='Useful delta.', target_task_id=task.task_id,
                  expected_revision=tf.content_hash(tf.parse_file(task.path).raw))
     conv.apply(run1, wid)
+    assert conv.deliver_git(run1, wid)['state'] == 'complete'
     run2 = _next_day_same_unit(store, wid, ['Day two finding.'], 'Changed on day two.')
     plan2 = conv.prepare(run2, wid, choice='auto', useful_delta=True, reason='New delta.', target_task_id=task.task_id,
                          expected_revision=conv.match(run2, wid)['targets'][0]['revision'])
     conv.apply(run2, wid)
+    # Local application alone is now protected as an in-progress conversion.
+    # Finish both receipts through the real sandbox Git path before calling run 2 settled.
+    assert conv.deliver_git(run2, wid)['state'] == 'complete'
     assert conv.audit_links()['repairs'] == []
     for run, keep in ((run1, True), (run2, False)):
         with store._lock(store._run_lock_name(run)):
