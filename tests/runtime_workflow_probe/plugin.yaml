@@ -9,6 +9,7 @@ provides_tools:
   - workflow_probe_reader
   - workflow_probe_sender
   - workflow_probe_message
+  - workflow_probe_stress
   - workflow_probe_receipt
   - workflow_probe_discovery_start
   - workflow_probe_discovery_decide
