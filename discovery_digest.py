@@ -1,4 +1,4 @@
-"""Immutable discovery digests and origin-scoped, seven-day proposal bindings.
+"""Immutable discovery digests and profile-local, seven-day proposal bindings.
 
 One atomic ledger allocates same-day numbers across streams. A prepared digest
 is not delivery evidence. Pending/unknown sends never authorize automatic resend.
@@ -59,7 +59,7 @@ class DiscoveryDigest:
                 data['proposals'][pid] = {'binding': item, 'state': 'pending'}
                 data['seen'][identity] = pid
             failures, coverage, deferred, blocked = failures or [], coverage or [], deferred or [], blocked or []
-            lines = [f'Discovery: {stream} ({day})']
+            lines = [f'Task Discovery: {stream} ({day})']
             degraded = bool(failures or any(s.get('status') != 'complete' for s in coverage))
             # Cap deferrals are a separate count: neither failures nor degraded.
             # Blocked existing-task updates count as existing-task outcomes, not failures.
@@ -128,27 +128,33 @@ class DiscoveryDigest:
             raise UserError('no immutable digest for this run') from exc
 
     def resolve(self, ref, *, session_id, today, day='', stream='', origin_sessions=(), runs=None):
-        # Every authorized origin session of the reply's chat; two streams set up in one chat
-        # from different sessions carry letter prefixes, so a bare shared number stays ambiguous.
-        sessions = {session_id, *origin_sessions}
         date = dt.date.fromisoformat(today)
         if day == 'yesterday': day = (date - dt.timedelta(days=1)).isoformat()
         data = self._load()
         hits = [x['binding'] for x in data['proposals'].values()
-                if x['binding']['origin']['session_id'] in sessions
-                and (x['binding']['ref'] == str(ref) or str(x['binding']['number']) == str(ref) or x['binding']['proposal_id'] == ref)
+                if (x['binding']['ref'].casefold() == str(ref).casefold() or str(x['binding']['number']) == str(ref) or x['binding']['proposal_id'] == ref)
                 and (not stream or x['binding']['stream'] == stream)
                 and (not day or x['binding']['day'] == day)]
         if runs is not None and not day and not str(ref).startswith('p_'):
-            # Reply inside a digest's delivery thread: only the list delivered there.
             hits = [x for x in hits if x['run_id'] in runs]
         elif not day and not str(ref).startswith('p_'):
-            days = [x['binding']['day'] for x in data['proposals'].values()
-                    if x['binding']['origin']['session_id'] in sessions and (not stream or x['binding']['stream'] == stream)]
-            target_day = today if today in days else max(days, default=today)
-            hits = [x for x in hits if x['day'] == target_day]
+            # One newest digest per stream, including empty digests. Never fall back to
+            # an older numbered list because the newest list has no matching item.
+            newest = {}
+            for digest in data['digests'].values():
+                name = digest['stream']
+                if stream and name != stream: continue
+                if name not in newest or digest['day'] >= newest[name]['day']:
+                    newest[name] = digest
+            recent = {name: d for name, d in newest.items()
+                      if (dt.date.fromisoformat(d['day']) + dt.timedelta(days=7)).isoformat() >= today}
+            # Preserve an expired-list error when there is only one old stream.
+            selected = recent or newest
+            hits = [x for x in hits if x['run_id'] in {d['run_id'] for d in selected.values()}]
+            if not stream and str(ref).isdigit() and len(selected) > 1:
+                raise UserError('ambiguous reply; which stream? ' + ', '.join(sorted(selected)))
         if len(hits) != 1:
-            raise UserError('proposal reply is missing or ambiguous; specify stream and exact day/proposal_id')
+            raise UserError('proposal reply is missing or ambiguous; specify which stream and exact day/proposal_id')
         if hits[0]['expires'] < today:
             raise UserError('proposal expired after seven days')
         return hits[0]

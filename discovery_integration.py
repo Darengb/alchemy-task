@@ -87,30 +87,20 @@ def host_origin(home, session_id, profile):
         return None
 
 
-CRON_SEED_USER = 'system:cron'
-
-
-def host_delivery_seed(home, session_id):
-    """First transcript row of a session the host cron seeded for a delivery, else None.
-
-    Native continuable delivery opens a thread, then cron's seeder creates that thread's gateway
-    session with the recorded user 'system:cron' (no platform user carries that id) and mirrors
-    the delivered text into it as the first row: "[Cron delivery: <job name>]\\n<text>".
-    """
+def host_conversation(home, session_id):
+    """Read active transcript lineage through the host store, never model-supplied rows."""
     path = Path(home) / 'state.db'
-    if not session_id or not path.is_file(): return None
+    if not session_id or not path.is_file(): return [], None
     try:
         from hermes_state import SessionDB
         db = SessionDB(db_path=path, read_only=True)
         try:
             row = db.get_session(session_id)
-            if not row or row.get('user_id') != CRON_SEED_USER: return None
-            first = db.get_messages(session_id, include_inactive=True, include_ancestors=True, limit=1)
+            messages = db.get_messages(session_id, include_compacted=True, include_ancestors=True) if row else []
         finally: db.close()
-        if not first or first[0].get('role') != 'user' or not isinstance(first[0].get('content'), str): return None
-        return first[0]['content']
+        return messages, row
     except (ImportError, OSError, ValueError, RuntimeError, TypeError, sqlite3.Error):
-        return None
+        return [], None
 
 
 def _mail_admission_declared(config):
@@ -182,7 +172,7 @@ class DiscoveryIntegration:
         return bool(self._origin_relation(stream, session_id))
 
     def _origin_relation(self, stream, session_id):
-        """'exact' (origin session or same platform/chat/thread), 'delivery_thread' or None."""
+        """Origin relation for run supervision/read surfaces, not reply authority."""
         if session_id == stream.get('origin_session'): return 'exact'
         original = self._host_origin(stream.get('origin_session'))
         reply = self._host_origin(session_id)
@@ -190,36 +180,68 @@ class DiscoveryIntegration:
             return None
         if (original['chat_id'], original['thread_id']) == (reply['chat_id'], reply['thread_id']):
             return 'exact'
-        # Native continuable delivery: for an origin without a thread/topic the host opens a
-        # dedicated thread in the origin chat and seeds its session. Only that thread counts,
-        # proven by host-recorded data: the cron seed user and this stream's job delivering one
-        # of its digests as the first transcript row. Discord keys the thread as its own chat
-        # (chat id = thread id) and records no parent channel, so the mirror is the link there.
-        # Other threads or topics of the origin chat, even a member's own, are refused.
-        if original['thread_id'] or not reply['thread_id'] or reply['chat_id'] not in {original['chat_id'], reply['thread_id']}:
-            return None
-        # Discord: the chat check cannot bind a thread keyed as its own chat. The seeder records the
-        # delivering job's captured origin (chat name and guild) on the thread session, so it must be
-        # this origin channel as the host recorded it; a same-named job elsewhere does not qualify.
-        if reply['chat_id'] != original['chat_id'] and (reply.get('chat_name'), reply.get('scope_id')) != (original.get('chat_name'), original.get('scope_id')):
-            return None
-        return 'delivery_thread' if self._delivered_here(stream, session_id) else None
+        return None
 
-    def _delivered_here(self, stream, session_id):
-        return bool(self._delivered_runs(stream, session_id))
+    def approval_settings(self):
+        saved = self.rt.ctx.state.get('discovery_approvals', default={}) or {}
+        return {'owner_only': saved.get('owner_only', False), 'owners': copy.deepcopy(saved.get('owners', {}))}
 
-    def _delivered_runs(self, stream, session_id):
-        """Runs of this stream's digests the host mirrored as the first row of this thread."""
-        mirrored = host_delivery_seed(self.home, session_id)
-        if not mirrored: return set()
-        from .jobs import PREFIX
-        header, _, body = mirrored.partition('\n')
-        if header != f"[Cron delivery: {PREFIX}: discovery {stream['name']}]": return set()
-        # Only digests the host delivered to the origin itself: a thread under another approved target is not the origin chat.
-        return {run for run, d in self.digest._load()['digests'].items()
-                if d['stream'] == stream['name'] and d['origin']['session_id'] == stream.get('origin_session')
-                and d['origin'].get('deliver', 'origin') == 'origin'
-                and d['text'].strip() and d['text'].strip() in body}
+    def _sender(self, session_id):
+        # The current gateway turn wins over a shared session's original creator.
+        from gateway.session_context import get_session_env
+        if get_session_env('HERMES_SESSION_ID') == session_id:
+            platform = get_session_env('HERMES_SESSION_PLATFORM')
+            ids = [get_session_env('HERMES_SESSION_USER_ID'), get_session_env('HERMES_SESSION_USER_ID_ALT')]
+        else:
+            _, row = host_conversation(self.home, session_id)
+            row = row or {}
+            try: origin = json.loads(row.get('origin_json') or '{}')
+            except ValueError: origin = {}
+            platform = row.get('source', '')
+            ids = [row.get('user_id'), origin.get('user_id_alt')]
+        return platform, list(dict.fromkeys(str(x) for x in ids if x and not str(x).startswith('system:')))
+
+    def authorize_approval(self, session_id):
+        if not session_id or self.runner._child_for(session_id, ''):
+            raise UserError('research child cannot approve discovery changes')
+        method = getattr(self.rt.ctx, 'current_cron_execution', None)
+        from gateway.session_context import get_session_env
+        if (callable(method) and method() is not None) or get_session_env('HERMES_CRON_SESSION'):
+            raise UserError('scheduled run cannot approve discovery changes')
+        settings = self.approval_settings()
+        if settings['owner_only']:
+            platform, ids = self._sender(session_id)
+            owners = settings['owners'].get(platform, [])
+            if not set(ids).intersection(owners):
+                raise UserError('approvals.owner_only is on; only the confirmed owner for this platform may approve, dismiss, revise or cancel')
+
+    def configure_approvals(self, config, *, session_id='', user_approved=False, dashboard=False):
+        if set(config) != {'owner_only'} or type(config['owner_only']) is not bool:
+            raise UserError('approvals accepts only owner_only: boolean')
+        if user_approved is not True:
+            raise UserError('confirm approvals.owner_only with the user first')
+        settings = self.approval_settings()
+        if not dashboard:
+            # An unregistered platform can be enrolled only by this explicit confirmed
+            # setting action. It cannot approve anything until it has been enrolled.
+            platform, ids = self._sender(session_id)
+            if settings['owner_only'] and platform in settings['owners']:
+                self.authorize_approval(session_id)
+            elif settings['owner_only'] and not config['owner_only']:
+                self.authorize_approval(session_id)
+            else:
+                method = getattr(self.rt.ctx, 'current_cron_execution', None)
+                from gateway.session_context import get_session_env
+                if (callable(method) and method() is not None) or get_session_env('HERMES_CRON_SESSION') or self.runner._child_for(session_id, ''):
+                    raise UserError('scheduled run or child cannot configure approvals')
+            if config['owner_only']:
+                if not platform or not ids: raise UserError('host sender user ID unavailable; turn owner_only on from your own chat')
+                settings['owners'][platform] = ids
+        elif config['owner_only'] and not settings['owners']:
+            raise UserError('confirm owner identity from your own chat with discovery_config action=approvals first')
+        settings['owner_only'] = config['owner_only']
+        self.rt.ctx.state.set('discovery_approvals', settings)
+        return settings
 
     def _stream(self, stream):
         from .discovery import _get
@@ -933,34 +955,59 @@ class DiscoveryIntegration:
         return digest
 
     def decide(self, args, *, session_id, today=None):
-        relations, by_origin = {}, {}
-        for d in self.digest._load()['digests'].values():
-            if args.get('stream') and d['stream'] != args['stream']: continue
-            key = (d['stream'], d['origin']['session_id'])
-            if key not in by_origin: by_origin[key] = self._origin_relation(self._stream_or_frozen(*key), session_id)
-            if by_origin[key]: relations.setdefault(by_origin[key], set()).add(key[1])
-        # A stream whose origin is exactly this chat/thread owns its bare numbers; the delivery
-        # thread relation applies only when no stream's origin matches exactly.
-        origins = relations.get('exact') or relations.get('delivery_thread') or set()
-        # adaptation-plan.md:188: a delivery thread answers the digest the host delivered there.
-        # Without an explicit day or proposal id, bare numbers resolve only against that digest.
-        thread_runs = None
-        if not relations.get('exact') and relations.get('delivery_thread'):
-            thread_runs = set().union(*(self._delivered_runs(self._stream_or_frozen(*key), session_id)
-                                        for key, relation in by_origin.items() if relation == 'delivery_thread'))
-        if not origins:
-            reply = self._host_origin(session_id)
-            if reply and reply['thread_id']:
-                raise UserError('this thread is neither a digest origin nor the delivery thread the host opened for a digest; '
-                                'reply in the origin chat or the thread where the digest was delivered, or use the dashboard')
-        if len(origins) == 1: session_id = next(iter(origins))
+        self.authorize_approval(session_id)
+        args = copy.deepcopy(args)
+        data = self.digest._load()
+        streams = self.rt.ctx.state.get('streams', default={}) or {}
+        value = ' '.join(str(args.get('stream') or '').casefold().split())
+        value = re.sub(r'\b(?:task discovery|discovery)\b', '', value).strip()
+        if value in {'task', 'tasks'}: value = ''
+        if value:
+            names = {d['stream'] for d in data['digests'].values()} | set(streams)
+            matched = [n for n in names if value == n.casefold() or value == str(streams.get(n, {}).get('label') or '\0').casefold()]
+            if len(matched) != 1: raise UserError('unknown or ambiguous stream; valid streams: ' + ', '.join(sorted(names)))
+            value = matched[0]
+        args['stream'] = value
+        review = args.get('review')
+        reviewed = None
+        if review is not None:
+            if not isinstance(review, str) or not re.fullmatch(r'[0-9a-fA-F]{12}', review):
+                raise UserError('Review code must be exactly 12 hex characters')
+            reviewed = {r for r in data['digests'] if hashlib.sha256(r.encode()).hexdigest()[:12] == review.lower()}
+            if len(reviewed) != 1: raise UserError('unknown Review code in this profile; paste a stored digest or supply its exact proposal ID')
+        messages, _ = host_conversation(self.home, session_id)
+        def present(text):
+            codes = {x.lower() for x in re.findall(r'\bReview:\s*([0-9a-fA-F]{12})\b', text)}
+            return {r for r, d in data['digests'].items()
+                    if hashlib.sha256(r.encode()).hexdigest()[:12] in codes or (d['text'].strip() and d['text'].strip() in text)}
+        # The latest user's reply-to pointer wins over any digest elsewhere in history.
+        transcript_runs = None
+        users = [m for m in reversed(messages) if m.get('role') == 'user' and isinstance(m.get('content'), str)]
+        if users:
+            quote = re.search(r'\[Replying to(?: your previous message)?: "(.*?)"\]', users[0]['content'], re.S)
+            if quote: transcript_runs = present(quote[1]) or None
+        if transcript_runs is None:
+            # Different streams anywhere in the active conversation need disambiguation;
+            # for one stream take only its most recently mentioned digest.
+            latest = {}
+            ordered = users + [m for m in reversed(messages) if m.get('role') == 'assistant' and isinstance(m.get('content'), str)]
+            for message in ordered:
+                for run in present(message['content']):
+                    name = data['digests'][run]['stream']
+                    if name not in latest: latest[name] = run
+            transcript_runs = set(latest.values()) or None
         if today is None:
-            candidates = [d for d in self.digest._load()['digests'].values() if d['origin']['session_id'] in origins | {session_id} and (not args.get('stream') or d['stream'] == args['stream'])]
+            candidates = [d for d in data['digests'].values() if not value or d['stream'] == value]
             zones = {self.store.get_run(d['run_id'])['config'].get('timezone', self.rt.settings.timezone) for d in candidates}
-            if len(zones) > 1 and not args.get('stream'):
+            if len(zones) > 1 and not value:
                 raise UserError('streams have different frozen local days; specify stream for reply')
             today = self.utcnow().astimezone(ZoneInfo(next(iter(zones), self.rt.settings.timezone))).date().isoformat()
-        return self._decide_resolved(args, resolve=lambda ref: self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=args.get('stream', ''), origin_sessions=origins, runs=thread_runs))
+        selected = reviewed if reviewed is not None else transcript_runs
+        def resolve(ref):
+            return self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=value, runs=selected)
+        # Resolve the whole reply before the first dismissal or conversion writes anything.
+        resolved = {str(ref): resolve(ref) for ref in [*(args.get('approve') or []), *(args.get('dismiss') or [])]}
+        return self._decide_resolved(args, resolve=lambda ref: resolved.get(str(ref)) or resolve(ref))
 
     def _decide_resolved(self, args, *, resolve):
         """Shared immutable prepare/batch-preflight/apply path after caller resolution."""
@@ -1125,13 +1172,13 @@ SCHEMAS = {
  'discovery_recover': _schema('discovery_recover', 'Recover SAME saved run without blind relaunch/refund. New parent adoption requires out-of-band authorization.', {**RUN, 'owner_restarted': BOOL, 'adopt': BOOL}, ['run_id']),
  'discovery_release_hold': _schema('discovery_release_hold', 'Deliberately release safety hold without refunding unknown attempts.', {**RUN, 'reason': STR}, ['run_id', 'reason']),
  'discovery_replay': _schema('discovery_replay', 'Explicit saved_input replay of finalized frozen inputs, or current fresh_validation / targeted_supplement. Distinct lineage/review; no old task mutation.', {**RUN, 'operation': {'type': 'string', 'enum': ['saved_input', 'fresh_validation', 'targeted_supplement']}, 'mode': {'type': 'string', 'enum': ['shadow', 'research_only']}, 'candidate_ids': {'type': 'array', 'items': STR}, 'user_approved': BOOL}, ['run_id', 'operation', 'mode', 'user_approved']),
- 'discovery_config': _schema('discovery_config', 'Configure approved existing source reader or confirm account identity, scoped to installing profile. No credentials.', {'action': {'type': 'string', 'enum': ['source', 'identity', 'delivery', 'status']}, 'stream': STR, 'config': OBJ, 'account_key': STR, 'identity': OBJ, 'user_approved': BOOL}, ['action']),
+ 'discovery_config': _schema('discovery_config', 'Configure approved source/delivery, confirm identity, or approvals.owner_only (default off). action=approvals config={owner_only:true|false} requires explicit user confirmation (user_approved=true). Enabling records the host sender ID for this platform; use your own chat. status shows current approvals. No approver list or credentials.', {'action': {'type': 'string', 'enum': ['source', 'identity', 'delivery', 'approvals', 'status']}, 'stream': STR, 'config': OBJ, 'account_key': STR, 'identity': OBJ, 'user_approved': BOOL}, ['action']),
  'discovery_collect': _schema('discovery_collect', 'Collect approved source with actual configured reader, or explicitly partial attested envelope. SAME saved window.', {**RUN, 'source_key': STR, 'envelope': OBJ, 'max_pages': {'type': 'integer', 'minimum': 1}}, ['run_id', 'source_key']),
  'discovery_context': _schema('discovery_context', 'Freeze collected source inventory, ALL-status task bodies, installed full skills, full rubric and approved context before research.', {**RUN, 'context': OBJ}, ['run_id']),
  'discovery_match': _schema('discovery_match', 'Post-join typed exact matching and all semantic target options; returns full body resources, no mutation.', {**RUN, 'unit_id': STR}, ['run_id', 'unit_id']),
  'discovery_digest': _schema('discovery_digest', 'Prepare/read immutable review digest after all match decisions. Preparation is not delivery proof.', {**RUN, 'action': {'type': 'string', 'enum': ['prepare', 'get', 'delivery', 'send']}}, ['run_id']),
  'discovery_decision': _schema('discovery_decision', 'Parent post-join disposition. Unique exact requires useful delta auto or byte-preserving noop; semantic/new remains proposal; multiple exact conflict.', {**RUN, 'unit_id': STR, 'decision': {'type': 'string', 'enum': ['propose', 'auto', 'noop', 'conflict']}, 'reason': STR, 'target_task_id': STR, 'expected_revision': STR, 'useful_delta': BOOL}, ['run_id', 'unit_id', 'decision', 'reason']),
- 'discovery_conversion_recover': _schema('discovery_conversion_recover', 'Inspect/resume exact conversion, or explicitly revise/cancel/bind_manual an unwritten plan with CAS and origin approval.', {**RUN, 'unit_id': STR, 'action': {'type': 'string', 'enum': ['resume', 'inspect', 'revise', 'cancel', 'bind_manual']}, 'expected_plan_revision': STR, 'target_task_id': STR, 'expected_revision': STR, 'edits': OBJ, 'reason': STR, 'user_approved': BOOL}, ['run_id', 'unit_id']),
+ 'discovery_conversion_recover': _schema('discovery_conversion_recover', 'Inspect/resume exact conversion, or explicitly revise/cancel/bind_manual an unwritten plan with CAS and user approval. Any chat of this profile; approvals.owner_only applies when enabled.', {**RUN, 'unit_id': STR, 'action': {'type': 'string', 'enum': ['resume', 'inspect', 'revise', 'cancel', 'bind_manual']}, 'expected_plan_revision': STR, 'target_task_id': STR, 'expected_revision': STR, 'edits': OBJ, 'reason': STR, 'user_approved': BOOL}, ['run_id', 'unit_id']),
  'discovery_link_audit': _schema('discovery_link_audit', 'Read-only dry-run audit of task links written by discovery conversions visible to this chat: latest occurrence per task/dossier, one marker pair and the expected revision line; optional workspace-relative legacy dossier folders are listed. Never writes or repairs.', {'legacy_roots': {'type': 'array', 'items': STR}}),
  'discovery_runs': _schema('discovery_runs', 'Backend API: list full run records or get exact run including research, proposals, conflicts, recovery and delivery.', {'run_id': STR}),
 }
@@ -1177,8 +1224,9 @@ def register(ctx, *, integration=None):
     handlers = make_tool_handlers(service.runner)
     def config_call(a, session_id='', **_):
         action = a['action']
-        if action in {'source', 'delivery'} and not service.origin_authorized(service._stream(a['stream']), session_id):
-            raise UserError('source/delivery approval must be configured from actual origin session, never scheduled claims')
+        if action == 'approvals':
+            return service.configure_approvals(a['config'], session_id=session_id, user_approved=a.get('user_approved', False))
+        if action != 'status': service.authorize_approval(session_id)
         if action == 'source':
             return service.configure(a['stream'], a['config'], user_approved=a.get('user_approved', False))
         if action == 'delivery':
@@ -1186,7 +1234,7 @@ def register(ctx, *, integration=None):
         if action == 'identity':
             return service.confirm_identity(a['account_key'], a['identity'], user_confirmed=a.get('user_approved', False))
         if action == 'status':
-            return {'sources': ctx.state.get('discovery_sources', default={}), 'identities': ctx.state.get('discovery_identity_accounts', default={}), 'streams': ctx.state.get('streams', default={}), 'delivery': ctx.state.get('discovery_delivery', default={})}
+            return {'sources': ctx.state.get('discovery_sources', default={}), 'identities': ctx.state.get('discovery_identity_accounts', default={}), 'streams': ctx.state.get('streams', default={}), 'delivery': ctx.state.get('discovery_delivery', default={}), 'approvals': service.approval_settings()}
         raise UserError('unknown configuration action')
     def digest_call(a, session_id='', **_):
         ledger = service.store.get_run(a['run_id'])
@@ -1201,16 +1249,14 @@ def register(ctx, *, integration=None):
             return service.deliver(a['run_id'], session_id=session_id)
         raise UserError('unknown digest action')
     def conversion_recover(a, session_id='', **_):
-        service.backend(a['run_id'], session_id=session_id)  # exact origin authorization
+        service.authorize_approval(session_id)
         action = a.get('action', 'resume')
         if action == 'inspect':
             plan = read_json(service.conversion._paths(a['run_id'], a['unit_id'])[0])
             return {'plan': plan, 'plan_revision': content_revision(plan) if plan else None}
         if action != 'resume':
-            ledger = service.store.get_run(a['run_id'])
-            origin = ledger['origin'].get('stream_origin_session', ledger['origin'].get('session_id'))
-            if (session_id != origin and not service.origin_authorized(service._stream(ledger['config'].get('stream_name', ledger['stream'])), session_id)) or a.get('user_approved') is not True:
-                raise UserError('pending-plan changes require explicit approval from actual origin session')
+            if a.get('user_approved') is not True:
+                raise UserError('pending-plan changes require explicit user approval')
             params = {k: a[k] for k in ('expected_plan_revision', 'reason')}
             if action == 'revise': return service.conversion.revise(a['run_id'], a['unit_id'], edits=a.get('edits', {}), **params)
             if action == 'cancel': return service.conversion.cancel(a['run_id'], a['unit_id'], **params)

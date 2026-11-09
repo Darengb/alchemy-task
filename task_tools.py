@@ -453,11 +453,17 @@ DISCOVERY_SUBMIT_SCHEMA = {
 DISCOVERY_DECIDE_SCHEMA = {
     "name": "discovery_decide",
     "description": (
-        "Act on a discovery digest reply: approve the numbers the user wants as tasks. Users usually name only "
-        "the ones they want; the rest need no action. Example: \"1 and 3, 3 for Friday\" -> approve [\"1\",\"3\"] "
-        "with edits {\"3\": {\"due\": \"YYYY-MM-DD\"}}. Numbers restart each day; pass day for an earlier digest."),
+        "Act on a Task Discovery digest from any chat of this profile. Example: '1 create it, 2 skip, 3 update' "
+        "means approve ['1','3'], edits {'1':{'choice':'create'},'3':{'choice':'update'}}. Supply area/due or explicit "
+        "undated for creation; update requires target_task_id when several targets exist. Skip means NO action: omit "
+        "it, just like unmentioned items; both stay pending and replyable seven days. Only explicit dismiss goes in dismiss. "
+        "Pass the 12-hex Review code from a replied-to or pasted digest as review. Resolution: exact proposal ID or "
+        "day+number, then review, then quoted/pasted transcript digest, then named stream's newest digest or only recent "
+        "stream; otherwise ask which stream. 'work discovery'/'work task discovery'/'work'/label name the stream; "
+        "'task'/'tasks' are generic prefixes. approvals.owner_only applies when enabled. Never claim sender authority."),
     "parameters": {"type": "object", "properties": {
         "stream": {"type": "string", "description": "Optional when only one stream has recent digests."},
+        "review": {"type": "string", "description": "12-hex Review code copied exactly from the quoted/pasted digest; unknown codes refuse without guessing."},
         "day": {"type": "string", "description": "Which day's numbering: omit for today's (or the latest digest), "
                                                  "'yesterday', or YYYY-MM-DD."},
         "approve": {"type": "array", "items": {"type": "string"}},
