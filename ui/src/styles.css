@@ -851,3 +851,8 @@ html.at-dragging { -webkit-user-select: none; user-select: none; }
 @media (prefers-reduced-motion: reduce) {
   .at-root *, .at-pop, .at-panel, .at-toast { animation: none !important; transition: none !important; }
 }
+
+/* Surfaces with a highlighted left edge keep square left corners, so the edge reads as a straight bar. */
+.at-row.is-selected, .at-overdue, .at-overdue > .at-disc-head, .at-state {
+  border-top-left-radius: 0; border-bottom-left-radius: 0;
+}
