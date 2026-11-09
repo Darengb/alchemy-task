@@ -93,6 +93,15 @@ def _proposal(service, proposal_id):
     return record, proposal, ledger
 
 
+def _run(service, run_id):
+    try:
+        return service.store.get_run(run_id)
+    except UserError as exc:
+        if str(exc) == 'unknown run':
+            raise APIError('not_found', 'Unknown exact run_id', 404) from exc
+        raise
+
+
 def _production(ledger):
     if ledger['config'].get('mode') != 'production':
         raise APIError('not_production', 'Only production runs permit mutation', 409)
@@ -125,7 +134,7 @@ async def run(request: Request, run_id: str):
         _query(request)
         def work():
             service = _service()
-            return {'ok': True, **service.project_run(service.store.get_run(run_id))}
+            return {'ok': True, **service.project_run(_run(service, run_id))}
         return await asyncio.to_thread(work)
     except (UserError, NeedsInput, ConcurrentEditError, HTTPException, ValueError, KeyError, TypeError, OSError) as exc:
         return _error(exc)
@@ -198,7 +207,7 @@ async def resume(request: Request, run_id: str, unit_id: str):
         await _body(request)
         def work():
             service = _service()
-            _production(service.store.get_run(run_id))
+            _production(_run(service, run_id))
             proposals = [(pid, record) for pid, record in service.digest._load()['proposals'].items()
                          if record['binding']['run_id'] == run_id and record['binding']['unit_id'] == unit_id]
             for _, record in proposals:

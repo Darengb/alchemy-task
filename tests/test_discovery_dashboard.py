@@ -181,6 +181,18 @@ def test_route_itself_refuses_a_different_profile_selector_without_writes(tmp_pa
     assert service.digest._load()['proposals'][proposal['proposal_id']]['state'] == 'pending'
 
 
+def test_unknown_run_is_not_found_like_unknown_proposal(tmp_path, settings, data_dir, monkeypatch):
+    service, rt, run, wid, proposal = fixture_service(tmp_path, settings, data_dir)
+    client, owner = client_for(service, monkeypatch)
+    base = '/api/plugins/alchemy-task'
+    before = {t.path: t.path.read_bytes() for t in rt.store().scan().tasks}
+    for response in (client.get(base + '/runs/' + 'f' * 32, headers=owner),
+                     client.post(base + '/runs/' + 'f' * 32 + '/units/' + wid + '/resume', headers=owner, json={}),
+                     client.post(base + '/proposals/p_missing/approve', headers=owner, json={'choice': 'create'})):
+        assert response.status_code == 404 and response.json()['error']['code'] == 'not_found', response.text
+    assert {t.path: t.path.read_bytes() for t in rt.store().scan().tasks} == before
+
+
 @pytest.mark.parametrize('prepared', [False, True])
 def test_semantic_stale_revision_before_and_after_preparation(tmp_path, settings, data_dir, monkeypatch, prepared):
     from test_discovery_conversion import custom_joined
