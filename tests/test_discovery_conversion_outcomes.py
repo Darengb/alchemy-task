@@ -140,6 +140,26 @@ def test_conversion_in_workspace_without_remote_or_git_completes_honestly(tmp_pa
     assert len(list((ws / 'areas' / 'work' / 'tasks').glob('*.md'))) == 2
 
 
+# ---------------------------------------------------------------- F2 batch with an already-complete proposal
+def test_batch_approval_reports_complete_item_as_done_and_still_creates_new_item(settings, data_dir, tmp_path):
+    integration, rt, ctx, store, run = _integration(settings, data_dir, tmp_path)
+    _propose_all(integration, store, run)
+    edits = {'1': {'area': 'work', 'undated': True}, '2': {'area': 'work', 'undated': True}}
+    first = integration.decide({'approve': ['1'], 'day': '2030-01-01', 'edits': {'1': edits['1']}}, session_id='parent', today='2030-01-02')
+    assert first['results'][0]['state'] == 'complete'
+    task_id = first['results'][0]['task_id']
+    rt.store().update(task_id, {'notes_append': 'My own follow-up note.'})  # normal user edit afterwards
+    edited = rt.store().resolve(task_id).path.read_bytes()
+    before = len(rt.store().scan().tasks)
+    out = integration.decide({'approve': ['1', '2'], 'day': '2030-01-01', 'edits': edits}, session_id='parent', today='2030-01-02')
+    done, created = out['results']
+    assert done['task_id'] == task_id and done['state'] == 'complete' and done.get('already_complete') is True
+    assert rt.store().resolve(task_id).path.read_bytes() == edited
+    assert created['state'] == 'complete' and created['task_id'] != task_id and not created.get('already_complete')
+    assert len(rt.store().scan().tasks) == before + 1
+    assert _proposal_states(integration, run) == {'1': 'complete', '2': 'complete'}
+
+
 # ---------------------------------------------------------------- M6 visible Log line
 def test_enrichment_adds_one_dated_log_line_naming_the_revision(settings, data_dir, tmp_path):
     tasks = TaskStore(settings, data_dir)

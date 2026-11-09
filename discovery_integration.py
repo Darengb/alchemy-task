@@ -854,9 +854,14 @@ class DiscoveryIntegration:
                 if len(hits) != 1: raise UserError('every merge member must be explicitly approved in this batch')
                 selected += hits
             self.conversion.merge_prepared(selected, reason='User explicitly merged approved proposals: ' + ', '.join(map(str, group)))
-        self.conversion.preflight([(r, w) for _, r, w, _ in prepared])
+        # A complete proposal is already done: report its saved receipt, never re-CAS
+        # it against later user edits, so it cannot block new items in the batch.
+        self.conversion.preflight([(r, w) for _, r, w, completed in prepared if not completed])
         for proposal, run_id, unit_id, completed in prepared:
-            if not completed: self.digest.decide(proposal['proposal_id'], 'approved')
+            if completed:
+                results.append({**read_json(self.conversion._paths(run_id, unit_id)[1], {}), 'already_complete': True})
+                continue
+            self.digest.decide(proposal['proposal_id'], 'approved')
             receipt = self.conversion.deliver_git(run_id, unit_id) if hasattr(self.rt, 'git') else self.conversion.apply(run_id, unit_id)
             if receipt['state'] == 'complete': self.digest.decide(proposal['proposal_id'], 'complete')
             results.append(receipt)
