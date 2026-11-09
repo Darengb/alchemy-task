@@ -92,13 +92,13 @@ def register(ctx):
     def sender(a,**kw):
         """Approved fake sender with actual private fixture-file side effect; no real messaging target."""
         if a['target']!='synthetic-private-file':raise ValueError('nonfixture target')
-        p=service().rt.data_dir/'workflow-fixture/messages.json';data=json.loads(p.read_text()) if p.exists() else []
+        p=service().rt.data_dir/'final-cloud-fixture/messages.json';data=json.loads(p.read_text()) if p.exists() else []
         data.append({'id':'fake-message-'+str(len(data)+1),'target':a['target'],'text':a['text']});p.write_text(json.dumps(data));os.chmod(p,0o600)
         return json.dumps({'id':data[-1]['id']})
     add('workflow_probe_sender',sender,{'target':{'type':'string'},'text':{'type':'string'}},['target','text'])
     def message(a,**kw):
         """Read back exact synthetic message from fixture-file side effect."""
-        p=service().rt.data_dir/'workflow-fixture/messages.json';data=json.loads(p.read_text()) if p.exists() else []
+        p=service().rt.data_dir/'final-cloud-fixture/messages.json';data=json.loads(p.read_text()) if p.exists() else []
         return json.dumps(next((x for x in data if x['id']==a['id']),{'error':'unknown message'}))
     add('workflow_probe_message',message,{'id':{'type':'string'}},['id'])
     def receipt(a,**kw):
