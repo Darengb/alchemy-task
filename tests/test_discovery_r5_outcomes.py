@@ -232,3 +232,12 @@ def test_pruned_digest_is_gone_from_chat_replies(tmp_path, settings, data_dir, m
     finally:
         from alchemy_task import runtime
         runtime.bind(None)
+
+
+@pytest.mark.parametrize('days,deleted', [(10, True), (30, False)])
+def test_prune_days_argument_governs_pending_proposal_exemption(tmp_path, settings, data_dir, days, deleted):
+    """R4-5: a twenty-day pending run is prunable under a ten-day policy, kept under thirty."""
+    service, rt, run, proposal = _aged_pending_run(tmp_path, settings, data_dir, 20)
+    result = service.store.prune(days=days)
+    assert (run in result['deleted_runs']) is deleted
+    assert service.store.run_dir(run).exists() is not deleted

@@ -1079,7 +1079,7 @@ class DiscoveryStore:
     def prune(self, *, days: int = 60) -> dict[str, Any]:
         """Age-prune resolved artifacts, retaining readable review/run tombstones.
 
-        Pending, never-approved proposals can expire from storage after sixty days.
+        Pending, never-approved proposals expire from storage after ``days`` (sixty by default).
         Open/resumable runs, errors, attempts, selected backlog, approved plans,
         conversions and unverified explicit sends remain protected.
         """
@@ -1104,7 +1104,7 @@ class DiscoveryStore:
                     # pending proposal and no saved conversion plan for that unit.
                     old_pending = set()
                     age = dt.datetime.now(dt.timezone.utc).timestamp() - (path / 'ledger.json').stat().st_mtime
-                    if age > 60 * 86400:
+                    if age > days * 86400:
                         old_pending = {p['binding']['unit_id'] for p in digest_data['proposals'].values()
                                        if p['binding']['run_id'] == path.name and p['state'] == 'pending'
                                        and not (path / 'conversions' / (p['binding']['unit_id'] + '.plan.json')).exists()}
