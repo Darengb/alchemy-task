@@ -385,6 +385,10 @@ function BodyView({ task, onEdit, onToggle }) {
   const state = stateBlock ? { title: 'Current state', text: stateBlock.text, start: 0, managed: true }
     : sections.find((s) => /^current state$/i.test(s.title))
   const rest = sections.filter((s) => s !== state)
+  // Research (and other Hermes-managed blocks) sit just above the Log, which stays last.
+  const logAt = rest.findIndex((s) => /^log$/i.test((s.title || '').trim()))
+  const before = logAt >= 0 ? rest.slice(0, logAt) : rest
+  const after = logAt >= 0 ? rest.slice(logAt) : []
   const renderSection = (s) => renderBlocks(parseBlocks(s.text), { onToggle: (line, checked) => onToggle(s.start + line, checked) })
   const hasContent = sections.some((s) => s.text.trim())
   return (
@@ -401,21 +405,26 @@ function BodyView({ task, onEdit, onToggle }) {
         </div>
       ) : null}
       {!hasContent && !managed.length ? <button type="button" className="at-empty-notes" onClick={onEdit}>Add notes</button> : null}
-      {rest.map((s, i) => s.folded ? (
-        <Disclosure key={i} title={s.title} className="at-fold">
-          <div className="at-md">{renderSection(s)}</div>
-        </Disclosure>
-      ) : (
-        <div key={i} className="at-section">
-          {s.title && !/^notes$/i.test(s.title) ? <h3 className="at-section-title">{s.title}</h3> : null}
-          <div className="at-md">{renderSection(s)}</div>
-        </div>
-      ))}
+      {before.map((s, i) => <BodySection key={`b${i}`} s={s} render={renderSection} />)}
       {managed.map((m, i) => (
         <Disclosure key={`m${i}`} title={managedTitle(m.name)} className="at-fold" right={<Icon name="spark" size={13} />}>
           <div className="at-md">{renderBlocks(parseBlocks(m.text))}</div>
         </Disclosure>
       ))}
+      {after.map((s, i) => <BodySection key={`a${i}`} s={s} render={renderSection} />)}
+    </div>
+  )
+}
+
+function BodySection({ s, render }) {
+  return s.folded ? (
+    <Disclosure title={s.title} className="at-fold">
+      <div className="at-md">{render(s)}</div>
+    </Disclosure>
+  ) : (
+    <div className="at-section">
+      {s.title && !/^notes$/i.test(s.title) ? <h3 className="at-section-title">{s.title}</h3> : null}
+      <div className="at-md">{render(s)}</div>
     </div>
   )
 }
