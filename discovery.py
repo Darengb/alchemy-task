@@ -130,12 +130,14 @@ def create_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
         raise DiscoveryError("a stream needs at least one approved source")
     cron, when = schedule_for(args.get("frequency", "daily"), args.get("time", "6 PM"))
     deliver = str(args.get("deliver") or "origin").strip()
-    # No job until approved exact origin delivery has passed a real readback.
-    # CREATE-paused is not portable across hosts; withholding CREATE is.
+    owner = args.get('delivery_owner', 'native_origin')
+    if owner not in {'native_origin', 'verified_sender'}:
+        raise DiscoveryError('delivery_owner must be native_origin or verified_sender')
+    # Strict explicit delivery withholds CREATE until actual sender/readback setup.
     job_id = None
     stream = {"name": name, "areas": areas, "sources": sources, "schedule": cron, "when": when,
               "frequency": args.get("frequency", "daily"), "time": args.get("time", "6 PM"),
-              "timezone": tz["timezone"], "deliver": deliver, "origin_session": session_id, "job_id": job_id,
+              "timezone": tz["timezone"], "deliver": deliver, "delivery_owner": owner, "origin_session": session_id, "job_id": job_id,
               "research_cap": max(0, min(int(args.get("research_cap", DEFAULT_CAP)), 200)),
               "created_at": time.time(), "last_run": None, "label": "", "mode": "production"}
     stream.update(activation_state='SETUP_BLOCKED', delivery_state='pending',
@@ -145,6 +147,11 @@ def create_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
         streams[name] = stream
         _assign_labels(streams)
         _save_streams(rt, streams)
+    if owner == 'native_origin':
+        from .jobs import activate_discovery_job
+        stream = activate_discovery_job(rt, stream)
+        return {'stream': _public(stream), 'job_id': stream['job_id'],
+                'message': 'Native host delivery configured; actual host target/delivery remains unverified. No sender API setup required.'}
     return {"stream": _public(stream), "job_id": job_id,
             "message": f"SETUP_BLOCKED: '{name}' saved for {when} ({tz['timezone']}); no active job. Use discovery_config action=delivery after discovering and approving an actual sender/exact-reader and verifying an existing origin message. See alchemy-task:discovery setup walkthrough."}
 
@@ -167,7 +174,7 @@ def _assign_labels(streams: dict[str, dict[str, Any]]) -> None:
 
 def _public(s: dict[str, Any]) -> dict[str, Any]:
     return {k: s.get(k) for k in ("name", "areas", "sources", "when", "timezone", "deliver", "research_cap",
-                                  "last_run", "label", "job_id", "activation_state", "delivery_state", "setup_blocked_reason")}
+                                  "last_run", "label", "job_id", "delivery_owner", "activation_state", "delivery_state", "setup_blocked_reason")}
 
 
 def update_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[str, Any]:
@@ -222,7 +229,7 @@ def update_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
     if current.get('job_id'):
         raw = rt.ctx.dispatch_tool("cronjob_manage", {"action": "update", "job_id": current["job_id"],
                                                       "schedule": cron, "timezone": tz,
-                                                      **discovery_job_config(current['name'], readers)})
+                                                      **discovery_job_config(current['name'], readers, delivery_owner=current.get('delivery_owner', 'native_origin'), deliver=current.get('deliver', 'origin'))})
         try:
             result = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
         except (TypeError, ValueError):

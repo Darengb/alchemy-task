@@ -422,10 +422,13 @@ def test_scheduled_delivery_requires_origin_approval_and_disables_scheduler_copy
     import json
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     streams = ctx.state.get('streams')
-    streams['work'].update(job_id='job-one', job_binding={'job_id': 'job-one', 'origin_session': 'parent', 'profile': 'test', 'verified': True})
+    streams['work'].update(schedule='0 18 * * *', timezone='America/New_York', job_id='job-one', job_binding={'job_id': 'job-one', 'origin_session': 'parent', 'profile': 'test', 'verified': True})
     ctx.state.set('streams', streams)
-    ctx.cron['job-one'] = {'name': 'alchemy-task: discovery work', 'deliver': 'origin'}
+    ctx.cron['job-one'] = {'name': 'alchemy-task: discovery work', 'deliver': 'origin', 'schedule': '0 18 * * *', 'timezone': 'America/New_York'}
     binding = {'origin_session': 'parent', 'target': 'chat-one', 'send_tool': 'sender', 'read_tool': 'reader', 'send_fields': {'target': 'target', 'text': 'text'}, 'send_id_path': 'id', 'read_fields': {'id': 'message_id'}, 'read_response': {'message_id': 'id', 'target': 'target', 'text': 'text'}, 'scheduled_approved': True}
+    binding.update(toolsets=['approved-messaging'], verification_message_id='existing', verification_text='Existing message')
+    original_setup = ctx.dispatch_tool
+    ctx.dispatch_tool = lambda name, args: {'id': 'existing', 'target': 'chat-one', 'text': 'Existing message'} if name == 'reader' else original_setup(name, args)
     integration.configure_delivery('work', binding, user_approved=True)
     assert ctx.cron['job-one']['deliver'] == 'local'
     digest = integration.digest.prepare('scheduled-digest', stream='work', day='2030-01-01', origin={'session_id': 'parent'}, items=[])
@@ -485,7 +488,7 @@ def test_source_change_reconciles_existing_job_reader_toolsets(settings, data_di
     job = ctx.cron['job-one']
     assert {'alchemy-task-discovery', 'alchemy-task-discovery-child', 'approved-reader'} <= set(job['enabled_toolsets'])
     assert 'stale-reader' not in job['enabled_toolsets']
-    assert job['deliver'] == 'local'
+    assert job['deliver'] == 'origin'
     assert integration._stream('work')['job_id'] == 'job-one'
 
 
@@ -493,7 +496,7 @@ def test_scheduled_new_session_adopts_same_saved_config_window(settings, data_di
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     configure(integration)
     streams = ctx.state.get('streams')
-    streams['work'].update(job_id='job-one', job_binding={'job_id': 'job-one', 'origin_session': 'parent', 'profile': 'test', 'verified': True})
+    streams['work'].update(schedule='0 18 * * *', timezone='America/New_York', job_id='job-one', job_binding={'job_id': 'job-one', 'origin_session': 'parent', 'profile': 'test', 'verified': True})
     ctx.state.set('streams', streams)
     ctx.profile_name = 'test'
     ctx.current_cron_execution = lambda: None

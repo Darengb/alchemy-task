@@ -58,8 +58,8 @@ def test_create_requires_approval_sources_and_timezone(ctx):
     assert make_stream(sources=[])["needs"] == "discovery"
     out = make_stream()
     assert out["ok"] and out["stream"]["when"] == "daily at 6:00 PM"
-    assert out['stream']['activation_state'] == 'SETUP_BLOCKED'
-    assert not ctx.cron and out['job_id'] is None
+    assert out['stream']['activation_state'] == 'ACTIVE'
+    assert len(ctx.cron) == 1 and ctx.cron[out['job_id']]['deliver'] == 'origin'
 
 
 def test_freeform_research_is_not_a_discovery_acceptance(ctx):
@@ -119,29 +119,19 @@ def test_malformed_hint_cannot_be_converted_from_freeform(ctx):
 
 def test_update_keeps_schedule_parts_and_chat(ctx):
     make_stream(time="7 PM")
-    # Legacy known binding/job stays supported; fresh setup is tested separately.
-    streams = ctx.state.get('streams')
-    streams['work']['job_id'] = 'known-job'
-    ctx.state.set('streams', streams)
-    ctx.cron['known-job'] = {'name': 'alchemy-task: discovery work', 'deliver': 'local'}
-    jid = 'known-job'
+    jid = ctx.state.get('streams')['work']['job_id']
     out = tool(task_tools.discovery_stream, session="other-chat", action="update", name="work",
                frequency="weekdays", user_approved=True)
     assert out["ok"] and out["stream"]["when"] == "weekdays at 7:00 PM"
     assert list(ctx.cron) == [jid] and ctx.cron[jid]["schedule"] == "0 19 * * 1-5"
-    assert ctx.cron[jid]["deliver"] == "local"  # explicit verified sender owns delivery, never scheduler final text
+    assert ctx.cron[jid]["deliver"] == "origin"  # native owner retained during schedule updates
     out = tool(task_tools.discovery_stream, action="update", name="work", time="8 AM", user_approved=True)
     assert out["stream"]["when"] == "weekdays at 8:00 AM"
 
 
 def test_update_one_thing_at_a_time(ctx):
     make_stream()
-    # Legacy known binding/job stays supported; fresh setup is tested separately.
-    streams = ctx.state.get('streams')
-    streams['work']['job_id'] = 'known-job'
-    ctx.state.set('streams', streams)
-    ctx.cron['known-job'] = {'name': 'alchemy-task: discovery work', 'deliver': 'local'}
-    jid = 'known-job'
+    jid = ctx.state.get('streams')['work']['job_id']
     out = tool(task_tools.discovery_stream, action="update", name="work", frequency="hourly", user_approved=True)
     assert out["stream"]["when"] == "hourly" and ctx.cron[jid]["schedule"] == "5 * * * *"
     out = tool(task_tools.discovery_stream, action="update", name="work", time="9 AM", user_approved=True)

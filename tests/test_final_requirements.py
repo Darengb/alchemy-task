@@ -13,7 +13,7 @@ def fresh(integration, rt, ctx):
     ctx.state.set('streams', {})
     ctx.state.set('timezone_confirmed', True)
     return discovery.create_stream(rt, {'name': 'fresh', 'areas': ['work'],
-        'sources': [{'name': 'Feed', 'scope': 'board', 'method': 'reader'}], 'user_approved': True}, 'parent')
+        'sources': [{'name': 'Feed', 'scope': 'board', 'method': 'reader'}], 'delivery_owner': 'verified_sender', 'user_approved': True}, 'parent')
 
 
 def binding():

@@ -18,12 +18,14 @@ def test_fresh_default_stream_has_a_working_origin_delivery_path(settings, data_
     result = discovery.create_stream(rt, {'name': 'fresh', 'areas': ['work'],
         'sources': [{'name': 'Feed', 'scope': 'board', 'method': 'reader'}],
         'user_approved': True}, 'parent')
-    # The current host inventory has no usable sender/exact-reader pair.
-    # Honest blocked setup is accepted; a silently enabled local job is not.
-    assert result['stream']['activation_state'] == 'SETUP_BLOCKED'
-    assert result['job_id'] is None and not ctx.cron
-    assert 'sender' in result['stream']['setup_blocked_reason']
-    assert 'discovery_config' in result['message']
+    # No exact reader is needed for native host ownership; no delivery proof invented.
+    assert result['stream']['activation_state'] == 'ACTIVE'
+    assert result['stream']['delivery_owner'] == 'native_origin'
+    assert ctx.cron[result['job_id']]['deliver'] == 'origin'
+    integration.digest.prepare('native-proof', stream='fresh', day='2030-01-01', origin={'session_id': 'parent'}, items=[])
+    delivery = integration.deliver('native-proof', session_id='parent')
+    assert delivery['state'] == 'host_pending' and delivery['delivered'] is False
+    assert delivery['final_text'] == integration.digest.get('native-proof')['text']
 
 
 def test_user_correction_does_not_keep_rejected_recommendation_active(settings, data_dir, tmp_path):

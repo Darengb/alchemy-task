@@ -99,10 +99,10 @@ def inventory(timezone: str) -> list[dict[str, str]]:
             for key, spec in JOBS.items()]
 
 
-def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None) -> dict[str, Any]:
+def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None, *, delivery_owner='native_origin', deliver='origin') -> dict[str, Any]:
     """One supported source-first scheduled workflow, no separate executor."""
     return {
-        'deliver': 'local',  # verified plugin sender is the single delivery owner
+        'deliver': 'local' if delivery_owner == 'verified_sender' else deliver,
         'enabled_toolsets': list(dict.fromkeys(['alchemy-task', 'alchemy-task-discovery', 'alchemy-task-discovery-child',
                                               'skills', 'web', 'file', 'session_search', *(reader_toolsets or [])])),
         'prompt': (f'Run the Alchemy Task discovery stream "{stream}". Load alchemy-task:discovery. '
@@ -111,10 +111,15 @@ def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None) 
                    'Use discovery_research_run, fetch every full callback, perform substantive parent semantic acceptance/repair, '
                    'reconcile all cohorts, then discovery_join. Only after global join perform serial discovery_match/discovery_decision. '
                    'Prepare discovery_digest. No freeform discovery_submit candidates, no task creation before approval, '
-                   'no generic post-creation research replacing accepted dossiers. Call discovery_digest action=send with the approved '
+                   'no generic post-creation research replacing accepted dossiers. ' + (
+                   'Call discovery_digest action=send with the approved '
                    'origin sender/readback binding. Scheduler delivery is local-only. Return [SILENT], never repeat the digest in the '
                    'final reply, including unknown outcomes. Missing sender approval stays prepared and needs setup; no alternate '
-                   'scheduler send is allowed. If blocked, preserve the exact saved run rather than creating another run.')}
+                   'scheduler send is allowed. ' if delivery_owner == 'verified_sender' else
+                   'Return the exact immutable prepared digest text as the final reply for native host delivery, with no paraphrase, '
+                   'prefix or extra post. discovery_digest action=send returns final_text metadata only; never use an alternate sender. '
+                   'Preparation/final return is not proof of delivery; native host retry semantics apply, not universal exactly-once. '
+                   ) + 'If blocked, preserve the exact saved run rather than creating another run.')}
 
 
 def read_discovery_job(rt, stream):
@@ -134,25 +139,28 @@ def reconcile_discovery_job(rt, stream):
     readers = [t for s in stream['sources'] for t in s.get('toolsets', [])]
     readers += [t for c in configs.values() if any(s['name'] == c.get('name') and s['scope'] == c.get('scope') for s in stream['sources']) for t in c.get('toolsets', [])]
     binding = (rt.ctx.state.get('discovery_delivery', default={}) or {}).get(stream['name'], {})
-    desired = discovery_job_config(stream['name'], readers + binding.get('toolsets', []))
+    desired = discovery_job_config(stream['name'], readers + binding.get('toolsets', []),
+                                   delivery_owner=stream.get('delivery_owner', 'native_origin'), deliver=stream.get('deliver', 'origin'))
     raw = rt.ctx.dispatch_tool('cronjob_manage', {'action': 'update', 'job_id': stream['job_id'], **desired})
     result = json.loads(raw) if isinstance(raw, str) else raw
     if result.get('error') or result.get('success') is False:
         raise ValueError('discovery job reconciliation failed: ' + str(result))
     observed = read_discovery_job(rt, stream)
-    if observed.get('enabled_toolsets') != desired['enabled_toolsets']:
+    if any(observed.get(k) != desired[k] for k in ('deliver', 'prompt', 'enabled_toolsets')):
         raise ValueError('discovery reader toolsets readback mismatch')
     return {'state': 'verified', 'job_id': stream['job_id'], 'enabled_toolsets': observed['enabled_toolsets']}
 
 
-def activate_discovery_job(rt, stream, binding):
-    """Called only after approved binding readback; public cron only."""
+def activate_discovery_job(rt, stream, binding=None):
+    """Approved native scheduling or verified sender setup; public cron only."""
     from .discovery import _streams, _save_streams
+    binding = binding or {}
     configs = (rt.ctx.state.get('discovery_sources', default={}) or {}).get(stream['name'], {})
     toolsets = [t for s in stream['sources'] for t in s.get('toolsets', [])]
     toolsets += [t for c in configs.values() for t in c.get('toolsets', [])]
     toolsets += binding.get('toolsets', [])
-    desired = discovery_job_config(stream['name'], toolsets)
+    owner = stream.get('delivery_owner', 'native_origin')
+    desired = discovery_job_config(stream['name'], toolsets, delivery_owner=owner, deliver=stream.get('deliver', 'origin'))
     if not stream.get('job_id'):
         args = {'action': 'create', 'name': f"{PREFIX}: discovery {stream['name']}",
                 'schedule': stream['schedule'], 'timezone': stream['timezone'],
@@ -166,14 +174,14 @@ def activate_discovery_job(rt, stream, binding):
         read_discovery_job(rt, stream)
         rt.ctx.dispatch_tool('cronjob_manage', {'action': 'update', 'job_id': stream['job_id'], **desired})
     observed = read_discovery_job(rt, stream)
-    if observed.get('deliver') != 'local' or observed.get('enabled_toolsets') != desired['enabled_toolsets']:
+    if any(observed.get(k) != desired[k] for k in ('deliver', 'prompt', 'enabled_toolsets')) or observed.get('schedule') != stream['schedule'] or observed.get('timezone') != stream['timezone']:
         raise ValueError('delivery-ready job readback mismatch; activation incomplete')
     if observed.get('paused') is True or observed.get('enabled') is False or observed.get('state') == 'paused':
         rt.ctx.dispatch_tool('cronjob_manage', {'action': 'resume', 'job_id': stream['job_id']})
         observed = read_discovery_job(rt, stream)
         if observed.get('paused') is True or observed.get('enabled') is False or observed.get('state') == 'paused':
             raise ValueError('job resume readback failed')
-    stream.update(activation_state='ACTIVE', delivery_state='verified', setup_blocked_reason='',
+    stream.update(activation_state='ACTIVE', delivery_state='verified' if owner == 'verified_sender' else 'host_pending', setup_blocked_reason='',
                   job_binding={'job_id': stream['job_id'], 'origin_session': stream['origin_session'],
                                'profile': rt.ctx.profile_name, 'verified': True})
     streams = _streams(rt); streams[stream['name']] = stream; _save_streams(rt, streams)

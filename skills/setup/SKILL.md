@@ -17,6 +17,8 @@ Discovery setup is separate from ordinary task creation. Load `alchemy-task:disc
 
 The installing operator must supply `discovery_transport_receipt` only after configuring and verifying the supported host timeouts for sequential and concurrent tool calls. It is JSON containing `sequential_call`, `concurrent_batch` seconds and a `long_canary` evidence reference. Empty configuration deliberately blocks research dispatch. The receipt does not configure host timeouts, prove a canary, or authorize a core patch. Discovery proposals promote their exact accepted dossier rather than queueing generic research. Ordinary direct task creation retains its existing research behavior.
 
+Discovery delivery defaults to native Hermes cron origin delivery. Discover current public host cron/origin capabilities, explain that Hermes posts the exact prepared review here, and obtain ordinary stream approval. No extra messaging API or exact-reader setup is needed. Missing origin metadata and actual delivery remain unverified, not invented. Optional verified_sender mode is only for an available actual sender/exact-reader pair after explicit approval and existing-message verification; it alone uses a local-only job/SILENT final reply. The discovery skill has the full one-owner setup and same-job switch procedure.
+
 ## 1. Timezone (always first)
 
 If the receipt says the timezone is unset or UTC, it was probably never configured (common on fresh Cloud

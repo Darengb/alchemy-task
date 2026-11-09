@@ -429,6 +429,7 @@ DISCOVERY_STREAM_SCHEMA = {
         "frequency": {"type": "string", "enum": ["daily", "weekdays", "hourly", "every 2 hours", "every 3 hours",
                                                  "every 4 hours"]},
         "time": {"type": "string", "description": "Local time for daily/weekdays, e.g. '6 PM'."},
+        "delivery_owner": {"type": "string", "enum": ["native_origin", "verified_sender"], "description": "create only: default native_origin uses host cron; verified_sender blocks until approved sender/readback setup. Change ownership with discovery_config action=delivery from origin."},
         "deliver": {"type": "string", "description": "Default origin (this chat). For a Telegram topic: "
                                                      "telegram:<chat_id>:<thread_id>."},
         "research_cap": {"type": "integer", "description": "Candidates researched per day (default 50)."},

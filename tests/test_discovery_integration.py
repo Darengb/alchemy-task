@@ -276,7 +276,9 @@ def test_origin_delivery_requires_actual_readback_and_unknown_never_resends(sett
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     digest = integration.digest.prepare('delivery-run', stream='work', day='2030-01-01', origin={'session_id': 'parent'},
         items=[{'unit_id': 'w_one', 'research_revision': 'r', 'title': 'Review release', 'kind': 'new', 'targets': []}])
+    ctx.dispatch_tool = lambda name, args: {'id': 'existing', 'chat': 'synthetic-chat', 'text': 'Existing message'}
     integration.configure_delivery('work', {'origin_session': 'parent', 'target': 'synthetic-chat',
+        'scheduled_approved': True, 'toolsets': ['approved-messaging'], 'verification_message_id': 'existing', 'verification_text': 'Existing message',
         'send_tool': 'approved_sender', 'read_tool': 'approved_message_reader',
         'send_arguments': {}, 'send_fields': {'chat': 'target', 'text': 'text'}, 'send_id_path': 'message.id',
         'read_arguments': {}, 'read_fields': {'chat': 'target', 'id': 'message_id'},

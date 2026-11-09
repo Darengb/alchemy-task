@@ -177,12 +177,17 @@ Setup fills them in for you.
   something changes. The research sweep's script starts the agent only when a task is waiting.
 - **Discovery reads and writes:** discovery jobs read only the sources you approve for each stream, through
   your existing tools and connectors; the plugin itself connects to nothing. Digests are written into the
-  chat where the stream was created by one approved sender with exact-message readback; scheduler final
-  delivery is local-only. Fresh streams remain SETUP_BLOCKED with no cron job until delivery setup verifies
-  an existing origin message and the public job readback. If the host has no usable sender/exact-reader,
-  setup explains the missing capability instead of silently enabling an undeliverable job. See the bundled
-  discovery skill for actual mapping/approval steps. Same-chat new sessions require public host metadata,
-  never model origin claims. Suggestions and source IDs retain their existing seven-/60-day policies.
+  chat where the stream was created by default native Hermes cron delivery (`delivery_owner=native_origin`,
+  `deliver=origin`, attached to the origin session), preserving any explicitly approved other target.
+  Its scheduled final reply is the exact immutable prepared digest; the plugin does not also send.
+  No exact-message reader or messaging API setup is required for this ordinary path. Backend delivery
+  remains `host_pending`, `delivered=false`, `verification=awaiting_host`; preparation/final return is not
+  delivery proof, and absent origin metadata is reported unconfigured. Native host retry semantics apply.
+  Optional `delivery_owner=verified_sender` requires approved actual sender/exact-reader mappings and
+  existing-message verification. Only this strict mode remains SETUP_BLOCKED/no-job until configured;
+  it switches the SAME job to local-only with a SILENT final reply and owns all posts. Approved same-origin
+  mode changes preserve job/origin/schedule, never enabling both send paths. See the bundled discovery
+  skill for setup. Same-chat new sessions require public host metadata, never model origin claims. Suggestions and source IDs retain their existing seven-/60-day policies.
 - **Explicit research pilots and historical reviews:** shadow/research_only `pilot_limit` retains the full
   index with audited `pilot_skipped` units; production selection is unchanged. `discovery_replay` distinguishes
   saved-input replay (original date/window/typed identities/primary resources, distinct review) from CURRENT

@@ -489,39 +489,45 @@ class DiscoveryIntegration:
         current = self._stream(stream)
         if user_approved is not True or binding.get('origin_session') != current['origin_session']:
             raise UserError('approve exact origin-chat delivery mapping before enabling sends')
+        owner = binding.get('delivery_owner', 'verified_sender')
+        if owner not in {'native_origin', 'verified_sender'}:
+            raise UserError('delivery_owner must be native_origin or verified_sender')
+        if owner == 'native_origin':
+            if any(d.get('stream') == current['name'] and self.digest.delivery(r)['state'] in {'inflight', 'unknown', 'pending'} for r, d in self.digest._load()['digests'].items()):
+                raise UserError('reconcile pending explicit sends before switching delivery owner')
+            from .jobs import activate_discovery_job
+            current = activate_discovery_job(self.rt, {**current, 'delivery_owner': owner})
+            return {'configured': True, 'stream': current['name'], 'delivery_owner': owner, 'job_id': current['job_id'], 'activation_state': current['activation_state']}
         required = {'target', 'send_tool', 'read_tool', 'send_fields', 'send_id_path', 'read_fields', 'read_response'}
         if not required <= set(binding) or not all(binding[k] for k in required):
             raise UserError('delivery binding requires actual send AND exact readback tools/mappings')
         if set(binding['read_response']) != {'message_id', 'target', 'text'}:
             raise UserError('readback must verify message_id, origin target and full text')
-        if current.get('activation_state'):
-            if binding.get('scheduled_approved') is not True or not isinstance(binding.get('toolsets'), list) or not binding['toolsets'] or any(not isinstance(t, str) or not t for t in binding['toolsets']):
-                raise UserError('approve scheduled origin delivery and actual sender/reader toolsets before activation')
-            # Verify existing origin content without sending a test message.
-            values = {'target': binding['target'], 'message_id': binding.get('verification_message_id')}
-            if not values['message_id'] or not isinstance(binding.get('verification_text'), str):
-                raise UserError('setup readback requires an existing origin message id and exact full text')
-            args = copy.deepcopy(binding.get('read_arguments') or {})
-            for parameter, field in binding['read_fields'].items(): args[parameter] = values[field]
-            observed = self.rt.ctx.dispatch_tool(binding['read_tool'], args)
-            observed = json.loads(observed) if isinstance(observed, str) else observed
-            actual = {key: _pick(observed, path) for key, path in binding['read_response'].items()}
-            if actual != {**values, 'text': binding['verification_text']}:
-                raise UserError('setup readback does not match exact origin message/target/full text')
-        if current.get('job_id'):
-            from .jobs import read_discovery_job
-            read_discovery_job(self.rt, current)
-            raw = self.rt.ctx.dispatch_tool('cronjob_manage', {'action': 'update', 'job_id': current['job_id'], 'deliver': 'local'})
-            result = json.loads(raw) if isinstance(raw, str) else raw
-            if result.get('error') or result.get('success') is False or read_discovery_job(self.rt, current).get('deliver') != 'local':
-                raise UserError('cannot enable explicit delivery until scheduler local-only readback succeeds')
+        if binding.get('scheduled_approved') is not True or not isinstance(binding.get('toolsets'), list) or not binding['toolsets'] or any(not isinstance(t, str) or not t for t in binding['toolsets']):
+            raise UserError('approve scheduled origin delivery and actual sender/reader toolsets before activation')
+        # Verify existing origin content without sending a test message.
+        values = {'target': binding['target'], 'message_id': binding.get('verification_message_id')}
+        if not values['message_id'] or not isinstance(binding.get('verification_text'), str):
+            raise UserError('setup readback requires an existing origin message id and exact full text')
+        args = copy.deepcopy(binding.get('read_arguments') or {})
+        for parameter, field in binding['read_fields'].items(): args[parameter] = values[field]
+        observed = self.rt.ctx.dispatch_tool(binding['read_tool'], args)
+        observed = json.loads(observed) if isinstance(observed, str) else observed
+        actual = {key: _pick(observed, path) for key, path in binding['read_response'].items()}
+        if actual != {**values, 'text': binding['verification_text']}:
+            raise UserError('setup readback does not match exact origin message/target/full text')
+        if current.get('activation_state') or current.get('job_id'):
+            from .jobs import activate_discovery_job
+            current = activate_discovery_job(self.rt, {**current, 'delivery_owner': owner}, binding)
+        else:
+            from .discovery import _streams, _save_streams
+            current = {**current, 'delivery_owner': owner}
+            streams = _streams(self.rt); streams[current['name']] = current; _save_streams(self.rt, streams)
         configs = self.rt.ctx.state.get('discovery_delivery', default={}) or {}
         configs[current['name']] = copy.deepcopy(binding)
         self.rt.ctx.state.set('discovery_delivery', configs)
-        if current.get('activation_state'):
-            from .jobs import activate_discovery_job
-            current = activate_discovery_job(self.rt, current, binding)
         return {'configured': True, 'stream': current['name'], 'origin_session': current['origin_session'],
+                'delivery_owner': owner,
                 'activation_state': current.get('activation_state', 'ACTIVE'), 'job_id': current.get('job_id')}
 
     def deliver(self, run_id, *, session_id):
@@ -534,6 +540,10 @@ class DiscoveryIntegration:
         binding = receipt.get('binding') or (self.rt.ctx.state.get('discovery_delivery', default={}) or {}).get(digest['stream'])
         stream = self._stream(digest['stream'])
         scheduled = self._scheduled_identity(stream)
+        if stream.get('delivery_owner', 'native_origin') == 'native_origin':
+            if not self.origin_authorized(stream, session_id) and not scheduled:
+                raise UserError('only origin or verified scheduled occurrence may prepare host delivery')
+            return self.delivery_status(run_id)
         if not self.origin_authorized(stream, session_id) and not (scheduled and binding and binding.get('scheduled_approved') is True):
             raise UserError('only origin or an explicitly approved bound scheduled occurrence may deliver')
         if receipt['state'] == 'delivered': return receipt
@@ -576,6 +586,20 @@ class DiscoveryIntegration:
                                                  'readback': {'message_id': actual['message_id'], 'target': actual['target']}})
         except Exception as exc:
             return self._delivery_record(run_id, {'state': 'unknown', 'reason': str(exc)[:500]})
+
+    def delivery_status(self, run_id):
+        digest = self.digest.get(run_id)
+        receipt = self.digest.delivery(run_id)
+        stream = self._stream(digest['stream'])
+        if stream.get('delivery_owner', 'native_origin') != 'native_origin': return receipt
+        # Native cron owns posting/retries. Preparation and final return supply no
+        # host transport evidence, even when an origin exists in SessionDB.
+        return {**receipt, 'state': 'host_pending', 'delivery_owner': 'native_origin',
+                'delivered': False, 'verification': 'awaiting_host',
+                'native_target_status': 'configured' if self._host_origin(stream['origin_session']) else 'unconfigured',
+                'deliver': stream.get('deliver', 'origin'), 'job_id': stream.get('job_id'),
+                'final_text': digest['text'], 'digest_sha256': digest['sha256'],
+                'instruction': 'Return final_text exactly to the host. Do not send an alternate post; native host owns delivery and retries.'}
 
     def reconcile_endstate(self, run_id):
         """Replay downstream projections from durable facts, never receipt claims."""
@@ -780,7 +804,7 @@ class DiscoveryIntegration:
                     'proposals': digest['items'] if digest else [], 'decisions': decisions, 'conversions': conversions,
                     'conflicts': (ledger.get('review') or {}).get('conflicts', []), 'failures': ledger['errors'] + join.get('failures', []),
                     'recovery': read_json(self.store.run_dir(run) / 'supervisor.json', {}),
-                    'delivery': self.digest._load()['delivery'].get(run, {'state': 'not_prepared'})}
+                    'delivery': self.delivery_status(run) if digest else {'state': 'not_prepared'}}
         if run_id: return project(self.store.get_run(run_id))
         return {'runs': [project(r) for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')} or self.origin_authorized(self._stream(r['config'].get('stream_name', r['stream'])), session_id)]}
 
@@ -865,7 +889,7 @@ def register(ctx, *, integration=None):
         action = a.get('action', 'prepare')
         if action == 'prepare': return service.finalize(a['run_id'], session_id=session_id)
         if action == 'get': return service.digest.get(a['run_id'])
-        if action == 'delivery': return service.digest.delivery(a['run_id'])
+        if action == 'delivery': return service.delivery_status(a['run_id'])
         if action == 'send':
             if ledger['config'].get('mode') != 'production': raise UserError('non-production run cannot send digest')
             return service.deliver(a['run_id'], session_id=session_id)
