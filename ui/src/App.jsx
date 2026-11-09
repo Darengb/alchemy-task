@@ -9,7 +9,7 @@ import { TasksView } from './tasks.jsx'
 import { TaskPanel } from './panel.jsx'
 import { DiscoveryView, pendingCount } from './discovery.jsx'
 import { SettingsPanel } from './settings.jsx'
-import { Icon, IconButton, OverlayHost, Spinner, ToastHost, cx, useToast } from './ui.jsx'
+import { Icon, IconButton, OverlayHost, Spinner, ToastHost, ToastOutlet, cx, useToast } from './ui.jsx'
 
 const NARROW = 720
 const POLL_MS = 30000
@@ -196,6 +196,7 @@ function AppInner({ transport, host, initialView, settingsOnly, chat }) {
         <DragProvider onDrop={onDrop}>
           <OverlayHost rootRef={rootRef}>{content}</OverlayHost>
         </DragProvider>
+        <ToastOutlet />
       </div>
     </AppContext.Provider>
   )

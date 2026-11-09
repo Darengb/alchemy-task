@@ -193,10 +193,13 @@ export function TaskPanel({ id, narrow, onClose }) {
   }
 
   return (
-    <PanelShell narrow={narrow} onClose={onClose} actions={
+    <PanelShell narrow={narrow} onClose={onClose} footer={isDone(task) ? null : (
+      <button type="button" className={cx('at-cta', sending && 'is-busy')} onClick={sendToChat} disabled={sending}>
+        <Icon name="chat" size={19} strokeWidth={2} /><span>{sending ? 'Starting…' : 'Start in chat'}</span>
+      </button>
+    )} actions={
       <>
         {task.loading ? <Spinner /> : null}
-        <IconButton icon="chat" label="Send to chat" onClick={sendToChat} disabled={sending} className={cx(sending && 'is-busy')} />
         <IconButton icon="clipboard" label="Copy title and ID for chat" onClick={copyForChat} />
         <IconButton icon="refresh" label="Reload" onClick={load} />
       </>
@@ -259,7 +262,7 @@ export function TaskPanel({ id, narrow, onClose }) {
   )
 }
 
-function PanelShell({ narrow, onClose, actions, children }) {
+function PanelShell({ narrow, onClose, actions, footer, children }) {
   const ref = React.useRef(null)
   useSheetDismiss(ref, narrow, onClose)
   return (
@@ -270,7 +273,8 @@ function PanelShell({ narrow, onClose, actions, children }) {
         {actions}
         <IconButton icon="x" label="Close" onClick={onClose} />
       </div>
-      <div className="at-panel-body at-scroll" onScroll={markScrolled}>{children}</div>
+      <div className={cx('at-panel-body at-scroll', footer && 'has-foot')} onScroll={markScrolled}>{children}</div>
+      {footer ? <div className="at-panel-foot">{footer}</div> : null}
     </aside>
   )
 }

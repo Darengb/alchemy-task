@@ -937,3 +937,26 @@ html.at-dragging { -webkit-user-select: none; user-select: none; }
 .at-toast span { white-space: normal; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; line-height: 1.4; }
 .at-iconbtn.is-busy { color: var(--at-accent-text); animation: at-pulse 1s ease-in-out infinite; }
 @keyframes at-pulse { 50% { opacity: .45; } }
+
+/* "Start in chat": the panel's call to action, pinned to the bottom of the task, styled like the add button */
+.at-panel-foot {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; pointer-events: none;
+  padding: 28px 20px calc(16px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(180deg, rgba(9, 11, 52, 0), rgba(9, 11, 52, .92) 42%, #090b34);
+}
+.at-panel-body.has-foot { padding-bottom: 116px; }
+.at-cta {
+  pointer-events: auto; display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%;
+  height: 54px; border-radius: 16px; border: 1px solid rgba(160, 170, 255, .5); cursor: pointer;
+  background: linear-gradient(160deg, #4a52ff, #2a30f0); color: #fff;
+  box-shadow: 0 10px 30px rgba(40, 50, 255, .5), 0 0 0 5px rgba(47, 55, 255, .12);
+  font-family: var(--at-display); font-size: 18px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+  transition: transform .15s var(--at-ease), box-shadow .2s, filter .2s;
+}
+.at-cta:hover { filter: brightness(1.08); box-shadow: 0 12px 36px rgba(40, 50, 255, .6), 0 0 0 6px rgba(47, 55, 255, .16); }
+.at-cta:active { transform: scale(.98); }
+.at-cta:disabled { cursor: default; }
+.at-cta.is-busy { animation: at-pulse 1.1s ease-in-out infinite; }
+.at-panel.is-side .at-panel-foot { padding: 28px 24px 20px; }
+/* While a task with the Start in chat button is open, messages sit above the button */
+.at-root:has(.at-panel-foot) .at-toasts { bottom: calc(104px + env(safe-area-inset-bottom, 0px)); }

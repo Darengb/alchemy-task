@@ -335,8 +335,10 @@ export function DatePicker({ value, today, onPick, onClear, close, extra }) {
 
 // ------------------------------------------------------------------ toasts
 export const ToastCtx = React.createContext(null)
+const ToastListCtx = React.createContext(null)
 export const useToast = () => React.useContext(ToastCtx)
 
+/** Holds the toasts; <ToastOutlet /> draws them inside the app root, so they get its colors and layout. */
 export function ToastHost({ children }) {
   const [toasts, setToasts] = React.useState([])
   const seq = React.useRef(0)
@@ -347,19 +349,26 @@ export function ToastHost({ children }) {
     setTimeout(() => dismiss(id), opts.duration || (opts.undo ? 6500 : opts.tone === 'error' ? 7000 : 3500))
     return id
   }, [dismiss])
+  const list = React.useMemo(() => ({ toasts, dismiss }), [toasts, dismiss])
   return (
     <ToastCtx.Provider value={show}>
-      {children}
-      <div className="at-toasts" aria-live="polite">
-        {toasts.map((t) => (
-          <div key={t.id} className={cx('at-toast', t.tone && `at-tone-${t.tone}`)}>
-            {t.tone === 'error' ? <Icon name="alert" size={15} /> : null}
-            <span className="at-flex">{t.message}</span>
-            {t.undo ? <button type="button" className="at-toast-act" onClick={() => { dismiss(t.id); t.undo() }}>Undo</button> : null}
-            {t.action ? <button type="button" className="at-toast-act" onClick={() => { dismiss(t.id); t.action.run() }}>{t.action.label}</button> : null}
-          </div>
-        ))}
-      </div>
+      <ToastListCtx.Provider value={list}>{children}</ToastListCtx.Provider>
     </ToastCtx.Provider>
+  )
+}
+
+export function ToastOutlet() {
+  const { toasts, dismiss } = React.useContext(ToastListCtx)
+  return (
+    <div className="at-toasts" aria-live="polite">
+      {toasts.map((t) => (
+        <div key={t.id} className={cx('at-toast', t.tone && `at-tone-${t.tone}`)}>
+          {t.tone === 'error' ? <Icon name="alert" size={15} /> : null}
+          <span className="at-flex">{t.message}</span>
+          {t.undo ? <button type="button" className="at-toast-act" onClick={() => { dismiss(t.id); t.undo() }}>Undo</button> : null}
+          {t.action ? <button type="button" className="at-toast-act" onClick={() => { dismiss(t.id); t.action.run() }}>{t.action.label}</button> : null}
+        </div>
+      ))}
+    </div>
   )
 }
