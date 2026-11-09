@@ -112,3 +112,65 @@ def test_mail_source_setup_requires_sender_domains_or_explicit_admit_all(setting
     assert ctx.state.get('discovery_sources')['work']['feed']['sender_domains'] == ['example.test'] == saved['sender_domains']
     saved = integration.configure('work', {**mail, 'admit_all': True}, user_approved=True)
     assert ctx.state.get('discovery_sources')['work']['feed']['admit_all'] is True
+
+
+def _window_reader(items, *, fail=False):
+    """Approved generic reader that returns only items inside the requested window."""
+    import datetime as dt
+    calls = []
+    def reader(tool, args):
+        calls.append((args['start'], args['end']))
+        if fail:
+            return json.dumps({'error': 'provider unavailable'})
+        low, high = dt.datetime.fromisoformat(args['start']), dt.datetime.fromisoformat(args['end'])
+        inside = [{k: v for k, v in item.items() if k != 'at'} for item in items if low <= item['at'] <= high]
+        return json.dumps({'account_key': 'account', 'scope': args['scope'], 'start': args['start'], 'end': args['end'],
+                           'items': inside, 'next_cursor': None, 'pagination_exhausted': True})
+    reader.calls = calls
+    return reader
+
+
+def _close_run(integration, run):
+    integration.freeze(run, session_id='parent')
+    candidates = integration.store.get_run(run)['candidates']
+    integration.runner.join(run, session_id='parent', degraded={c['candidate_id']: 'not researched in this test' for c in candidates})
+    return integration.finalize(run, session_id='parent')
+
+
+def test_failed_first_run_window_is_reread_by_the_next_run(settings, data_dir, tmp_path):
+    import datetime as dt
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    configure(integration)
+    day1 = dt.datetime(2030, 1, 2, 23, 0, tzinfo=dt.timezone.utc)
+    day2 = day1 + dt.timedelta(days=1)
+    item = {'title': 'Ask raised during the failed first window', 'source_ids': ['source:feed:account:issue:early'],
+            'source_revision': 'v1', 'at': day1 - dt.timedelta(hours=3)}
+    # Day 1: the stream's first run cannot read the source.
+    integration.utcnow = lambda: day1
+    ctx.dispatch_tool = _window_reader([item], fail=True)
+    first = integration.start('work', session_id='parent')
+    assert integration.collect(first['run_id'], 'feed', session_id='parent')['status'] == 'failed'
+    text1 = _close_run(integration, first['run_id'])['text']
+    assert 'Coverage: feed: failed' in text1 and 'No new follow-ups found.' not in text1
+    # Day 2: the reader works again. The failed interval must be read again.
+    integration.utcnow = lambda: day2
+    reader = _window_reader([item])
+    ctx.dispatch_tool = reader
+    second = integration.start('work', session_id='parent')
+    assert second['resumed'] is False
+    assert second['windows']['feed']['start'] == first['windows']['feed']['start']
+    assert second['windows']['feed']['end'] == day2.isoformat()
+    receipt = integration.collect(second['run_id'], 'feed', session_id='parent')
+    assert receipt['status'] == 'complete' and receipt['covered_intervals'] == [[first['windows']['feed']['start'], day2.isoformat()]]
+    integration.freeze(second['run_id'], session_id='parent')
+    titles = [c['title'] for c in integration.store.get_run(second['run_id'])['candidates']]
+    assert titles == ['Ask raised during the failed first window']
+    assert integration.store.source_state('work', 'feed')['watermark'] == day2.isoformat()
+    # Day 3: the committed watermark controls the window again.
+    third_now = day2 + dt.timedelta(days=1)
+    integration.utcnow = lambda: third_now
+    candidates = integration.store.get_run(second['run_id'])['candidates']
+    integration.runner.join(second['run_id'], session_id='parent', degraded={c['candidate_id']: 'not researched in this test' for c in candidates})
+    integration.finalize(second['run_id'], session_id='parent')
+    third = integration.start('work', session_id='parent')
+    assert third['windows']['feed']['start'] == day2.isoformat()

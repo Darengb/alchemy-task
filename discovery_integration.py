@@ -240,7 +240,15 @@ class DiscoveryIntegration:
             windows = {}
             for key, config in configs.items():
                 validate_source_config(config)
-                watermark = self.store.source_state(storage_stream, key).get('watermark')
+                source_state = self.store.source_state(storage_stream, key)
+                watermark = source_state.get('watermark')
+                if not watermark:
+                    # No committed coverage yet: a failed or partial first run's
+                    # interval is retained, so start at its earliest attempted
+                    # start instead of silently sliding to now-24h.
+                    attempted = [r['start'] for r in source_state.get('coverage', [])
+                                 if r.get('verification') == 'adapter_verified' and isinstance(r.get('start'), str)]
+                    watermark = min(attempted, key=lambda s: dt.datetime.fromisoformat(s.replace('Z', '+00:00'))) if attempted else None
                 windows[key] = {'start': watermark or (now - dt.timedelta(days=1)).isoformat(), 'end': now.isoformat()}
             config = {'stream_name': current['name'], 'mode': mode, 'sources': list(configs.values()), 'windows': windows, 'areas': current['areas'],
                       'research_cap': current['research_cap'], 'timezone': current.get('timezone', self.rt.settings.timezone)}
