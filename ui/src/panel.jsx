@@ -130,15 +130,17 @@ export function TaskPanel({ id, narrow, onClose }) {
   ), { width: 180 })
 
   // Hand the task to chat: copies its title and ID. Runs inside the tap or release that triggers it.
-  // Success shows a "Copied" tooltip under the title; only failures get a toast.
+  // Success shows a "Copied" tooltip under the title; a failure hides it and shows a toast.
   const copyForChat = async () => {
     const cur = store.getState().byId[id] || task
-    if (navigator.vibrate) navigator.vibrate(12)
     const ok = await copyText(taskHandoff(cur))
     if (ok) setCopied(true)
-    else toast('Could not copy. Your browser blocked the clipboard.', { tone: 'error' })
+    else { setCopied(false); toast('Could not copy. Your browser blocked the clipboard.', { tone: 'error' }) }
     return ok
   }
+  // The hold shows "Copied" the moment it registers. Browsers only allow the clipboard write in a tap or
+  // release, so the write itself happens when the finger lifts (copyForChat via onLongPress).
+  const holdRegistered = () => { if (navigator.vibrate) navigator.vibrate(12); setCopied(true) }
 
   return (
     <PanelShell narrow={narrow} onClose={onClose} actions={
@@ -156,7 +158,8 @@ export function TaskPanel({ id, narrow, onClose }) {
       ) : null}
       <div className="at-panel-titlerow">
         <Check checked={isDone(task)} onChange={async () => { if (await settle()) actions.toggle(store.getState().byId[id] || task) }} label={isDone(task) ? 'Mark not done' : 'Mark done'} size="lg" />
-        <TitleField value={task.title} done={isDone(task)} onSave={(title) => patch({ title })} onLongPress={copyForChat} copied={copied} />
+        <TitleField value={task.title} done={isDone(task)} onSave={(title) => patch({ title })}
+                    onHold={holdRegistered} onLongPress={copyForChat} copied={copied} />
       </div>
       <div className="at-fields">
         <button type="button" className={cx('at-field', date && date < today && !isDone(task) && 'is-late')} onClick={pickDate}>
@@ -222,8 +225,9 @@ function PanelShell({ narrow, onClose, actions, children }) {
 }
 
 // The title edits in place on a tap. Pressing and holding it (while it is not being edited) copies the task
-// for chat instead. The copy runs on release, because browsers only allow clipboard writes in a gesture.
-function TitleField({ value, done, onSave, onLongPress, copied }) {
+// for chat instead: "Copied" shows as soon as the hold registers, and the clipboard write runs on release,
+// because browsers only allow clipboard writes in a tap or release.
+function TitleField({ value, done, onSave, onHold, onLongPress, copied }) {
   const [v, setV] = React.useState(value)
   const [editing, setEditing] = React.useState(false)
   const [armed, setArmed] = React.useState(false)
@@ -244,13 +248,16 @@ function TitleField({ value, done, onSave, onLongPress, copied }) {
   const down = (e) => {
     if (editing || (e.pointerType === 'mouse' && e.button !== 0)) return
     const p = { x: e.clientX, y: e.clientY, armed: false, timer: 0 }
-    p.timer = setTimeout(() => { p.armed = true; setArmed(true); if (navigator.vibrate) navigator.vibrate(8) }, 450)
+    p.timer = setTimeout(() => { p.armed = true; setArmed(true); onHold() }, 450)
     press.current = p
   }
+  // Once the hold registers, small finger movement no longer cancels it.
   const move = (e) => {
     const p = press.current
-    if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 8) cancelPress()
+    if (p && !p.armed && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 8) cancelPress()
   }
+  // If the browser takes over the touch after the hold registered, keep it so touchend can still copy.
+  const pointerCancel = () => { if (!(press.current && press.current.armed)) cancelPress() }
   const release = (e) => {
     const p = press.current
     if (!p) return
@@ -279,7 +286,7 @@ function TitleField({ value, done, onSave, onLongPress, copied }) {
               onChange={(e) => setV(e.target.value)}
               onFocus={() => { if (!editing && !press.current) setEditing(true) }}
               onBlur={() => { setEditing(false); commit() }}
-              onPointerDown={down} onPointerMove={move} onPointerUp={release} onPointerCancel={cancelPress}
+              onPointerDown={down} onPointerMove={move} onPointerUp={release} onPointerCancel={pointerCancel}
               onTouchEnd={(e) => { if (press.current && press.current.armed) release(e) }}
               onClick={click}
               onContextMenu={(e) => { if (!editing) e.preventDefault() }}
