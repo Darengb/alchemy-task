@@ -161,15 +161,23 @@ export function TaskPanel({ id, narrow, onClose }) {
         if (!(await chat.startChat(res.text))) toast('Could not open a new chat. Update Hermes Desktop and try again.', { tone: 'error' })
         return
       }
+      // Route 1 (a messaging chat) answers in seconds; route 2 (a new session) through the scheduler in about
+      // a minute. A messaging handoff the gateway does not take within ~10 s becomes a new session.
+      const newChat = 'Starting a new chat for this task. Hermes will message you there within a minute.'
       const res = await api.handoff(id, narrow ? 'phone' : 'dashboard')
       const h = res.handoff
+      if (h.route === 'session') { toast(newChat, { duration: 7000 }); return }
       const where = chatLabel(h.target)
-      const into = h.target && h.target.kind === 'app' ? 'in' : 'on'
       toast(`Sending to ${where}…`)
-      for (let i = 0; i < 100; i++) {
+      for (let i = 0; i < 30; i++) {
         await new Promise((r) => setTimeout(r, 1000))
         const st = (await api.handoffStatus(h.id)).handoff
-        if (st.state === 'sent') { toast(`Sent. Hermes will message you ${into} ${where}.`); return }
+        if (st.state === 'sent') { toast(`Sent. Hermes will message you on ${where}.`); return }
+        if (st.route === 'session' && st.state === 'started') {
+          toast(`${where} did not respond, so Hermes is starting a new chat instead. It will message you there within a minute.`,
+            { duration: 8000 })
+          return
+        }
         if (st.state === 'failed') { toast(st.error || 'Could not send it to chat.', { tone: 'error' }); return }
       }
       toast('Still sending. Hermes will message you when it picks this up.', { tone: 'error' })

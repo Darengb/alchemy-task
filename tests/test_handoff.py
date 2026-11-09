@@ -1,4 +1,4 @@
-"""Send to chat: the handoff note, which chat it goes to, the dashboard route and the gateway relay."""
+"""Send to chat: the handoff note, route choice (messaging chat or new session), the relay and the fallback."""
 from __future__ import annotations
 
 import json
@@ -27,7 +27,20 @@ def sessions(monkeypatch):
     monkeypatch.setattr(ho, "_session_row", lambda sid: rows.get(sid))
     monkeypatch.setattr(ho, "_home_targets", lambda: [ho._chat_target(TELEGRAM_DM, "home")])
     monkeypatch.setattr(ho, "injection_allowed", lambda: True)
+    monkeypatch.setattr(ho, "gateway_running", lambda: True)
     return rows
+
+
+@pytest.fixture
+def jobs(ctx):
+    """Records cronjob_manage calls made through the plugin context (route 2)."""
+    calls = []
+
+    def dispatch(name, args):
+        calls.append((name, args))
+        return json.dumps({"success": True, "job_id": f"job{len(calls)}"})
+    ctx.dispatch_tool = dispatch
+    return calls
 
 
 class Injector:
@@ -59,18 +72,19 @@ def test_note_is_gender_neutral_and_drops_empty_fields():
     assert "Summary:" not in text and "Current state:" not in text and "Priority" not in text
 
 
+def test_new_session_note_says_it_is_a_new_chat():
+    text = ho.build_text({"task_id": "x", "title": "Call the bank"}, "phone", new_session=True)
+    assert "This is a new chat about one task" in text
+
+
 # ------------------------------------------------------------------ which chat
 
-def test_target_prefers_the_newest_chat_that_worked_on_the_task(ctx, sessions):
+def test_target_prefers_the_newest_messaging_chat_that_worked_on_the_task(ctx, sessions):
     rt = runtime.Runtime(ctx)
-    ho.remember_chat(rt, "t1", "s-dm")
-    ho.remember_chat(rt, "t1", "s-group")
-    ho.remember_chat(rt, "t1", "s-cron")  # a cron run is not a chat anyone reads
+    for sid in ("s-dm", "s-group", "s-app", "s-cron"):  # app and cron sessions are never targets
+        ho.remember_chat(rt, "t1", sid)
     t = ho.resolve_target(rt, "t1")
-    assert t["session_key"] == TELEGRAM_GROUP["session_key"] and t["reason"] == "task" and t["kind"] == "chat"
-    ho.remember_chat(rt, "t1", "s-app")  # a newer chat in the Hermes app wins, addressed by its session id
-    t = ho.resolve_target(rt, "t1")
-    assert t["kind"] == "app" and t["session_key"] == APP["id"] and t["chat_name"] == "Hi"
+    assert t["session_key"] == TELEGRAM_GROUP["session_key"] and t["reason"] == "task"
 
 
 def test_target_uses_a_linked_work_session(ctx, sessions):
@@ -79,16 +93,11 @@ def test_target_uses_a_linked_work_session(ctx, sessions):
     assert ho.resolve_target(rt, "t2")["session_key"] == TELEGRAM_DM["session_key"]
 
 
-def test_target_falls_back_to_the_home_channel(ctx, sessions):
-    t = ho.resolve_target(runtime.Runtime(ctx), "never-seen")
-    assert t["reason"] == "home" and t["session_key"] == TELEGRAM_DM["session_key"]
-
-
-def test_no_chat_at_all_is_a_named_error(ctx, sessions, monkeypatch):
+def test_target_falls_back_to_the_home_channel_then_none(ctx, sessions, monkeypatch):
+    rt = runtime.Runtime(ctx)
+    assert ho.resolve_target(rt, "never-seen")["reason"] == "home"
     monkeypatch.setattr(ho, "_home_targets", lambda: [])
-    with pytest.raises(ho.NeedsInput) as exc:
-        ho.resolve_target(runtime.Runtime(ctx), "nothing")
-    assert exc.value.kind == "no_chat" and "/sethome" in exc.value.message
+    assert ho.resolve_target(rt, "never-seen") is None
 
 
 def test_tool_calls_record_the_chat(ctx, sessions):
@@ -103,24 +112,22 @@ def test_tool_calls_record_the_chat(ctx, sessions):
     assert chats[tid] == ["s-dm"] and chats[other] == ["s-group"]
 
 
-# ------------------------------------------------------------------ route + relay
+# ------------------------------------------------------------------ route 1: messaging chat
 
-def test_route_queues_and_the_gateway_relay_injects_into_that_chat(client, ctx, sessions, monkeypatch):
+def test_route_one_queues_and_the_gateway_relay_injects_into_that_chat(client, ctx, sessions, jobs, monkeypatch):
     t = make_task(client, "Book the venue")
     out = client.post(f"/tasks/{t['task_id']}/handoff", json={"surface": "phone"}).json()
     assert out["ok"] and out["mode"] == "chat"
     h = out["handoff"]
-    assert h["state"] == "pending"
-    assert h["target"] == {"platform": "telegram", "kind": "chat", "chat_name": "Sam", "reason": "home"}
+    assert h["route"] == "chat" and h["state"] == "pending"
+    assert h["target"] == {"platform": "telegram", "chat_name": "Sam", "reason": "home"}
+    assert not jobs
 
     inject = Injector()
     ctx.inject_message = inject
     rt = runtime.Runtime(ctx)
     monkeypatch.setattr(ho, "in_gateway_process", lambda: False)
-    monkeypatch.setattr(ho, "in_dashboard_process", lambda: False)
     assert ho.relay_once(rt) == [] and not inject.calls  # never outside the gateway's process
-    monkeypatch.setattr(ho, "in_dashboard_process", lambda: True)
-    assert ho.relay_once(rt) == [] and not inject.calls  # the dashboard leaves messaging chats to the gateway
     monkeypatch.setattr(ho, "in_gateway_process", lambda: True)
     assert ho.relay_once(rt) == [h["id"]]
     assert inject.calls[0]["session_key"] == TELEGRAM_DM["session_key"] and inject.calls[0]["role"] == "user"
@@ -129,69 +136,61 @@ def test_route_queues_and_the_gateway_relay_injects_into_that_chat(client, ctx, 
     assert client.get(f"/handoffs/{h['id']}").json()["handoff"]["state"] == "sent"
 
 
-def test_a_refused_injection_is_retried_later_then_reported(client, ctx, sessions, monkeypatch):
+# ------------------------------------------------------------------ route 2: new session
+
+@pytest.mark.parametrize("why", ["no_gateway", "no_permission", "no_chat"])
+def test_route_two_starts_a_one_time_session_when_route_one_cannot_work(client, ctx, sessions, jobs, monkeypatch, why):
+    if why == "no_gateway":
+        monkeypatch.setattr(ho, "gateway_running", lambda: False)
+    elif why == "no_permission":
+        monkeypatch.setattr(ho, "injection_allowed", lambda: False)
+    else:
+        monkeypatch.setattr(ho, "_home_targets", lambda: [])
+    t = make_task(client, "Draft the agenda")
+    h = client.post(f"/tasks/{t['task_id']}/handoff", json={"surface": "phone"}).json()["handoff"]
+    assert h["route"] == "session" and h["state"] == "started" and h["reason"] == why
+    (name, args), = jobs
+    assert name == "cronjob_manage" and args["action"] == "create" and args["name"] == "Draft the agenda"
+    assert args["repeat"] == 1 and args["deliver"] == "local"
+    assert re.match(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$", args["schedule"])
+    assert "This is a new chat about one task" in args["prompt"] and t["task_id"] in args["prompt"]
+    assert client.get(f"/handoffs/{h['id']}").json()["handoff"]["route"] == "session"
+    assert not list((runtime.Runtime(ctx).data_dir / "handoffs").glob(f"{h['id']}.json"))  # nothing queued
+
+
+def test_a_silent_gateway_falls_back_to_a_new_session(client, ctx, sessions, jobs):
     t = make_task(client, "Pay the invoice")
     h = client.post(f"/tasks/{t['task_id']}/handoff", json={}).json()["handoff"]
-    ctx.inject_message = Injector(ok=False)
-    monkeypatch.setattr(ho, "in_gateway_process", lambda: True)
-    monkeypatch.setattr(ho, "in_dashboard_process", lambda: False)
     rt = runtime.Runtime(ctx)
-    now = time.time()
-    assert ho.relay_once(rt, now) == []
-    assert client.get(f"/handoffs/{h['id']}").json()["handoff"]["state"] == "pending"
-    assert ho.relay_once(rt, now + 1) == [] and len(ctx.inject_message.calls) == 1  # waits before retrying
-    ho.relay_once(rt, now + ho.GIVE_UP_SECONDS + 5)
-    st = client.get(f"/handoffs/{h['id']}").json()["handoff"]
-    assert st["state"] == "failed" and "gateway" in st["error"]
+    early = ho.status(rt, h["id"], now=time.time() + 2)
+    assert early["route"] == "chat" and early["state"] == "pending" and not jobs
+    late = ho.status(rt, h["id"], now=time.time() + ho.FALLBACK_SECONDS + 1)
+    assert late["route"] == "session" and late["state"] == "started" and late["reason"] == "gateway_silent"
+    assert len(jobs) == 1 and jobs[0][1]["name"] == "Pay the invoice"
+    ctx.inject_message = Injector()
+    assert ho.relay_once(rt) == [] and not ctx.inject_message.calls  # the gateway never also sends it
+    assert ho.status(rt, h["id"])["route"] == "session" and len(jobs) == 1  # and it is not started twice
 
 
-def test_desktop_gets_the_note_without_queueing(client, sessions, ctx):
-    t = make_task(client, "Draft the agenda")
-    out = client.post(f"/tasks/{t['task_id']}/handoff", json={"surface": "desktop"}).json()
-    assert out["mode"] == "desktop" and "Draft the agenda" in out["text"] and "(the desktop app)" in out["text"]
-    assert not list((runtime.Runtime(ctx).data_dir / "handoffs").glob("*.json"))
-
-
-def test_without_permission_the_route_says_how_to_allow_it(client, sessions, monkeypatch):
-    monkeypatch.setattr(ho, "injection_allowed", lambda: False)
-    t = make_task(client, "Call the vet")
-    out = client.post(f"/tasks/{t['task_id']}/handoff", json={"surface": "dashboard"})
-    body = out.json()
-    assert out.status_code == 400 and body["error"]["code"] == "permission"
-    assert "allow_gateway_injection true" in body["error"]["message"]
-
-
-def test_app_chats_go_through_the_dashboard_process(client, ctx, sessions, monkeypatch):
-    t = make_task(client, "Plan the offsite")
-    ho.remember_chat(runtime.Runtime(ctx), t["task_id"], "s-app")
-    h = client.post(f"/tasks/{t['task_id']}/handoff", json={"surface": "phone"}).json()["handoff"]
-    assert h["target"]["kind"] == "app" and h["target"]["platform"] == "gui"
-    inject = Injector()
-    ctx.inject_message = inject
-    rt = runtime.Runtime(ctx)
-    monkeypatch.setattr(ho, "in_gateway_process", lambda: True)
-    monkeypatch.setattr(ho, "in_dashboard_process", lambda: False)
-    assert ho.relay_once(rt) == [] and not inject.calls  # the gateway leaves app chats alone
-    monkeypatch.setattr(ho, "in_gateway_process", lambda: False)
-    monkeypatch.setattr(ho, "in_dashboard_process", lambda: True)
-    assert ho.relay_once(rt) == [h["id"]] and inject.calls[0]["session_key"] == APP["id"]
-
-
-def test_an_app_chat_that_is_not_open_reports_it_quickly(client, ctx, sessions, monkeypatch):
+def test_a_refused_injection_is_retried_then_falls_back(client, ctx, sessions, jobs, monkeypatch):
     t = make_task(client, "Order the banners")
-    ho.remember_chat(runtime.Runtime(ctx), t["task_id"], "s-app")
     h = client.post(f"/tasks/{t['task_id']}/handoff", json={}).json()["handoff"]
     ctx.inject_message = Injector(ok=False)
-    monkeypatch.setattr(ho, "in_gateway_process", lambda: False)
-    monkeypatch.setattr(ho, "in_dashboard_process", lambda: True)
+    monkeypatch.setattr(ho, "in_gateway_process", lambda: True)
     rt = runtime.Runtime(ctx)
     now = time.time()
     ho.relay_once(rt, now)
-    ho.relay_once(rt, now + 3)  # retried after a short wait
+    ho.relay_once(rt, now + 1)  # waits before retrying
+    ho.relay_once(rt, now + 4)
     assert len(ctx.inject_message.calls) == 2
-    ho.relay_once(rt, now + ho.APP_GIVE_UP_SECONDS + 1)
-    st = client.get(f"/handoffs/{h['id']}").json()["handoff"]
-    assert st["state"] == "failed" and "Open it" in st["error"]
+    assert ho.status(rt, h["id"], now=now + ho.FALLBACK_SECONDS + 1)["route"] == "session" and len(jobs) == 1
+
+
+def test_desktop_gets_the_note_without_queueing(client, sessions, jobs, ctx):
+    t = make_task(client, "Draft the agenda")
+    out = client.post(f"/tasks/{t['task_id']}/handoff", json={"surface": "desktop"}).json()
+    assert out["mode"] == "desktop" and "Draft the agenda" in out["text"] and "(the desktop app)" in out["text"]
+    assert not jobs and not list((runtime.Runtime(ctx).data_dir / "handoffs").glob("*.json"))
 
 
 def test_the_relay_thread_uses_the_folder_captured_at_load(client, ctx, sessions, monkeypatch):
@@ -199,8 +198,7 @@ def test_the_relay_thread_uses_the_folder_captured_at_load(client, ctx, sessions
     # its profile's folder and only needs the plugin context.
     t = make_task(client, "Renew the lease")
     h = client.post(f"/tasks/{t['task_id']}/handoff", json={}).json()["handoff"]
-    inject = Injector()
-    ctx.inject_message = inject
+    ctx.inject_message = Injector()
     monkeypatch.setattr(ho, "in_gateway_process", lambda: True)
     data_dir = runtime.Runtime(ctx).data_dir
     assert ho.relay_once(ho._RelayRuntime(ctx), data_dir=data_dir) == [h["id"]]
