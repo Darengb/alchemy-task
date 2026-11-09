@@ -59,7 +59,7 @@ export function TaskPanel({ id, narrow, onClose }) {
   const patch = async (changes, local) => {
     if (!(await settle())) return
     try {
-      await store.mutate(id, local || changes, () => api.patch(id, { ...changes, expected_revision: task && task.revision }))
+      await store.mutate(id, local || changes, () => api.patch(id, { ...changes, expected_revision: (store.getState().byId[id] || task || {}).revision }))
     } catch (err) {
       if (err.code === 'stale_revision' || err.code === 'retry') setStale(true)
       toast(describeError(err), { tone: 'error' })
