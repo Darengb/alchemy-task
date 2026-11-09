@@ -63,6 +63,26 @@ def _profile_home():
     return Path(get_hermes_home()).resolve()
 
 
+def host_origin(home, session_id, profile):
+    """Chat of an ACTUAL host session id from the installing profile's public SessionDB."""
+    path = Path(home) / 'state.db'
+    if not session_id or not path.is_file(): return None
+    try:
+        from hermes_state import SessionDB
+        db = SessionDB(db_path=path, read_only=True)
+        try: row = db.get_session(session_id)
+        finally: db.close()
+        if not row or not row.get('chat_id') or not row.get('source') or row['source'] in {'cli', 'cron', 'subagent', 'tool', 'api_server'}:
+            return None
+        try: recorded = json.loads(row.get('origin_json') or '{}')
+        except ValueError: recorded = {}
+        parent = recorded.get('parent_chat_id') if isinstance(recorded, dict) else None
+        return {'profile': profile, 'source': row['source'], 'chat_id': str(row['chat_id']),
+                'thread_id': str(row.get('thread_id') or ''), 'parent_chat_id': str(parent or '')}
+    except (ImportError, OSError, ValueError, RuntimeError, sqlite3.Error):
+        return None
+
+
 class DiscoveryIntegration:
     def __init__(self, rt, *, profile_home=None):
         self.rt = rt
@@ -114,24 +134,22 @@ class DiscoveryIntegration:
 
     def _host_origin(self, session_id):
         """Read the installing profile's public SessionDB by ACTUAL host id."""
-        path = self.home / 'state.db'
-        if not path.is_file(): return None
-        try:
-            from hermes_state import SessionDB
-            db = SessionDB(db_path=path, read_only=True)
-            try: row = db.get_session(session_id)
-            finally: db.close()
-            if not row or not row.get('chat_id') or not row.get('source') or row['source'] in {'cli', 'cron', 'subagent', 'tool', 'api_server'}:
-                return None
-            return {'profile': self.rt.ctx.profile_name, 'source': row['source'],
-                    'chat_id': str(row['chat_id']), 'thread_id': str(row.get('thread_id') or '')}
-        except (ImportError, OSError, ValueError, RuntimeError, sqlite3.Error):
-            return None
+        return host_origin(self.home, session_id, self.rt.ctx.profile_name)
 
     def origin_authorized(self, stream, session_id):
         if session_id == stream.get('origin_session'): return True
         original = self._host_origin(stream.get('origin_session'))
-        return bool(original and original == self._host_origin(session_id))
+        reply = self._host_origin(session_id)
+        if not original or not reply or original['profile'] != reply['profile'] or original['source'] != reply['source']:
+            return False
+        if (original['chat_id'], original['thread_id']) == (reply['chat_id'], reply['thread_id']):
+            return True
+        # Native continuable delivery: for an origin without a thread/topic the host opens a
+        # dedicated thread IN the origin chat and seeds its session (cron scheduler_delivery).
+        # A reply there is the origin chat. Thread-keyed platforms name the origin chat as
+        # parent_chat_id. An origin that already has a thread/topic never gets a new one.
+        return bool(not original['thread_id'] and reply['thread_id']
+                    and original['chat_id'] in {reply['chat_id'], reply.get('parent_chat_id') or reply['chat_id']})
 
     def _stream(self, stream):
         from .discovery import _get
