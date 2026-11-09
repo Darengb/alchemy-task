@@ -1106,6 +1106,17 @@ class DiscoveryStore:
                         retained.append({'run_id': path.name, 'reason': 'unresolved_or_not_expired', 'status': ledger['status']})
                         continue
                     tombstone = {**ledger, 'pruned_at': now()}
+                    # The link audit takes the latest (task, dossier) occurrence; keep the pruned
+                    # run's occurrences so an older surviving run is not compared instead.
+                    links = []
+                    for receipt_path in sorted((path / 'conversions').glob('*.receipt.json')):
+                        receipt = read_json(receipt_path, {})
+                        plan = read_json(receipt_path.with_name(str(receipt.get('unit_id')) + '.plan.json'), {})
+                        if receipt.get('task_id') and plan.get('dossier_id'):
+                            links.append({'run_id': path.name, 'unit_id': receipt['unit_id'], 'task_id': receipt['task_id'],
+                                          'dossier_id': plan['dossier_id'], 'dossier_revision': plan['dossier_revision']})
+                    if links:
+                        tombstone['dossier_links'] = links
                     atomic_json(self.state_root / 'tombstones' / (path.name + '.json'), tombstone)
                     shutil.rmtree(path)
                     dirfd = os.open(self.state_root / 'runs', os.O_RDONLY)

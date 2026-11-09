@@ -453,3 +453,40 @@ def test_link_audit_scans_the_task_workspace_once_for_many_links(settings, data_
     monkeypatch.setattr(TaskStore, 'scan', lambda self: scans.append(1) or original(self))
     assert integration.conversion.audit_links() == {'dry_run': True, 'repairs': []}
     assert len(scans) == 1
+
+
+def test_link_audit_honours_a_later_refresh_whose_run_was_pruned(settings, data_dir, tmp_path):
+    """R2-3: run 1 stays (it still has a pending item); run 2's later refresh of the same
+    task/dossier is settled and pruned. The task still carries run 2's dossier, which is
+    correct, so the audit must not report it against run 1's older revision."""
+    tasks = TaskStore(settings, data_dir)
+    task = tasks.create(title='Launch work', area='work', undated=True, research=False, notes='slack:T1:C1:171.1:171.2')
+    rt, store, run1, wid, conv = _one_unit(settings, data_dir, new_information=['Day one finding.'])
+    conv.prepare(run1, wid, choice='auto', useful_delta=True, reason='Useful delta.', target_task_id=task.task_id,
+                 expected_revision=tf.content_hash(tf.parse_file(task.path).raw))
+    conv.apply(run1, wid)
+    run2 = _next_day_same_unit(store, wid, ['Day two finding.'], 'Changed on day two.')
+    plan2 = conv.prepare(run2, wid, choice='auto', useful_delta=True, reason='New delta.', target_task_id=task.task_id,
+                         expected_revision=conv.match(run2, wid)['targets'][0]['revision'])
+    conv.apply(run2, wid)
+    assert conv.audit_links()['repairs'] == []
+    for run, keep in ((run1, True), (run2, False)):
+        with store._lock(store._run_lock_name(run)):
+            ledger = store.get_run(run)
+            ledger['status'] = 'finalized'
+            for c in ledger['candidates']:
+                c['state'] = 'complete'
+            if keep:
+                ledger['pending_operations'] = ['candidate:still-pending']
+            store._save(run, ledger)
+    assert store.prune(days=0)['deleted_runs'] == [run2]
+    assert store.run_dir(run1).exists() and not store.run_dir(run2).exists()
+    snapshot = task.path.read_bytes()
+    assert conv.audit_links()['repairs'] == []
+    assert task.path.read_bytes() == snapshot
+    # The pruned occurrence is still checked: losing run 2's revision is a real repair.
+    revision_line = f"**Content revision:** `{plan2['dossier_revision']}`".encode()
+    assert revision_line in snapshot
+    task.path.write_bytes(snapshot.replace(revision_line, b'**Content revision:** `sha256:00000000`'))
+    assert [(r['run_id'], r['reason']) for r in conv.audit_links()['repairs']] == [(run2, 'inline dossier mismatch')]
+    assert [r['run_id'] for r in conv.audit_links(run_ids={run2})['repairs']] == [run2]

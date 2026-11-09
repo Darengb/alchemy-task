@@ -310,6 +310,16 @@ class DiscoveryConversion:
                 order = (ledger.get('business_date') or '', ledger.get('created') or '', ledger['run_id'])
                 if key not in latest or order > latest[key][0]:
                     latest[key] = (order, receipt, plan)
+        # A pruned run's tombstone keeps its occurrences, so a later refresh still wins.
+        for tomb_path in sorted((self.store.state_root / 'tombstones').glob('*.json')):
+            tomb = read_json(tomb_path)
+            if not isinstance(tomb, dict) or not tomb.get('dossier_links'): continue
+            if run_ids is not None and tomb.get('run_id') not in run_ids: continue
+            order = (tomb.get('business_date') or '', tomb.get('created') or '', tomb['run_id'])
+            for link in tomb['dossier_links']:
+                key = (link['task_id'], link['dossier_id'])
+                if key not in latest or order > latest[key][0]:
+                    latest[key] = (order, link, link)
         tasks, repairs = self.rt.store(), []
         by_id = {}
         if latest:
