@@ -348,12 +348,12 @@ def extract_body_text(payload: dict) -> str:
     mime = payload.get("mimeType", "")
     body = payload.get("body", {}) or {}
     if mime == "text/plain":
-        return _decode_b64(body.get("data", ""))
+        return _normalize_text(_decode_b64(body.get("data", "")))
     parts = payload.get("parts") or []
     # Prefer text/plain children
     for p in parts:
         if p.get("mimeType") == "text/plain":
-            t = _decode_b64((p.get("body") or {}).get("data", ""))
+            t = _normalize_text(_decode_b64((p.get("body") or {}).get("data", "")))
             if t:
                 return t
     # Recurse multipart/*
