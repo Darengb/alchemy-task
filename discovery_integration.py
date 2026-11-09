@@ -788,7 +788,7 @@ class DiscoveryIntegration:
             decision = read_json(self._decision_path(run_id, candidate['candidate_id']))
             if not decision: raise UserError('post-join semantic decision missing for ' + candidate['candidate_id'])
             if decision['request']['decision'] == 'propose': items.append(decision)
-            elif decision['kind'] == 'conflict': conflicts.append({'unit_id': candidate['candidate_id'], 'reason': 'Multiple exact task destinations conflict', 'targets': decision['targets']})
+            elif decision['kind'] == 'conflict': conflicts.append({'unit_id': candidate['candidate_id'], 'title': decision['title'], 'reason': 'Multiple exact task destinations conflict', 'targets': decision['targets']})
             elif decision['request']['decision'] == 'noop':
                 continue  # true noops are omitted from the digest (source: not reported as updates)
             elif decision['request']['decision'] == 'auto':
@@ -811,7 +811,8 @@ class DiscoveryIntegration:
         stream = self._stream(ledger['config'].get('stream_name', ledger['stream']))
         origin = {**ledger['origin'], 'session_id': ledger['origin'].get('stream_origin_session', ledger['origin']['session_id'])}
         digest = self.digest.prepare(run_id, stream=ledger['config'].get('stream_name', ledger['stream']), day=ledger['business_date'], origin=origin,
-                                     items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + conflicts + supplement_failures], coverage=coverage, outcomes=outcomes, label=stream.get('label', ''), review_namespace=run_id if ledger.get('lineage', {}).get('operation') else '')
+                                     items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + supplement_failures], coverage=coverage, outcomes=outcomes,
+                                     blocked=conflicts, label=stream.get('label', ''), review_namespace=run_id if ledger.get('lineage', {}).get('operation') else '')
         with self.store._lock(self.store._run_lock_name(run_id)):
             pending = self.store.get_run(run_id); pending['pending_operations'] = ['finalization_projection']; self.store._save(run_id, pending)
         self.store.save_review(run_id, {'digest': digest, 'conflicts': conflicts, 'joined': join})
