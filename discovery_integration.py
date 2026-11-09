@@ -823,12 +823,12 @@ class DiscoveryIntegration:
         origins = {d['origin']['session_id'] for d in self.digest._load()['digests'].values() if (not args.get('stream') or d['stream'] == args['stream']) and self.origin_authorized(self._stream(d['stream']), session_id)}
         if len(origins) == 1: session_id = next(iter(origins))
         if today is None:
-            candidates = [d for d in self.digest._load()['digests'].values() if d['origin']['session_id'] == session_id and (not args.get('stream') or d['stream'] == args['stream'])]
+            candidates = [d for d in self.digest._load()['digests'].values() if d['origin']['session_id'] in origins | {session_id} and (not args.get('stream') or d['stream'] == args['stream'])]
             zones = {self.store.get_run(d['run_id'])['config'].get('timezone', self.rt.settings.timezone) for d in candidates}
             if len(zones) > 1 and not args.get('stream'):
                 raise UserError('streams have different frozen local days; specify stream for reply')
             today = self.utcnow().astimezone(ZoneInfo(next(iter(zones), self.rt.settings.timezone))).date().isoformat()
-        return self._decide_resolved(args, resolve=lambda ref: self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=args.get('stream', '')))
+        return self._decide_resolved(args, resolve=lambda ref: self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=args.get('stream', ''), origin_sessions=origins))
 
     def _decide_resolved(self, args, *, resolve):
         """Shared immutable prepare/batch-preflight/apply path after caller resolution."""

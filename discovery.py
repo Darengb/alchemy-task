@@ -145,7 +145,7 @@ def create_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
     with _lock:
         streams = _streams(rt)
         streams[name] = stream
-        _assign_labels(streams)
+        _assign_labels(streams, _origin_chat(rt))
         _save_streams(rt, streams)
     if owner == 'native_origin':
         from .jobs import activate_discovery_job
@@ -156,11 +156,25 @@ def create_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
             "message": f"SETUP_BLOCKED: '{name}' saved for {when} ({tz['timezone']}); no active job. Use discovery_config action=delivery after discovering and approving an actual sender/exact-reader and verifying an existing origin message. See alchemy-task:discovery setup walkthrough."}
 
 
-def _assign_labels(streams: dict[str, dict[str, Any]]) -> None:
+def _origin_chat(rt: Runtime):
+    """Origin session -> host chat key, so streams set up in one chat share it after /new."""
+    try:
+        from . import discovery_integration as di
+        home, profile = di._profile_home(), getattr(rt.ctx, "profile_name", None)
+    except Exception:  # noqa: BLE001  (no host home: fall back to the session id)
+        return None
+    def chat(session_id):
+        origin = di.host_origin(home, session_id, profile)
+        return None if not origin else "|".join((origin["source"], origin["chat_id"], origin["thread_id"]))
+    return chat
+
+
+def _assign_labels(streams: dict[str, dict[str, Any]], chat_of=None) -> None:
     """Plain numbers, unless several streams post into the same chat: then a letter prefix (W1, H2)."""
     by_chat: dict[str, list[str]] = {}
     for name, s in streams.items():
-        by_chat.setdefault(f"{s.get('deliver')}|{s.get('origin_session')}", []).append(name)
+        chat = (chat_of(s.get("origin_session")) if chat_of else None) or s.get("origin_session")
+        by_chat.setdefault(f"{s.get('deliver')}|{chat}", []).append(name)
     for names in by_chat.values():
         used: set[str] = set()
         for name in sorted(names):
@@ -279,7 +293,7 @@ def remove_stream(rt: Runtime, name: str) -> dict[str, Any]:
     with _lock:
         streams = _streams(rt)
         streams.pop(stream["name"], None)
-        _assign_labels(streams)
+        _assign_labels(streams, _origin_chat(rt))
         _save_streams(rt, streams)
     rt.ctx.state.set(f"proposals:{stream['name']}", None)
     return {"removed": stream["name"]}

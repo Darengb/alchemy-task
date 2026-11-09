@@ -118,18 +118,21 @@ class DiscoveryDigest:
         except KeyError as exc:
             raise UserError('no immutable digest for this run') from exc
 
-    def resolve(self, ref, *, session_id, today, day='', stream=''):
+    def resolve(self, ref, *, session_id, today, day='', stream='', origin_sessions=()):
+        # Every authorized origin session of the reply's chat; two streams set up in one chat
+        # from different sessions carry letter prefixes, so a bare shared number stays ambiguous.
+        sessions = {session_id, *origin_sessions}
         date = dt.date.fromisoformat(today)
         if day == 'yesterday': day = (date - dt.timedelta(days=1)).isoformat()
         data = self._load()
         hits = [x['binding'] for x in data['proposals'].values()
-                if x['binding']['origin']['session_id'] == session_id
+                if x['binding']['origin']['session_id'] in sessions
                 and (x['binding']['ref'] == str(ref) or str(x['binding']['number']) == str(ref) or x['binding']['proposal_id'] == ref)
                 and (not stream or x['binding']['stream'] == stream)
                 and (not day or x['binding']['day'] == day)]
         if not day and not str(ref).startswith('p_'):
             days = [x['binding']['day'] for x in data['proposals'].values()
-                    if x['binding']['origin']['session_id'] == session_id and (not stream or x['binding']['stream'] == stream)]
+                    if x['binding']['origin']['session_id'] in sessions and (not stream or x['binding']['stream'] == stream)]
             target_day = today if today in days else max(days, default=today)
             hits = [x for x in hits if x['day'] == target_day]
         if len(hits) != 1:
