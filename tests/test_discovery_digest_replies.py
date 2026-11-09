@@ -85,35 +85,8 @@ APPROVE_1 = {'approve': ['1'], 'edits': {'1': {'area': 'work', 'undated': True}}
 
 # ---------------------------------------------------------------- F6 native delivery thread
 
-def test_reply_in_host_opened_delivery_thread_resolves_the_digest(settings, data_dir, tmp_path):
-    """Native default: the host opens a dedicated thread in the origin chat and seeds its
-    session (chat=origin chat, thread=new thread, user system:cron). '1' typed there must
-    create exactly one task; repeating it creates none."""
-    integration, rt, ctx = service(settings, data_dir, tmp_path)
-    _host_sessions(integration.home, {
-        'parent': dict(chat_id='123', chat_type='dm', user_id='u1'),
-        'cron-thread': dict(chat_id='123', chat_type='dm', thread_id='99', user_id='system:cron')})
-    _one_proposal(integration, data_dir)
-    before = task_files(settings)
-    integration.decide(APPROVE_1, session_id='cron-thread', today='2030-01-01')
-    created = sorted(set(task_files(settings)) - set(before))
-    assert len(created) == 1
-    integration.decide(APPROVE_1, session_id='cron-thread', today='2030-01-01')
-    assert sorted(set(task_files(settings)) - set(before)) == created
-
-
-def test_reply_in_thread_keyed_on_its_own_channel_resolves_through_parent_chat(settings, data_dir, tmp_path):
-    """Thread platforms that key the thread as its own chat carry the origin channel as
-    parent_chat_id in the reply's origin metadata."""
-    integration, rt, ctx = service(settings, data_dir, tmp_path)
-    _host_sessions(integration.home, {
-        'parent': dict(platform='discord', chat_id='555', chat_type='group', user_id='u1'),
-        'cron-thread': dict(platform='discord', chat_id='777', chat_type='thread', thread_id='777',
-                            parent_chat_id='555', user_id='u1')})
-    _one_proposal(integration, data_dir)
-    out = integration.decide({'dismiss': ['1']}, session_id='cron-thread', today='2030-01-01')
-    assert len(out['dismissed']) == 1
-
+# Replies in the host-opened delivery thread (Telegram, forum topics, Discord) are tested with the
+# host's own SessionStore and cron seeder in test_discovery_reply_threads.py.
 
 @pytest.mark.parametrize('origin,reply', [
     # another chat (cross-chat isolation)
