@@ -487,14 +487,16 @@ class DiscoveryRunner:
                             self._terminal(run_id, token, handle)
                     except Exception:
                         cancelling.pop(token, None)
-                eligible = self._eligible(run_id)
+                eligible = [c for c in self._eligible(run_id) if c not in deferred]
                 while self.clock.monotonic() < admit_until and len(active) < self.policy.slots and eligible:
                     cid = eligible.pop(0)
                     try:
                         a = self.store.reserve_attempt(run_id, cid, owner_session=session_id, daily_limit=ledger['config'].get('research_cap', self.policy.daily_limit))
                     except UserError as exc:
                         if 'daily research budget deferred' in str(exc):
-                            deferred.extend([cid, *eligible]); break
+                            # Only a NEW unit is deferred. Queued retries/repairs
+                            # already hold their unit and still run (plan 3.3).
+                            deferred.append(cid); continue
                         raise
                     request = self._bootstrap(run_id, a)
                     active[a['token']] = {'handle': None, 'launch_start': self.clock.monotonic()}
@@ -502,7 +504,7 @@ class DiscoveryRunner:
                     threading.Thread(target=launch_worker, args=(a['token'], request, context), daemon=True, name='discovery-launch-' + a['token'][:8]).start()
                     maximum = max(maximum, len(active))
                 if not active:
-                    if not self._eligible(run_id) or self.clock.monotonic() >= admit_until or deferred:
+                    if not [c for c in self._eligible(run_id) if c not in deferred] or self.clock.monotonic() >= admit_until:
                         break
                 if self.clock.monotonic() >= hard_end:
                     interrupted = True; break
