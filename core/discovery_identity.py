@@ -5,7 +5,7 @@ import hashlib
 import json
 import re
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, unquote
 MAX_SOURCE_COMPONENT_CHARS = 256
 COMPONENT = DOSSIER_COMPONENT = re.compile(r"[A-Za-z0-9._-]+")
 MAX_STRING_CHARS = 4000
@@ -212,6 +212,7 @@ def extract_identities(value: Any, *, slack_workspaces: dict[str, str] | None = 
     elif isinstance(value, list):
         for child in value: found.update(extract_identities(child, slack_workspaces=slack_workspaces))
     elif isinstance(value, str):
+        value = unquote(value)
         for token in re.findall(r"(?<![A-Za-z0-9_.:-])(?:slack|gmail|notion|dossier|source):[A-Za-z0-9_.:-]+(?![A-Za-z0-9_.:-])", value):
             with contextlib.suppress(UserError): found.add(canonical_source_id(token))
         found.update(url_identities(value, slack_workspaces=slack_workspaces))

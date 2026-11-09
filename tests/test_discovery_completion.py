@@ -6,6 +6,285 @@ from test_discovery_integration import service, configure
 from alchemy_task.core.discovery_identity import UserError
 
 
+def test_discovery_phone_completion_uses_existing_sync_actual_adapter_readback(settings, data_dir, tmp_path):
+    from test_discovery_conversion import joined
+    from test_ios_sync import FakePhone, LIST_A
+    from alchemy_task import ios_sync
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    _, store, run, wid, _ = joined(tmp_path, settings, data_dir)
+    settings.git_transport = 'none'
+    phone = FakePhone(); ctx.dispatch_tool = phone.dispatch
+    ios_sync.save(rt, {'config': {'enabled': True, 'device_id': 'PHONE-1', 'list_id': LIST_A, 'areas': ['work']}, 'mappings': {}, 'ops': {}, 'conflicts': {}, 'reads': {}, 'notes': {}})
+    integration.conversion.prepare(run, wid, choice='create', user_approved=True, area='work', undated=True, reason='User approved task and existing mirror scope.')
+    queued = integration.conversion.deliver_git(run, wid)
+    assert queued['phone']['state'] == 'queued' and phone.writes == 0
+    ios_sync.sync(rt)
+    complete = integration.conversion.deliver_git(run, wid)
+    assert complete['state'] == 'complete' and complete['phone']['state'] == 'verified'
+    count = phone.writes
+    integration.conversion.deliver_git(run, wid)
+    ios_sync.sync(rt)
+    assert phone.writes == count
+
+
+def test_sibling_selected_updates_compose_one_whole_postimage(settings, data_dir):
+    from alchemy_task.core import taskfile as tf
+    rt, store, run, units, conversion = two_joined(settings, data_dir)
+    task = rt.store().create(title='Both approved outcomes', area='work', undated=True, research=False, notes='Original correspondence. slack:T1:C1:171.1:171.2 slack:T1:C1:171.1:171.3', plan='Original plan')
+    for unit in units:
+        conversion.prepare(run, unit, choice='update', user_approved=True, target_task_id=task.task_id, expected_revision=tf.content_hash(task.raw), reason='User approved both updates to this exact task.')
+    conversion.preflight([(run, w) for w in units])
+    first = conversion.apply(run, units[0]); second = conversion.apply(run, units[1])
+    assert first['task_id'] == second['task_id'] == task.task_id
+    actual = rt.store().resolve(task.task_id)
+    assert actual.body.count('## Notes\n') == actual.body.count('## Plan\n') == actual.body.count('## Log\n') == 1
+    for unit in units: assert actual.body.count('<!-- discovery-dossier:start dos-' + unit[2:] + ' -->') == 1
+    assert 'Original correspondence.' in actual.body and 'Original plan' in actual.body
+
+
+def test_explicit_manual_task_recovery_rebinds_unwritten_create_not_duplicate(settings, data_dir, tmp_path):
+    from test_discovery_conversion import joined
+    from alchemy_task.core import taskfile as tf
+    from alchemy_task.core.discovery_dossiers import content_revision
+    rt, store, run, wid, conversion = joined(tmp_path, settings, data_dir)
+    prepared = conversion.prepare(run, wid, choice='create', user_approved=True, area='work', undated=True, reason='User approved exact proposal.')
+    manual = rt.store().create(title='User already made correct task', area='work', undated=True, research=False, notes='Preserve manual correspondence.')
+    before = len(rt.store().scan().tasks)
+    conversion.bind_manual(run, wid, target_task_id=manual.task_id, expected_revision=tf.content_hash(manual.raw), expected_plan_revision=content_revision(prepared), reason='User explicitly identified manually created destination.')
+    result = conversion.apply(run, wid)
+    assert result['task_id'] == manual.task_id
+    assert len(rt.store().scan().tasks) == before
+    actual = rt.store().resolve(manual.task_id)
+    assert 'Preserve manual correspondence.' in actual.body
+    assert store.research_for(run, wid)['current_understanding'] in actual.body
+    assert not (rt.store().root / prepared['path']).exists()
+
+
+def test_user_scope_overlay_preserves_sections_metadata_and_active_dossier(settings, data_dir, tmp_path):
+    from test_discovery_conversion import joined
+    from alchemy_task.core import taskfile as tf
+    rt, store, run, wid, conversion = joined(tmp_path, settings, data_dir)
+    task = rt.store().create(title='Existing work', area='work', undated=True, research=False, notes='User correspondence. slack:T1:C1:171.1:171.2\nEarlier decision', plan='- Existing implementation context')
+    conversion.prepare(run, wid, choice='update', user_approved=True, target_task_id=task.task_id, expected_revision=tf.content_hash(task.raw), reason='User limited approval to browser verification only.',
+                       priority='high', scheduled='2030-01-04', execution_method='browser', notes='Verify only; sibling rollout remains deferred.', plan='Check existing deployment, do not deploy.', checklist=['Verify print proof'], active_goal='Verify the existing proof only')
+    conversion.apply(run, wid)
+    actual = rt.store().resolve(task.task_id)
+    assert actual.fm['priority'] == 'high' and str(actual.fm['scheduled']) == '2030-01-04'
+    assert actual.fm['execution_method'] == 'browser'
+    for heading in ('Notes', 'Plan', 'Log'): assert actual.body.count('## ' + heading + '\n') == 1
+    for text in ('User correspondence.', 'Existing implementation context', 'Earlier decision', 'Verify only; sibling rollout remains deferred.', 'Check existing deployment, do not deploy.', 'Verify print proof', 'Verify the existing proof only', 'browser'):
+        assert text in actual.body
+    assert actual.body.index('## Plan') < actual.body.index('<!-- discovery-dossier:start')
+    next_action = actual.body.split('### Next Action\n\n', 1)[1].split('\n\n### ', 1)[0]
+    assert 'Verify the existing proof only' in next_action
+
+
+def test_verified_dead_supervisor_process_lease_can_be_reclaimed_without_refund(data_dir):
+    import multiprocessing, datetime as dt
+    from test_discovery_state import setup
+    store, run, items = setup(data_dir)
+    attempt = store.reserve_attempt(run, items[0]['candidate_id'], owner_session='parent')
+    expiry = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=40)).isoformat()
+    context = multiprocessing.get_context('fork')
+    ready, child_ready = context.Pipe(duplex=False)
+    def hold():
+        store.claim_lease(run, owner='dead-invocation', expires_at=expiry)
+        child_ready.send(True)
+        import time
+        time.sleep(60)
+    process = context.Process(target=hold)
+    process.start()
+    try:
+        assert ready.poll(10) and ready.recv()
+        with pytest.raises(UserError, match='claimed'):
+            store.claim_lease(run, owner='other-invocation', expires_at=expiry)
+        process.terminate(); process.join(10)
+        claimed = store.claim_lease(run, owner='recovered-invocation', expires_at=expiry)
+        assert claimed['owner'] == 'recovered-invocation'
+        ledger = store.get_run(run)
+        assert ledger['lease_recoveries'][-1]['proof']['state'] == 'dead'
+        assert len(ledger['attempts']) == 1 and ledger['attempts'][attempt['token']]['ordinal'] == 1
+    finally:
+        if process.is_alive(): process.terminate()
+        process.join(10)
+
+
+def test_final_review_projection_recovers_and_retains_unknown_delivery(settings, data_dir, tmp_path):
+    from alchemy_task.core.discovery_state import read_json
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    configure(integration)
+    run = integration.start('work', session_id='parent')['run_id']
+    integration.collect(run, 'feed', session_id='parent', envelope={**integration.store.get_run(run)['config']['windows']['feed'], 'account_key': 'account', 'status': 'partial', 'items': []})
+    integration.freeze(run, session_id='parent')
+    integration.store.put_resource(run, 'join-record', {'joined': True, 'accepted': [], 'failures': []})
+    integration.finalize(run, session_id='parent')
+    integration.reconcile_endstate(run)
+    assert 'digest_delivery' in integration.store.get_run(run)['pending_operations']
+    assert integration.store.prune(days=0)['deleted_runs'] == []
+    integration._delivery_record(run, {'state': 'delivered', 'verified_sha256': integration.digest.get(run)['sha256'], 'readback': {'message_id': 'test-id', 'target': 'test-chat'}})
+    integration.reconcile_endstate(run)
+    assert integration.store.get_run(run)['pending_operations'] == []
+
+
+def test_approved_workspace_urls_and_encoded_tokens_are_consumed(settings, data_dir, tmp_path):
+    from test_discovery_conversion import joined
+    rt, store, run, wid, conversion = joined(tmp_path, settings, data_dir)
+    doc = rt.store().create(title='Legacy provenance', area='work', undated=True, research=False, notes='slack%3AT1%3AC1%3A171.1%3A171.2')
+    assert conversion.match(run, wid)['kind'] == 'exact'
+    linked = rt.store().create(title='URL provenance', area='work', undated=True, research=False, notes='https://confirmed.example.test/archives/C1/p171000002?thread_ts=171.1')
+    with store._lock(store._run_lock_name(run)):
+        ledger = store.get_run(run); ledger['config']['sources'] = [{'url_mappings': {'slack_workspaces': {'confirmed.example.test': 'T1'}}}]; store._save(run, ledger)
+    mapped = conversion._exact_values(linked, slack_workspaces={'confirmed.example.test': 'T1'})
+    assert 'slack:T1:C1:171.1:171.000002' in mapped
+    assert not conversion._exact_values(linked)
+
+
+def test_exact_nomination_to_untagged_file_refuses_precisely(settings, data_dir, tmp_path):
+    from test_discovery_conversion import custom_joined
+    relative = 'areas/work/tasks/untagged.md'
+    path = settings.area_dir('work') / 'untagged.md'
+    path.write_text('---\ntitle: Not a task\n---\nUnrelated content.\n')
+    rt, store, run, wid, conversion = custom_joined(settings, data_dir, tmp_path, [{'path': relative, 'match_basis': 'exact'}])
+    with pytest.raises(UserError, match='canonical|tagged|nomination'):
+        conversion.match(run, wid)
+
+
+def test_stream_timezone_controls_frozen_business_date_not_profile(settings, data_dir, tmp_path):
+    import datetime as dt
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    configure(integration)
+    streams = ctx.state.get('streams'); streams['work']['timezone'] = 'America/Los_Angeles'; ctx.state.set('streams', streams)
+    integration.utcnow = lambda: dt.datetime(2030, 1, 2, 2, tzinfo=dt.timezone.utc)
+    started = integration.start('work', session_id='parent')
+    ledger = integration.store.get_run(started['run_id'])
+    assert ledger['business_date'] == '2030-01-01'
+    streams['work']['timezone'] = 'UTC'; ctx.state.set('streams', streams)
+    resumed = integration.start('work', session_id='parent')
+    assert resumed['run_id'] == started['run_id']
+    assert integration.store.get_run(started['run_id'])['config']['timezone'] == 'America/Los_Angeles'
+
+
+@pytest.mark.parametrize('mode', ['shadow', 'research_only', 'unknown', None])
+def test_nonproduction_modes_cannot_prepare_or_apply_tasks(settings, data_dir, tmp_path, mode):
+    from test_discovery_conversion import joined
+    rt, store, run, wid, conversion = joined(tmp_path, settings, data_dir)
+    with store._lock(store._run_lock_name(run)):
+        ledger = store.get_run(run); ledger['config']['mode'] = mode; store._save(run, ledger)
+    before = len(rt.store().scan().tasks)
+    assert conversion.match(run, wid)
+    with pytest.raises(UserError, match='mode|production'):
+        conversion.prepare(run, wid, choice='create', user_approved=True, area='work', undated=True, reason='Must not write shadow tasks.')
+    assert len(rt.store().scan().tasks) == before
+
+
+def test_rich_digest_preserves_researched_state_action_links_and_titled_failures(data_dir):
+    from alchemy_task.discovery_digest import DiscoveryDigest
+    digest = DiscoveryDigest(data_dir / 'discovery')
+    result = digest.prepare('rich-run', stream='work', day='2030-01-01', origin={'session_id': 'parent'}, items=[
+        {'unit_id': 'w_one', 'research_revision': 'v1', 'title': 'Approve proof', 'kind': 'semantic', 'targets': [{'title': 'Existing print work'}],
+         'current_understanding': 'The revised proof is ready.', 'substantive_next_action': 'Approve final trim and send to print.', 'source_links': ['https://example.test/proof'], 'new_information': ['The trim changed.'], 'research_disposition': 'uncertain', 'uncertainty': ['Print date needs confirmation.']}],
+         failures=[{'title': 'Resolve asset access', 'reason': 'Source unavailable'}], coverage=[{'source_key': 'feed', 'status': 'partial'}])
+    text = result['text']
+    for value in ['The revised proof is ready.', 'Approve final trim and send to print.', 'https://example.test/proof', 'Existing print work', 'The trim changed.', 'Print date needs confirmation.', 'Resolve asset access', 'degraded', 'Review:']:
+        assert value in text, text
+    assert 'w_one' not in text
+    assert len(result['items']) == 1
+
+
+def test_same_message_actions_do_not_auto_bind_each_others_task(settings, data_dir, tmp_path):
+    from test_discovery_state import setup, prepare, read_all
+    from test_discovery_schema import bundle
+    from alchemy_task.discovery_conversion import DiscoveryConversion
+    from alchemy_task.core.store import TaskStore
+    store, run, items = setup(data_dir)
+    cid = items[0]['candidate_id']
+    payload = bundle(); payload['candidate_id'] = cid
+    payload['workstreams'].append(copy.deepcopy(payload['workstreams'][0]))
+    for i, unit in enumerate(payload['workstreams'], 1):
+        unit.update(action_key=f'ask{i}', action_anchor={'locator': f'bullet:{i}', 'outcome': f'Outcome {i}'}, action_relation='independent')
+    store.freeze_action_registry(run, cid, [u['action_anchor'] for u in payload['workstreams']])
+    attempt = prepare(store, run, cid)
+    receipt = store.spool_payload(run, attempt['token'], payload)
+    store.observe_terminal(run, attempt['token'], state='SUCCEEDED', receipt={'state': 'SUCCEEDED'})
+    read_all(store, run, receipt['resource'], 'parent')
+    store.accept_attempt(run, attempt['token'], payload_sha256=receipt['payload_sha256'], assessment={'accepted': True, 'reason': 'Two primary verified independent asks.'}, reader='parent')
+    store.put_resource(run, 'join-record', {'joined': True, 'accepted': [cid], 'failures': []})
+    rt = SimpleNamespace(data_dir=data_dir, settings=settings, store=lambda: TaskStore(settings, data_dir))
+    conversion = DiscoveryConversion(rt, store)
+    units = store.accepted_bundle(run, cid)['workstream_ids']
+    conversion.prepare(run, units[0], choice='create', user_approved=True, area='work', undated=True, reason='User approved first ask only.')
+    first = conversion.apply(run, units[0])
+    outcome = conversion.match(run, units[1])
+    assert outcome['kind'] == 'new'
+    assert not outcome['targets']
+    assert conversion.match(run, units[0])['targets'][0]['task_id'] == first['task_id']
+
+
+def test_partial_collection_resumes_same_window_and_actual_cursor(settings, data_dir, tmp_path):
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    configure(integration)
+    run = integration.start('work', session_id='parent')['run_id']
+    calls = []
+    def read(tool, args):
+        calls.append(copy.deepcopy(args))
+        cursor = args['cursor']
+        return {'account_key': 'account', 'scope': args['scope'], 'start': args['start'], 'end': args['end'],
+                'items': [{'title': 'Issue ' + str(cursor), 'source_ids': ['source:feed:account:issue:' + ('one' if cursor is None else 'two')], 'source_revision': 'v1'}],
+                'next_cursor': 'page-two' if cursor is None else None, 'pagination_exhausted': cursor is not None}
+    ctx.dispatch_tool = read
+    partial = integration.collect(run, 'feed', session_id='parent', max_pages=1)
+    assert partial['status'] == 'partial'
+    assert not integration.store.source_state('work', 'feed').get('watermark')
+    complete = integration.collect(run, 'feed', session_id='parent')
+    assert complete['status'] == 'complete'
+    assert [c['cursor'] for c in calls] == [None, 'page-two']
+    assert calls[0]['start'] == calls[1]['start'] and calls[0]['end'] == calls[1]['end']
+    assert len(integration.store.source_state('work', 'feed')['backlog']) == 2
+    assert len(complete['pages']) == 2
+
+
+def two_joined(settings, data_dir):
+    from test_discovery_state import setup, prepare, read_all
+    from test_discovery_schema import bundle
+    from alchemy_task.discovery_conversion import DiscoveryConversion
+    from alchemy_task.core.store import TaskStore
+    store, run, items = setup(data_dir, count=2)
+    units = []
+    for i, item in enumerate(items):
+        attempt = prepare(store, run, item['candidate_id'])
+        payload = bundle(); payload['candidate_id'] = item['candidate_id']
+        payload['workstreams'][0]['exact_source_ids'][0]['message_ts'] = f'171.{i+2}'
+        payload['workstreams'][0]['title'] = f'Action {i}'
+        receipt = store.spool_payload(run, attempt['token'], payload)
+        store.observe_terminal(run, attempt['token'], state='SUCCEEDED', receipt={'state': 'SUCCEEDED'})
+        read_all(store, run, receipt['resource'], 'parent')
+        store.accept_attempt(run, attempt['token'], payload_sha256=receipt['payload_sha256'], assessment={'accepted': True, 'reason': 'Full distinct source and task verification.'}, reader='parent')
+        units += store.accepted_bundle(run, item['candidate_id'])['workstream_ids']
+    store.put_resource(run, 'join-record', {'joined': True, 'accepted': [c['candidate_id'] for c in items], 'failures': []})
+    rt = SimpleNamespace(data_dir=data_dir, settings=settings, store=lambda: TaskStore(settings, data_dir))
+    return rt, store, run, units, DiscoveryConversion(rt, store)
+
+
+def test_explicit_merge_preserves_every_dossier_one_task_and_resumes(settings, data_dir, tmp_path):
+    from alchemy_task.core.discovery_state import read_json
+    rt, store, run, units, conversion = two_joined(settings, data_dir)
+    before = len(rt.store().scan().tasks)
+    for unit in units:
+        conversion.prepare(run, unit, choice='create', user_approved=True, area='work', undated=True, reason='User selected same combined task.')
+    merge = conversion.merge_prepared([(run, w) for w in units], reason='User explicitly merged these two proposals.')
+    assert merge['state'] == 'prepared'
+    conversion.preflight([(run, w) for w in units])
+    first = conversion.apply(run, units[0])
+    second = conversion.apply(run, units[1])
+    assert first['task_id'] == second['task_id']
+    assert len(rt.store().scan().tasks) == before + 1
+    doc = rt.store().resolve(first['task_id'])
+    for unit in units:
+        assert doc.body.count('<!-- discovery-dossier:start dos-' + unit[2:] + ' -->') == 1
+        assert store.research_for(run, unit)['current_understanding'] in doc.body
+    assert conversion.apply(run, units[0]) == first
+
+
 def test_enabled_phone_is_queued_and_only_actual_target_readback_completes(settings, data_dir, tmp_path):
     from test_discovery_conversion import joined
     from alchemy_task import ios_sync

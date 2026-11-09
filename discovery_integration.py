@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from .runtime import Runtime
 from .core.discovery_state import DiscoveryStore, atomic_json, read_json
@@ -34,6 +35,7 @@ def _profile_home():
 class DiscoveryIntegration:
     def __init__(self, rt, *, profile_home=None):
         self.rt = rt
+        self.utcnow = lambda: dt.datetime.now(dt.timezone.utc)
         self.home = Path(profile_home).resolve() if profile_home else _profile_home()
         self.store = DiscoveryStore(rt.data_dir / 'discovery')
         self.digest = DiscoveryDigest(rt.data_dir / 'discovery')
@@ -134,16 +136,24 @@ class DiscoveryIntegration:
     def _all_runs(self):
         return [self.store.get_run(p.parent.name) for p in sorted((self.store.state_root / 'runs').glob('*/ledger.json'))]
 
-    def start(self, stream, *, session_id):
+    def start(self, stream, *, session_id, mode=None):
         current = self._stream(stream)
+        mode = mode or current.get('mode')
+        if mode not in {'production', 'shadow', 'research_only'}:
+            raise UserError('choose explicit production, shadow or research_only mode before run')
         storage_stream = current['name'] if ' ' not in current['name'] else 'stream-' + content_revision(current['name']).split(':')[-1][:24]
+        if mode != 'production': storage_stream += '-' + mode
         if not session_id: raise UserError('actual parent session required')
         if session_id != current['origin_session'] and not self._scheduled_identity(current):
             raise UserError('only origin chat or verified bound scheduled occurrence can start/resume stream')
+        self._retain_legacy(current['name'])
+        for old in self._all_runs():
+            if old['config'].get('stream_name', old['stream']) == current['name'] and old.get('review'):
+                self.reconcile_endstate(old['run_id'])
         with self.store._lock('start:' + current['name']):
             # A finalized digest is distinct from unresolved conversion/delivery.
             # Resume unfinished scan/research on its ORIGINAL window and config.
-            pending = [r for r in self._all_runs() if r['config'].get('stream_name', r['stream']) == current['name'] and not r.get('review')]
+            pending = [r for r in self._all_runs() if r['config'].get('stream_name', r['stream']) == current['name'] and r['config'].get('mode') == mode and not r.get('review')]
             if pending:
                 run = pending[0]
                 try:
@@ -154,21 +164,23 @@ class DiscoveryIntegration:
                         'sources': run['config']['sources'], 'windows': run['config']['windows'],
                         'index_revision': run.get('index_revision'), 'recovery_required': True}
             configs = (self.rt.ctx.state.get('discovery_sources', default={}) or {}).get(current['name'], {})
+
             if len(configs) != len(current['sources']):
                 raise UserError('configure approved source/account/read-method bindings and relevance before starting')
             approved = [(s['name'], s['scope']) for s in current['sources']]
             configured = [(s.get('name'), s.get('scope')) for s in configs.values()]
             if any(configured.count(pair) != 1 for pair in approved) or any(pair not in approved for pair in configured):
                 raise UserError('source configuration membership/scope no longer matches approved stream; reconfigure before NEW scan')
-            now = dt.datetime.now(dt.timezone.utc)
+            now = self.utcnow()
             windows = {}
             for key, config in configs.items():
                 validate_source_config(config)
                 watermark = self.store.source_state(storage_stream, key).get('watermark')
                 windows[key] = {'start': watermark or (now - dt.timedelta(days=1)).isoformat(), 'end': now.isoformat()}
-            config = {'stream_name': current['name'], 'sources': list(configs.values()), 'windows': windows, 'areas': current['areas'],
+            config = {'stream_name': current['name'], 'mode': mode, 'sources': list(configs.values()), 'windows': windows, 'areas': current['areas'],
                       'research_cap': current['research_cap'], 'timezone': current.get('timezone', self.rt.settings.timezone)}
-            run = self.store.init_run(stream=storage_stream, business_date=self.rt.settings.today(), config=config,
+            business_date = now.astimezone(ZoneInfo(config['timezone'])).date().isoformat()
+            run = self.store.init_run(stream=storage_stream, business_date=business_date, config=config,
                                       origin={'session_id': session_id, 'deliver': current.get('deliver', 'origin'),
                                               'stream_origin_session': current['origin_session'],
                                               'job_binding': copy.deepcopy(current.get('job_binding')),
@@ -239,20 +251,30 @@ class DiscoveryIntegration:
         ledger, config = self._source(run_id, source_key, session_id)
         if ledger.get('index_revision'): raise UserError('source inventory already frozen')
         resource = 'collection-' + source_key
-        if resource in ledger['resources']:
-            info = ledger['resources'][resource]
-            return json.loads((self.store.run_dir(run_id) / 'resources' / info['sha256']).read_text())
+        prior = self._collection_receipts(ledger).get(source_key)
+        if prior and prior['status'] == 'complete': return prior
         window = ledger['config']['windows'][source_key]
         if envelope is None:
-            receipt = SourceAdapter(self.store, config, read_page=self._read_page).collect(ledger['stream'], **window, max_pages=max_pages)
+            receipt = SourceAdapter(self.store, config, read_page=self._read_page).collect(ledger['stream'], **window, max_pages=max_pages, previous_receipt=prior)
         else:
             if any(envelope.get(k) != v for k, v in window.items()):
                 raise UserError('attestation must use SAME saved source window')
             receipt = collect_attested(self.store, ledger['stream'], config, envelope)
             receipt['status'] = 'partial'  # agent assertion never exhaustive
         receipt['source_key'] = source_key
+        receipt['pass'] = (prior or {}).get('pass', 0) + 1
+        if prior: resource += '-pass-' + str(receipt['pass'])
         self.store.put_resource(run_id, resource, receipt)
         return receipt
+
+    def _collection_receipts(self, ledger):
+        current = {}
+        for name, info in ledger['resources'].items():
+            if name.startswith('collection-'):
+                receipt = json.loads((self.store.run_dir(ledger['run_id']) / 'resources' / info['sha256']).read_text())
+                key = receipt['source_key']
+                if key not in current or receipt.get('pass', 1) > current[key].get('pass', 1): current[key] = receipt
+        return current
 
     def freeze(self, run_id, *, session_id, context=None):
         ledger = self.runner._parent(run_id, session_id)
@@ -396,6 +418,47 @@ class DiscoveryIntegration:
         except Exception as exc:
             return self._delivery_record(run_id, {'state': 'unknown', 'reason': str(exc)[:500]})
 
+    def reconcile_endstate(self, run_id):
+        """Replay downstream projections from durable facts, never receipt claims."""
+        ledger = self.store.get_run(run_id)
+        if not ledger.get('review'): return {'state': 'open'}
+        self._settle_backlog(run_id, ledger['review']['joined'])
+        data = self.digest._load()
+        delivery = data['delivery'].get(run_id, {})
+        pending = [] if delivery.get('state') == 'delivered' and delivery.get('verified_sha256') == data['digests'][run_id]['sha256'] and delivery.get('readback') else ['digest_delivery']
+        decisions = {}
+        for candidate in ledger['candidates']:
+            if not candidate.get('parent_candidate_id'): continue
+            wid = candidate['candidate_id']
+            record = read_json(self._decision_path(run_id, wid), {})
+            action = record.get('request', {}).get('decision')
+            complete = action == 'noop' or candidate.get('research_disposition', '').startswith('exclude_')
+            if action == 'auto':
+                receipt = read_json(self.conversion._paths(run_id, wid)[1], {})
+                complete = receipt.get('state') == 'complete'
+            elif action == 'propose':
+                proposal = next((p for p in data['proposals'].values() if p['binding']['run_id'] == run_id and p['binding']['unit_id'] == wid), None)
+                complete = bool(proposal and proposal['state'] in {'complete', 'dismissed'})
+            if not complete: pending.append('candidate:' + wid)
+            decisions[wid] = 'complete' if complete else 'proposed'
+        with self.store._lock(self.store._run_lock_name(run_id)):
+            current = self.store.get_run(run_id)
+            for candidate in current['candidates']:
+                if candidate['candidate_id'] in decisions: candidate['state'] = decisions[candidate['candidate_id']]
+            current['pending_operations'] = pending
+            self.store._save(run_id, current)
+        return {'state': 'pending' if pending else 'resolved', 'pending_operations': pending}
+
+    def _retain_legacy(self, stream):
+        legacy = self.rt.ctx.state.get('proposals:' + stream, default={}) or {}
+        if not legacy.get('items'): return []
+        key = 'discovery_legacy:' + stream
+        old = self.rt.ctx.state.get(key, default={}) or {}
+        for identity, value in legacy['items'].items():
+            old.setdefault(identity, {'status': 'legacy_unresearched', 'original': copy.deepcopy(value)})
+        self.rt.ctx.state.set(key, old)
+        return list(old.values())
+
     def _decision_path(self, run_id, unit_id):
         self.store.get_candidate(run_id, unit_id)
         return self.store.run_dir(run_id) / 'decisions' / (unit_id + '.json')
@@ -427,6 +490,9 @@ class DiscoveryIntegration:
                 if decision == 'auto': self.conversion.deliver_git(run_id, unit_id)
             record = {'run_id': run_id, 'unit_id': unit_id, 'request': request, 'kind': outcome['kind'],
                       'targets': outcome['targets'], 'title': outcome['research']['title'],
+                      **{k: outcome['research'].get(k) for k in ('current_understanding', 'substantive_next_action', 'source_links', 'related_context_links', 'new_information', 'sources_unavailable')},
+                      'research_disposition': outcome['research']['disposition'],
+                      'uncertainty': outcome['research']['decisions_and_open_questions']['open_questions'],
                       'research_revision': content_revision(outcome['research'])}
             atomic_json(path, record)
             return record
@@ -434,7 +500,7 @@ class DiscoveryIntegration:
     def finalize(self, run_id, *, session_id):
         ledger = self.runner._parent(run_id, session_id)
         if ledger.get('review'):
-            self._settle_backlog(run_id, ledger['review']['joined'])
+            self.reconcile_endstate(run_id)
             return self.digest.get(run_id)
         info = ledger['resources'].get('join-record')
         if not info: raise UserError('global join required before review decisions/digest')
@@ -455,20 +521,24 @@ class DiscoveryIntegration:
                                  'status': receipt.get('state', 'noop' if decision['request']['decision'] == 'noop' else 'unknown'),
                                  'git': receipt.get('git'), 'phone': receipt.get('phone'),
                                  'resume_action': {'tool': 'discovery_conversion_recover', 'run_id': run_id, 'unit_id': candidate['candidate_id']} if receipt.get('state') != 'complete' and decision['request']['decision'] == 'auto' else None})
-        coverage = []
-        for name, info in ledger['resources'].items():
-            if name.startswith('collection-'):
-                coverage.append(json.loads((self.store.run_dir(run_id) / 'resources' / info['sha256']).read_text()))
+        coverage = list(self._collection_receipts(ledger).values())
         stream = self._stream(ledger['config'].get('stream_name', ledger['stream']))
         origin = {**ledger['origin'], 'session_id': ledger['origin'].get('stream_origin_session', ledger['origin']['session_id'])}
         digest = self.digest.prepare(run_id, stream=ledger['config'].get('stream_name', ledger['stream']), day=ledger['business_date'], origin=origin,
-                                     items=items, failures=join['failures'] + conflicts, coverage=coverage, outcomes=outcomes, label=stream.get('label', ''))
+                                     items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + conflicts], coverage=coverage, outcomes=outcomes, label=stream.get('label', ''))
+        with self.store._lock(self.store._run_lock_name(run_id)):
+            pending = self.store.get_run(run_id); pending['pending_operations'] = ['finalization_projection']; self.store._save(run_id, pending)
         self.store.save_review(run_id, {'digest': digest, 'conflicts': conflicts, 'joined': join})
-        self._settle_backlog(run_id, join)
+        self.reconcile_endstate(run_id)
         return digest
 
     def decide(self, args, *, session_id, today=None):
-        today = today or self.rt.settings.today()
+        if today is None:
+            candidates = [d for d in self.digest._load()['digests'].values() if d['origin']['session_id'] == session_id and (not args.get('stream') or d['stream'] == args['stream'])]
+            zones = {self.store.get_run(d['run_id'])['config'].get('timezone', self.rt.settings.timezone) for d in candidates}
+            if len(zones) > 1 and not args.get('stream'):
+                raise UserError('streams have different frozen local days; specify stream for reply')
+            today = self.utcnow().astimezone(ZoneInfo(next(iter(zones), self.rt.settings.timezone))).date().isoformat()
         results, dismissed, prepared = [], [], []
         for ref in args.get('dismiss') or []:
             proposal = self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=args.get('stream', ''))
@@ -497,12 +567,21 @@ class DiscoveryIntegration:
                     raise UserError('semantic proposal requires explicit update or create choice')
                 if kind == 'selection' and choice == 'update' and not edit.get('target_task_id'):
                     raise UserError('select one of ALL nominated target_task_id options')
-                allowed = {'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated', 'scope_notes'}
+                allowed = {'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated', 'scope_notes', 'priority', 'scheduled', 'execution_method', 'notes', 'plan', 'checklist', 'active_goal'}
                 if set(edit) - allowed: raise UserError('unsupported approval edits: ' + ', '.join(sorted(set(edit) - allowed)))
                 self.conversion.prepare(run_id, unit_id, choice=choice, reason='User approved exact immutable proposal ' + proposal['proposal_id'],
                                         user_approved=True, **edit)
             prepared.append((proposal, run_id, unit_id, False))
         # Validate/prepare the complete selected batch before the FIRST task write.
+        for group in args.get('merge') or []:
+            if not isinstance(group, list) or len(group) < 2: raise UserError('merge requires groups of at least two approved references')
+            selected = []
+            for ref in group:
+                proposal = self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=args.get('stream', ''))
+                hits = [(r, w) for p, r, w, complete in prepared if p['proposal_id'] == proposal['proposal_id'] and not complete]
+                if len(hits) != 1: raise UserError('every merge member must be explicitly approved in this batch')
+                selected += hits
+            self.conversion.merge_prepared(selected, reason='User explicitly merged approved proposals: ' + ', '.join(map(str, group)))
         self.conversion.preflight([(r, w) for _, r, w, _ in prepared])
         for proposal, run_id, unit_id, completed in prepared:
             if not completed: self.digest.decide(proposal['proposal_id'], 'approved')
@@ -517,12 +596,14 @@ class DiscoveryIntegration:
             run = ledger['run_id']
             if session_id not in {ledger['origin'].get('session_id'), ledger['origin'].get('stream_origin_session')}:
                 self.runner._parent(run, session_id)
+            if ledger.get('review'):
+                self.reconcile_endstate(run)
+                ledger = self.store.get_run(run)
             attempts = [{k: v for k, v in a.items() if k not in {'token', 'handle'}} for a in ledger['attempts'].values()]
             decisions = [read_json(p) for p in sorted((self.store.run_dir(run) / 'decisions').glob('*.json'))]
             conversions = [read_json(p) for p in sorted((self.store.run_dir(run) / 'conversions').glob('*.receipt.json'))]
             digest = self.digest._load()['digests'].get(run)
-            coverage = [json.loads((self.store.run_dir(run) / 'resources' / info['sha256']).read_text())
-                        for name, info in ledger['resources'].items() if name.startswith('collection-')]
+            coverage = list(self._collection_receipts(ledger).values())
             join = (ledger.get('review') or {}).get('joined') or {}
             return {'run_id': run, 'time': ledger['created'], 'day': ledger['business_date'], 'stream': ledger['config'].get('stream_name', ledger['stream']),
                     'status': ledger['status'], 'sources_checked': ledger['config'].get('sources', []),
@@ -562,7 +643,7 @@ SCHEMAS = {
  'discovery_match': _schema('discovery_match', 'Post-join typed exact matching and all semantic target options; returns full body resources, no mutation.', {**RUN, 'unit_id': STR}, ['run_id', 'unit_id']),
  'discovery_digest': _schema('discovery_digest', 'Prepare/read immutable review digest after all match decisions. Preparation is not delivery proof.', {**RUN, 'action': {'type': 'string', 'enum': ['prepare', 'get', 'delivery', 'send']}}, ['run_id']),
  'discovery_decision': _schema('discovery_decision', 'Parent post-join disposition. Unique exact requires useful delta auto or byte-preserving noop; semantic/new remains proposal; multiple exact conflict.', {**RUN, 'unit_id': STR, 'decision': {'type': 'string', 'enum': ['propose', 'auto', 'noop', 'conflict']}, 'reason': STR, 'target_task_id': STR, 'expected_revision': STR, 'useful_delta': BOOL}, ['run_id', 'unit_id', 'decision', 'reason']),
- 'discovery_conversion_recover': _schema('discovery_conversion_recover', 'Inspect/resume exact conversion, or explicitly revise/cancel an unwritten plan with CAS and origin approval.', {**RUN, 'unit_id': STR, 'action': {'type': 'string', 'enum': ['resume', 'inspect', 'revise', 'cancel']}, 'expected_plan_revision': STR, 'edits': OBJ, 'reason': STR, 'user_approved': BOOL}, ['run_id', 'unit_id']),
+ 'discovery_conversion_recover': _schema('discovery_conversion_recover', 'Inspect/resume exact conversion, or explicitly revise/cancel/bind_manual an unwritten plan with CAS and origin approval.', {**RUN, 'unit_id': STR, 'action': {'type': 'string', 'enum': ['resume', 'inspect', 'revise', 'cancel', 'bind_manual']}, 'expected_plan_revision': STR, 'target_task_id': STR, 'expected_revision': STR, 'edits': OBJ, 'reason': STR, 'user_approved': BOOL}, ['run_id', 'unit_id']),
  'discovery_runs': _schema('discovery_runs', 'Backend API: list full run records or get exact run including research, proposals, conflicts, recovery and delivery.', {'run_id': STR}),
 }
 
@@ -615,7 +696,9 @@ def register(ctx, *, integration=None):
         if action == 'prepare': return service.finalize(a['run_id'], session_id=session_id)
         if action == 'get': return service.digest.get(a['run_id'])
         if action == 'delivery': return service.digest.delivery(a['run_id'])
-        if action == 'send': return service.deliver(a['run_id'], session_id=session_id)
+        if action == 'send':
+            if ledger['config'].get('mode') != 'production': raise UserError('non-production run cannot send digest')
+            return service.deliver(a['run_id'], session_id=session_id)
         raise UserError('unknown digest action')
     def conversion_recover(a, session_id='', **_):
         service.backend(a['run_id'], session_id=session_id)  # exact origin authorization
@@ -631,6 +714,7 @@ def register(ctx, *, integration=None):
             params = {k: a[k] for k in ('expected_plan_revision', 'reason')}
             if action == 'revise': return service.conversion.revise(a['run_id'], a['unit_id'], edits=a.get('edits', {}), **params)
             if action == 'cancel': return service.conversion.cancel(a['run_id'], a['unit_id'], **params)
+            if action == 'bind_manual': return service.conversion.bind_manual(a['run_id'], a['unit_id'], target_task_id=a['target_task_id'], expected_revision=a['expected_revision'], **params)
             raise UserError('unknown plan action')
         return service.conversion.deliver_git(a['run_id'], a['unit_id'])
     handlers.update({

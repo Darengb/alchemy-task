@@ -11,7 +11,7 @@ def service(settings, data_dir, tmp_path):
     from alchemy_task.discovery_integration import DiscoveryIntegration
     ctx = SetupCtx({'workspace_root': settings.workspace_root, 'timezone': settings.timezone}, data_dir)
     rt = runtime.Runtime(ctx, settings, data_dir)
-    ctx.state.set('streams', {'work': {'name': 'work', 'areas': ['work'], 'research_cap': 50, 'sources': [{'name': 'Feed', 'scope': ['board'], 'method': 'reader'}], 'deliver': 'origin', 'origin_session': 'parent', 'label': ''}})
+    ctx.state.set('streams', {'work': {'name': 'work', 'mode': 'production', 'areas': ['work'], 'research_cap': 50, 'sources': [{'name': 'Feed', 'scope': ['board'], 'method': 'reader'}], 'deliver': 'origin', 'origin_session': 'parent', 'label': ''}})
     return DiscoveryIntegration(rt, profile_home=tmp_path / 'profile'), rt, ctx
 
 

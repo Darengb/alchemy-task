@@ -234,7 +234,7 @@ class SourceAdapter:
         validate_source_config(config)
         self.store, self.config, self.read_page = store, copy.deepcopy(config), read_page
 
-    def collect(self, stream, *, start: str, end: str, max_pages: int | None = None):
+    def collect(self, stream, *, start: str, end: str, max_pages: int | None = None, previous_receipt=None):
         if _date(start) >= _date(end):
             raise UserError('source window must increase')
         if max_pages is not None and (type(max_pages) is not int or max_pages < 1):
@@ -244,8 +244,13 @@ class SourceAdapter:
             raise UserError('stale source window cannot regress committed coverage')
         if previous and _date(start) > _date(previous):
             raise UserError('source window has a coverage gap')
-        cursor = None
-        seen, ids, receipts = set(), [], []
+        prior = previous_receipt or {}
+        if prior and any(prior.get(k) != v for k, v in {'start': start, 'end': end, 'account_key': self.config['account_key'], 'scope': self.config['scope']}.items()):
+            raise UserError('continuation receipt differs from frozen source/window')
+        cursor = prior.get('continuation')
+        receipts = copy.deepcopy(prior.get('pages', []))
+        pass_start = len(receipts)
+        seen, ids = {p['cursor'] for p in receipts if p.get('cursor') is not None}, list(prior.get('backlog_ids', []))
         status, error, exhausted = 'partial', '', False
         while True:
             try:
@@ -281,7 +286,7 @@ class SourceAdapter:
                     break
                 seen.add(next_cursor)
                 cursor = next_cursor
-                if max_pages is not None and len(receipts) >= max_pages:
+                if max_pages is not None and len(receipts) - pass_start >= max_pages:
                     error = 'bounded read pass; continuation retained'
                     break
             except Exception as exc:

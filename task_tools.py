@@ -440,7 +440,7 @@ DISCOVERY_START_SCHEMA = {
     "name": "discovery_start",
     "description": "Discovery runs only: get a stream's approved sources, time window, research budget, already "
                    "proposed source IDs and open tasks, before reading the sources.",
-    "parameters": {"type": "object", "properties": {"stream": {"type": "string"}}, "required": ["stream"]},
+    "parameters": {"type": "object", "properties": {"stream": {"type": "string"}, "mode": {"type": "string", "enum": ["production", "shadow", "research_only"]}}, "required": ["stream"]},
 }
 
 DISCOVERY_SUBMIT_SCHEMA = {
@@ -460,6 +460,7 @@ DISCOVERY_DECIDE_SCHEMA = {
         "day": {"type": "string", "description": "Which day's numbering: omit for today's (or the latest digest), "
                                                  "'yesterday', or YYYY-MM-DD."},
         "approve": {"type": "array", "items": {"type": "string"}},
+        "merge": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}, "description": "Explicit user-selected groups to merge into one task. Every member must also be approved with its choice/edits. All dossiers are retained; first member supplies combined task metadata."},
         "dismiss": {"type": "array", "items": {"type": "string"}},
         "edits": {"type": "object", "description": "{\"1\": {\"due\": \"2026-11-20\", \"area\": \"work\", "
                                                    "\"title\": \"...\", \"undated\": false}}"}},
@@ -503,7 +504,7 @@ def discovery_stream(args: dict[str, Any], session_id: str) -> str:
 @_discovery
 def discovery_start(args: dict[str, Any], session_id: str) -> str:
     from . import discovery as dv
-    return _ok(**dv.start(Runtime(), args.get("stream", ""), session_id=session_id))
+    return _ok(**dv.start(Runtime(), args.get("stream", ""), session_id=session_id, mode=args.get('mode')))
 
 
 @_discovery

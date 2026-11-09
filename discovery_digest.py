@@ -50,9 +50,21 @@ class DiscoveryDigest:
                 data['seen'][identity] = pid
             failures, coverage = failures or [], coverage or []
             lines = [f'Discovery: {stream} ({day})']
+            degraded = bool(failures or any(s.get('status') != 'complete' for s in coverage))
+            lines.append(f"{dt.date.fromisoformat(day).strftime('%A')}: {len(numbered)} new proposals; {len(outcomes or [])} existing-task outcomes; {len(failures)} failures" + ('; degraded' if degraded else ''))
+            lines.append('Review: ' + hashlib.sha256(run.encode()).hexdigest()[:12])
             for item in numbered:
                 qualifier = ' [update or create]' if item['kind'] in {'semantic', 'selection'} else ''
                 lines.append(f"**{item['ref']}.** {item['title']}{qualifier}")
+                if item.get('current_understanding'): lines.append('Current state: ' + item['current_understanding'])
+                if item.get('substantive_next_action'): lines.append('Next action: ' + item['substantive_next_action'])
+                if item['kind'] in {'semantic', 'selection'}:
+                    lines.append('Potential overlap: ' + '; '.join(t.get('title', 'Existing task') for t in item.get('targets', [])))
+                if item.get('new_information'): lines.append('Addition: ' + '; '.join(item['new_information']))
+                if item.get('research_disposition') == 'uncertain': lines.append('Uncertain: ' + '; '.join(item.get('uncertainty') or ['See verified open questions; user judgment required']))
+                if item.get('source_links'): lines.append('Sources: ' + ' '.join(item['source_links']))
+                if item.get('sources_unavailable'): lines.append('Unavailable context: ' + '; '.join(item['sources_unavailable']))
+                lines.append('---')
             if not numbered:
                 lines.append('No new proposals.')
             for outcome in outcomes or []:
@@ -63,7 +75,7 @@ class DiscoveryDigest:
                 if outcome.get('resume_action'): line += '; resume with discovery_conversion_recover for this saved run/unit'
                 lines.append(line)
             for failure in failures:
-                lines.append('Attention: ' + str(failure.get('reason') or failure))
+                lines.append('Attention: ' + (str(failure['title']) + ': ' if failure.get('title') else '') + str(failure.get('reason') or failure))
             for source in coverage:
                 lines.append('Coverage: ' + str(source.get('source_key', source.get('source', 'source'))) + ': ' + str(source.get('status', 'unknown')) + (': ' + str(source['error']) if source.get('error') else ''))
             lines.append('Reply with the numbers you want. Other items remain replyable for seven days.')

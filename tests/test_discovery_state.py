@@ -10,7 +10,7 @@ from test_discovery_schema import bundle
 
 def setup(tmp_path, count=1):
     store=m.DiscoveryStore(tmp_path/'discovery')
-    run=store.init_run(stream='work',business_date='2030-01-01',config={'sources':['work']})
+    run=store.init_run(stream='work',business_date='2030-01-01',config={'sources':['work'], 'mode': 'production'})
     items=store.add_candidates(run,[{'title':f'Ask {i}','source_ids':[{'type':'slack','workspace_id':'T1','channel_id':'C1','thread_root_ts':'171.1','message_ts':f'171.{i+2}'}]} for i in range(count)])
     store.freeze_index(run,rubric='Read complete sources.')
     return store,run,items
@@ -123,7 +123,7 @@ def test_ledger_no_truncation_cohorts_immutable_revisions_and_modes(tmp_path):
     assert stat.S_IMODE(store.run_dir(run).stat().st_mode)==0o700
     with pytest.raises(m.UserError):store.add_candidates(run,[{'source_ids':['gmail:a:t']}])
     with pytest.raises(m.UserError):store.fetch_resource(run,'manifest',revision='wrong',reader='parent')
-    assert m.DiscoveryStore(store.state_root).get_run(run)['config']=={'sources':['work']}
+    assert m.DiscoveryStore(store.state_root).get_run(run)['config']=={'sources':['work'], 'mode': 'production'}
 
 
 def test_attempt_fences_and_two_fresh_maximum(tmp_path):

@@ -5,6 +5,7 @@ Semantic equivalence and useful delta remain parent judgments, never title score
 """
 from __future__ import annotations
 import json
+import copy
 import re
 from pathlib import Path
 from .core.discovery_state import atomic_json, read_json
@@ -17,6 +18,10 @@ from .core.discovery_identity import UserError, canonical_source_id, extract_ide
 class DiscoveryConversion:
     def __init__(self, rt, store):
         self.rt, self.store = rt, store
+
+    def _production(self, run):
+        if self.store.get_run(run)['config'].get('mode') != 'production':
+            raise UserError('task/Git conversion requires explicit production mode; shadow/research_only/missing modes cannot mutate tasks')
 
     def joined(self, run, wid):
         ledger = self.store.get_run(run)
@@ -32,7 +37,7 @@ class DiscoveryConversion:
             raise UserError('excluded research cannot produce tasks')
         return c, research
 
-    def _exact_values(self, doc):
+    def _exact_values(self, doc, *, slack_workspaces=None):
         # Related-only identities in a managed dossier never grant write authority.
         body = doc.body
         self._validate_dossiers(body)
@@ -41,11 +46,11 @@ class DiscoveryConversion:
             values.add('dossier:' + match[1])
             decisive = re.search(r'### Decisive Source Identities\n(.*?)(?=\n### |$)', match[2], re.S)
             if decisive:
-                values.update(extract_identities(decisive[1]))
+                values.update(extract_identities(decisive[1], slack_workspaces=slack_workspaces))
         body = re.sub(r'<!-- discovery-dossier:start .*?<!-- discovery-dossier:end .*?-->', '', body, flags=re.S)
         metadata = {k: v for k, v in doc.fm.items() if k not in {'related_source_ids', 'discovery_related_source_ids'}}
-        values.update(extract_identities(metadata))
-        values.update(extract_identities(body))
+        values.update(extract_identities(metadata, slack_workspaces=slack_workspaces))
+        values.update(extract_identities(body, slack_workspaces=slack_workspaces))
         return values
 
     @staticmethod
@@ -70,6 +75,20 @@ class DiscoveryConversion:
         wanted.add('dossier:dos-' + wid[2:])
         nominations = {x['path']: x['match_basis'] for x in research['existing_task_candidates']}
         tasks = self.rt.store()
+        for relative, basis in nominations.items():
+            if basis != 'exact': continue
+            path = (tasks.root / relative).resolve()
+            if not any(path.is_relative_to(folder.resolve()) for _, folder in tasks.task_dirs()) or not path.is_file():
+                raise UserError('exact task nomination is missing or outside canonical task directories')
+            nominated = tf.parse_file(path)
+            if not tf.has_task_tag(nominated.fm) or not nominated.task_id:
+                raise UserError('exact nomination must be a tagged canonical task with stable task_id')
+        workspaces = {}
+        for source in self.store.get_run(run)['config'].get('sources', []):
+            if isinstance(source, dict):
+                for host, workspace in (source.get('url_mappings', {}).get('slack_workspaces') or {}).items():
+                    if host in workspaces and workspaces[host] != workspace: raise UserError('conflicting approved workspace URL mapping')
+                    workspaces[host] = workspace
         scan = tasks.scan()
         if scan.errors:
             raise UserError('canonical task inventory is incomplete; resolve parse failures before matching')
@@ -77,8 +96,13 @@ class DiscoveryConversion:
         for item in scan.tasks:
             doc = tf.parse_file(item.path)  # full current bytes, not cached summaries
             rel = tasks.rel(doc.path)
-            values = self._exact_values(doc)
+            values = self._exact_values(doc, slack_workspaces=workspaces)
             overlap = sorted(r for r in wanted if any(s == r or (source_identity_covers(s, r) and (not candidate.get('parent_candidate_id') or not is_message_refinement(r) or nominations.get(rel) == 'exact')) for s in values))
+            # A genuine message is a container for independent frozen actions.
+            # Shared-message provenance alone must not authorize another action.
+            if candidate.get('action_id') and overlap and 'dossier:dos-' + wid[2:] not in overlap:
+                bound = doc.fm.get('discovery_action_ids') or []
+                if candidate['action_id'] not in bound and nominations.get(rel) != 'exact': overlap = []
             target = {**tasks.summary(doc), 'revision': tf.content_hash(doc.raw)}
             if overlap:
                 target['matched_identities'] = overlap
@@ -92,9 +116,25 @@ class DiscoveryConversion:
         folder = self.store.run_dir(run) / 'conversions'
         return folder / (wid + '.plan.json'), folder / (wid + '.receipt.json')
 
+    @staticmethod
+    def _append_section(body, heading, text):
+        """Insert before dossier tail; reuse one existing Notes/Plan/Log heading."""
+        tail_at = body.find('<!-- discovery-dossier:start ')
+        main, tail = (body[:tail_at], body[tail_at:]) if tail_at >= 0 else (body, '')
+        heading_match = re.search(r'^## ' + re.escape(heading) + r'\s*$', main, re.M)
+        if heading_match:
+            next_heading = re.search(r'^## ', main[heading_match.end():], re.M)
+            at = heading_match.end() + next_heading.start() if next_heading else len(main)
+            main = main[:at].rstrip() + '\n\n' + text.rstrip() + '\n\n' + main[at:]
+        else:
+            main = main.rstrip() + '\n\n## ' + heading + '\n\n' + text.rstrip() + '\n\n'
+        return main + tail
+
     def prepare(self, run, wid, *, choice, reason, target_task_id='', expected_revision='',
                 useful_delta=False, user_approved=False, area='', title='', due='', undated=False,
-                expected_plan_revision='', scope_notes=''):
+                expected_plan_revision='', scope_notes='', priority='', scheduled='', execution_method='',
+                notes='', plan='', checklist=None, active_goal='', manual_binding=False):
+        self._production(run)
         if not isinstance(reason, str) or not reason.strip() or len(reason) > 2000:
             raise UserError('substantive parent decision reason required')
         if choice not in {'create', 'update', 'auto', 'noop'}:
@@ -114,7 +154,8 @@ class DiscoveryConversion:
         request = dict(choice=choice, reason=reason, target_task_id=target_task_id,
                        expected_revision=expected_revision, useful_delta=useful_delta,
                        user_approved=user_approved, area=area, title=title, due=due, undated=undated,
-                       scope_notes=scope_notes)
+                       scope_notes=scope_notes, priority=priority, scheduled=scheduled, execution_method=execution_method,
+                       notes=notes, plan=plan, checklist=checklist, active_goal=active_goal, manual_binding=manual_binding)
         plan_path, _ = self._paths(run, wid)
         with self.store._lock('conversion:' + run + ':' + wid):
             old = read_json(plan_path)
@@ -126,7 +167,10 @@ class DiscoveryConversion:
             task_store = self.rt.store()
             if choice != 'create':
                 targets = [t for t in outcome['targets'] if t['task_id'] == target_task_id]
-                if not tf.valid_task_id(target_task_id) or len(targets) != 1:
+                manual = manual_binding is True and user_approved is True and bool(expected_plan_revision)
+                if manual and outcome['kind'] == 'exact' and outcome['targets'][0]['task_id'] != target_task_id:
+                    raise UserError('different exact destination exists; explicit manual binding refused')
+                if not tf.valid_task_id(target_task_id) or (len(targets) != 1 and not manual):
                     raise UserError('choose exact nominated target_task_id, never a title')
                 doc = tf.parse_file(task_store.resolve(target_task_id).path)
                 if not expected_revision or tf.content_hash(doc.raw) != expected_revision:
@@ -164,22 +208,43 @@ class DiscoveryConversion:
                     fm['due'] = date
                     fm['scheduled'] = date
                 if area and area != fm.get('area'): raise UserError('rehome existing tasks through task_update, not discovery approval')
-            if scope_notes:
-                if not isinstance(scope_notes, str) or len(scope_notes) > 16000: raise UserError('scope_notes must be text up to 16000 characters')
-                body += '\n\n## Approved scope\n\n' + scope_notes + '\n'
+            for field, value in {'scope_notes': scope_notes, 'notes': notes, 'plan': plan, 'active_goal': active_goal, 'execution_method': execution_method}.items():
+                if not isinstance(value, str) or len(value) > 16000: raise UserError(field + ' must be text up to 16000 characters')
+            if priority:
+                if priority not in tf.PRIORITIES: raise UserError('invalid priority override')
+                fm['priority'] = priority
+            if scheduled: fm['scheduled'] = tf.parse_date_words(scheduled, self.rt.settings.today(), 'scheduled')
+            if execution_method: fm['execution_method'] = execution_method
+            if active_goal: fm['active_goal'] = active_goal
+            if notes or scope_notes: body = self._append_section(body, 'Notes', '\n\n'.join(x for x in (notes, scope_notes) if x))
+            if plan or active_goal or execution_method: body = self._append_section(body, 'Plan', '\n\n'.join(x for x in (active_goal, plan, 'Execution method: ' + execution_method if execution_method else '') if x))
+            if checklist is not None:
+                if not isinstance(checklist, list) or len(checklist) > 50 or any(not isinstance(x, str) or not x.strip() or len(x) > 2000 for x in checklist): raise UserError('checklist requires bounded nonempty text items')
+                body = self._append_section(body, 'Plan', '\n'.join('- [ ] ' + x for x in checklist))
             dossier_id = 'dos-' + wid[2:]
-            revision, block = render_discovery_dossier(research, dossier_id=dossier_id, candidate_source_ids=candidate['source_ids'])
+            active_research = copy.deepcopy(research)
+            if active_goal or execution_method:
+                active_research['substantive_next_action'] = (active_goal or research['substantive_next_action']) + ('\n\nExecution method: ' + execution_method if execution_method else '')
+                active_research['implementation_context'] += ['User approval constraint: ' + x for x in (scope_notes, notes, plan) if x]
+            revision, block = render_discovery_dossier(active_research, dossier_id=dossier_id, candidate_source_ids=candidate['source_ids'])
+            if active_research != research:
+                marker = f'<!-- discovery-dossier:end {dossier_id} -->'
+                block = block.replace(marker, '### Historical Accepted Recommendation\n\n' + research['substantive_next_action'] + '\n\nAccepted evidence revision: ' + content_revision(research) + '\n' + marker)
             ids = fm.get('dossier_ids') or []
             if isinstance(ids, str): ids = [ids]
             if not isinstance(ids, list): raise UserError('invalid task dossier_ids')
             fm['dossier_ids'] = list(dict.fromkeys([*ids, dossier_id]))
+            if candidate.get('action_id'):
+                fm['discovery_action_ids'] = list(dict.fromkeys([*(fm.get('discovery_action_ids') or []), candidate['action_id']]))
             # Append synthesis before existing managed dossiers, preserving every old section.
             additions = [x for x in research['new_information'] if x and x not in body]
             if additions:
-                text = '\n\n### Discovery context\n\n' + '\n'.join('- ' + x for x in additions)
-                text += '\n\n## Log\n\n- ' + self.rt.settings.today() + ': Discovery context added (' + revision + ').\n'
-                pos = body.find('<!-- discovery-dossier:start ')
-                body = body[:pos].rstrip() + text + '\n\n' + body[pos:] if pos >= 0 else body.rstrip() + text
+                start_marker, end_marker = f'<!-- discovery-context:start {dossier_id} -->', f'<!-- discovery-context:end {dossier_id} -->'
+                text = start_marker + '\n### Discovery context\n\n' + '\n'.join('- ' + x for x in additions) + '\n' + end_marker
+                if start_marker in body:
+                    body, _ = upsert_managed_block(body, start_marker=start_marker, end_marker=end_marker, block=text)
+                else: body = self._append_section(body, 'Notes', text)
+                body = self._append_section(body, 'Log', '- ' + self.rt.settings.today() + ': Discovery context added (' + revision + ').')
             body, _ = upsert_managed_block(body, start_marker=f'<!-- discovery-dossier:start {dossier_id} -->',
                                             end_marker=f'<!-- discovery-dossier:end {dossier_id} -->', block=block)
             postimage = tf.render(fm, body, **({'seq_offset': doc.seq_offset, 'keep_blank': doc.blank_keys} if before else {}))
@@ -204,9 +269,16 @@ class DiscoveryConversion:
     def revise(self, run, wid, *, expected_plan_revision, edits, reason):
         plan = read_json(self._paths(run, wid)[0])
         if not plan: raise UserError('no prepared plan to revise')
-        if set(edits) - {'choice', 'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated', 'scope_notes'}:
+        if set(edits) - {'choice', 'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated', 'scope_notes', 'priority', 'scheduled', 'execution_method', 'notes', 'plan', 'checklist', 'active_goal'}:
             raise UserError('unsupported pending plan edits')
         request = {**plan['request'], **edits, 'reason': reason, 'user_approved': True}
+        return self.prepare(run, wid, **request, expected_plan_revision=expected_plan_revision)
+
+    def bind_manual(self, run, wid, *, target_task_id, expected_revision, expected_plan_revision, reason):
+        old = read_json(self._paths(run, wid)[0])
+        if not old or old['request']['choice'] != 'create': raise UserError('manual recovery requires an existing unwritten create plan')
+        request = {**old['request'], 'choice': 'update', 'target_task_id': target_task_id, 'expected_revision': expected_revision,
+                   'user_approved': True, 'manual_binding': True, 'reason': reason, 'area': '', 'title': '', 'due': '', 'undated': False}
         return self.prepare(run, wid, **request, expected_plan_revision=expected_plan_revision)
 
     def cancel(self, run, wid, *, expected_plan_revision, reason):
@@ -220,10 +292,92 @@ class DiscoveryConversion:
             atomic_json(plan_path, plan)
             return plan
 
+    def merge_prepared(self, bindings, *, reason):
+        """One user-approved task, every accepted dossier and per-unit receipt."""
+        if len(bindings) < 2 or len(set(bindings)) != len(bindings) or not reason:
+            raise UserError('explicit merge requires at least two distinct approved units and reason')
+        group = 'merge-' + content_revision(sorted(bindings)).split(':')[-1][:32]
+        manifest_path = self.store.state_root / 'conversion-groups' / (group + '.json')
+        with self.store._lock('conversion-merge'):
+            manifest = read_json(manifest_path)
+            if manifest:
+                self._materialize_merge(manifest)
+                return manifest
+            plans = []
+            for run, wid in bindings:
+                plan = read_json(self._paths(run, wid)[0])
+                if not plan: raise UserError('prepare every selected proposal before merge')
+                self._unwritten(plan, run, wid, content_revision(plan))
+                plans.append(plan)
+            first = plans[0]
+            create = first['request']['choice'] == 'create'
+            if any((p['request']['choice'] == 'create') != create or (not create and (p['task_id'], p['preimage_sha256']) != (first['task_id'], first['preimage_sha256'])) for p in plans):
+                raise UserError('merge choices must all create one task or explicitly update the same task/revision')
+            fm, body = tf.split_text(first['postimage'], rt=True)
+            for (run, wid), plan in zip(bindings[1:], plans[1:]):
+                candidate, research = self.joined(run, wid)
+                marker = re.search(r'<!-- discovery-dossier:start ' + re.escape(plan['dossier_id']) + r' -->.*?<!-- discovery-dossier:end ' + re.escape(plan['dossier_id']) + r' -->', plan['postimage'], re.S)
+                if not marker: raise UserError('merge member missing exact approved dossier block')
+                block = marker[0]
+                additions = [x for x in research['new_information'] if x not in body]
+                if additions: body = self._append_section(body, 'Notes', '### Combined approved context\n\n' + '\n'.join('- ' + x for x in additions))
+                for field, heading in (('notes', 'Notes'), ('scope_notes', 'Notes'), ('plan', 'Plan'), ('active_goal', 'Plan'), ('execution_method', 'Plan')):
+                    value = plan['request'].get(field)
+                    if value and value not in body: body = self._append_section(body, heading, value)
+                member_fm, _ = tf.split_text(plan['postimage'], rt=True)
+                for field in ('title', 'due', 'scheduled', 'priority', 'execution_method', 'active_goal'):
+                    explicit = plan['request'].get(field) or (field in {'due', 'scheduled'} and plan['request'].get('undated'))
+                    if explicit:
+                        first_value = first['request'].get(field) or (field in {'due', 'scheduled'} and first['request'].get('undated'))
+                        if first_value and fm.get(field) != member_fm.get(field): raise UserError('combined approvals contain conflicting explicit task metadata')
+                        fm[field] = member_fm.get(field)
+                body, _ = upsert_managed_block(body, start_marker=f"<!-- discovery-dossier:start {plan['dossier_id']} -->", end_marker=f"<!-- discovery-dossier:end {plan['dossier_id']} -->", block=block)
+                fm['dossier_ids'] = list(dict.fromkeys([*fm['dossier_ids'], plan['dossier_id']]))
+                if candidate.get('action_id'):
+                    fm['discovery_action_ids'] = list(dict.fromkeys([*(fm.get('discovery_action_ids') or []), candidate['action_id']]))
+            from .core import yamlio
+            raw_fm = tf.split_raw(first['postimage'])[0]
+            postimage = tf.render(fm, body, seq_offset=yamlio.seq_offset(raw_fm), keep_blank=frozenset(yamlio.blank_keys(raw_fm)))
+            merged = []
+            for plan in plans:
+                merged.append({**plan, 'task_id': first['task_id'], 'path': first['path'], 'preimage_sha256': first['preimage_sha256'],
+                               'postimage': postimage, 'postimage_sha256': tf.content_hash(postimage.encode()), 'merge_group': group})
+            manifest = {'group_id': group, 'state': 'prepared', 'reason': reason, 'bindings': [list(b) for b in bindings],
+                        'original_plans': plans, 'plans': merged}
+            atomic_json(manifest_path, manifest)  # commit ALL postimages before materializing member pointers
+            self._materialize_merge(manifest)
+            return manifest
+
+    def _materialize_merge(self, manifest):
+        for original, merged in zip(manifest['original_plans'], manifest['plans']):
+            path, _ = self._paths(merged['run_id'], merged['unit_id'])
+            current = read_json(path)
+            if current == merged: continue
+            if current != original: raise UserError('merge member plan changed; do not overwrite revised intent')
+            atomic_json(path, merged)
+
+    def recover_merges(self, run, wid):
+        for path in (self.store.state_root / 'conversion-groups').glob('merge-*.json'):
+            manifest = read_json(path)
+            if [run, wid] in manifest['bindings']:
+                with self.store._lock('conversion-merge'):
+                    self._materialize_merge(manifest)
+
     def preflight(self, bindings):
         """Validate the complete approved batch, including all CASes, before writes."""
+        groups = {}
+        for run, wid in bindings:
+            plan = read_json(self._paths(run, wid)[0], {})
+            if plan and plan.get('request', {}).get('choice') in {'update', 'auto'}:
+                groups.setdefault(plan['path'], []).append((run, wid))
+        for members in groups.values():
+            if len(members) > 1:
+                hashes = {read_json(self._paths(r, w)[0])['postimage_sha256'] for r, w in members}
+                if len(hashes) > 1: self.merge_prepared(members, reason='Compose independently approved sibling updates to one exact preimage')
         destinations = {}
         for run, wid in bindings:
+            self._production(run)
+            self.recover_merges(run, wid)
             _, research = self.joined(run, wid)
             plan_path, receipt_path = self._paths(run, wid)
             plan = read_json(plan_path)

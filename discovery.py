@@ -144,7 +144,7 @@ def create_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
               "frequency": args.get("frequency", "daily"), "time": args.get("time", "6 PM"),
               "timezone": tz["timezone"], "deliver": deliver, "origin_session": session_id, "job_id": job_id,
               "research_cap": max(0, min(int(args.get("research_cap", DEFAULT_CAP)), 200)),
-              "created_at": time.time(), "last_run": None, "label": ""}
+              "created_at": time.time(), "last_run": None, "label": "", "mode": "production"}
     from .jobs import read_discovery_job
     read_discovery_job(rt, stream)
     stream['job_binding'] = {'job_id': job_id, 'origin_session': session_id,
@@ -313,9 +313,9 @@ def _today(rt: Runtime) -> str:
     return rt.settings.today()
 
 
-def start(rt: Runtime, name: str, session_id: str = "") -> dict[str, Any]:
+def start(rt: Runtime, name: str, session_id: str = "", mode=None) -> dict[str, Any]:
     from .discovery_integration import get_service
-    return get_service(rt).start(name, session_id=session_id)
+    return get_service(rt).start(name, session_id=session_id, mode=mode)
 
 
 def submit(rt: Runtime, name: str, candidates=None, coverage=None, *, run_id="", session_id="") -> dict[str, Any]:
