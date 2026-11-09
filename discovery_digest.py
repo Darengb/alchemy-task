@@ -76,7 +76,7 @@ class DiscoveryDigest:
                 if item.get('sources_unavailable'): lines.append('Unavailable context: ' + '; '.join(item['sources_unavailable']))
                 lines.append('---')
             if not numbered:
-                lines.append('No new proposals.')
+                lines.append('No new follow-ups found.' if not degraded and not outcomes else 'No new proposals to review.')
             for outcome in outcomes or []:
                 line = f"Existing task: {outcome['title']}: {outcome['status']}"
                 for surface in ('git', 'phone'):
@@ -88,7 +88,8 @@ class DiscoveryDigest:
                 lines.append('Attention: ' + (str(failure['title']) + ': ' if failure.get('title') else '') + _failure_status(failure))
             for source in coverage:
                 lines.append('Coverage: ' + str(source.get('source_key', source.get('source', 'source'))) + ': ' + str(source.get('status', 'unknown')) + (': source read unavailable; inspect saved review diagnostics' if source.get('error') else ''))
-            lines.append('Reply with the numbers you want. Other items remain replyable for seven days.')
+            if numbered:
+                lines.append('Reply with the numbers you want. Other items remain replyable for seven days.')
             result = {'run_id': run, 'stream': stream, 'day': day, 'origin': origin, 'items': numbered,
                       'failures': failures, 'coverage': coverage, 'outcomes': outcomes or [], 'text': '\n'.join(lines)}
             result['sha256'] = hashlib.sha256(result['text'].encode()).hexdigest()
