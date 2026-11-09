@@ -37,7 +37,7 @@ def test_unknown_delivery_retains_number_and_cannot_blind_resend(tmp_path):
                        failures=[{'reason': 'Research exhausted'}], coverage=[{'status': 'partial', 'source_key': 'feed'}])
     assert 'Research exhausted' in d['text'] and 'partial' in d['text']
     digest.begin_delivery('run')
-    assert digest.delivery('run')['state'] == 'pending'
+    assert digest.delivery('run')['state'] == 'inflight'
     digest.delivery_unknown('run', 'transport lost')
     with pytest.raises(UserError, match='unknown'):
         digest.begin_delivery('run')

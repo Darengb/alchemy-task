@@ -6,6 +6,71 @@ from test_discovery_integration import service, configure
 from alchemy_task.core.discovery_identity import UserError
 
 
+def test_registered_slack_recipe_maps_search_and_primary_operation_arguments(settings, data_dir, tmp_path):
+    import datetime as dt
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    config = configure(integration); config.update(kind='slack', seed_queries=['in:board'])
+    config['binding']['request_fields'].update({'query': 'collector_request.query', 'count': 'collector_request.count'})
+    config['primary_bindings'] = {}
+    for operation, timestamp in [('before', 'latest'), ('after', 'oldest')]:
+        bound = copy.deepcopy(config['binding']); bound['tool'] = 'slack_primary'
+        bound['request_fields'] = {'account': 'account_key', 'scope': 'scope', 'start': 'start', 'end': 'end', 'operation': 'collector_request.operation', 'channel': 'collector_request.channel', timestamp: 'collector_request.' + timestamp, 'limit': 'collector_request.limit', 'inclusive': 'collector_request.inclusive'}
+        bound['response_fields']['recipe_complete'] = 'recipe_complete'
+        config['primary_bindings'][operation] = bound
+    integration.configure('work', config, user_approved=True)
+    run = integration.start('work', session_id='parent')['run_id']
+    calls = []
+    def dispatch(tool, args):
+        calls.append((tool, copy.deepcopy(args)))
+        ts = str(dt.datetime.fromisoformat(args['end']).timestamp() - 10)
+        message = {'channel_id': 'C1', 'ts': ts, 'text': 'Full genuine source ask'}
+        return {'account_key': args['account'], 'scope': args['scope'], 'start': args['start'], 'end': args['end'], 'next_cursor': None, 'pagination_exhausted': True, 'recipe_complete': True, 'items': [message]}
+    ctx.dispatch_tool = dispatch
+    result = integration.collect(run, 'feed', session_id='parent')
+    assert result['status'] == 'complete', result
+    assert [c[1].get('operation', 'search') for c in calls] == ['search', 'before', 'after']
+    assert calls[0][1]['count'] == 20 and 'in:board after:' in calls[0][1]['query']
+    assert calls[1][1]['limit'] == 6 and calls[1][1]['inclusive'] is True
+    assert calls[2][1]['limit'] == 10 and calls[2][1]['inclusive'] is False
+    assert integration.store.source_state('work', 'feed')['backlog'][0]['candidate']['messages'][0]['text'] == 'Full genuine source ask'
+
+
+def test_registered_raw_mail_pipeline_expands_actual_thread_and_snapshots(settings, data_dir, tmp_path):
+    import base64, datetime as dt, json
+    from alchemy_task.discovery_integration import register
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    config = configure(integration)
+    config.update(kind='mail', sender_domains=['example.test'])
+    config['thread_binding'] = {**copy.deepcopy(config['binding']), 'tool': 'full_thread'}
+    config['thread_binding']['request_fields']['thread'] = 'collector_request.thread_id'
+    integration.configure('work', config, user_approved=True)
+    run = integration.start('work', session_id='parent')['run_id']
+    calls = []
+    def dispatch(tool, args):
+        calls.append((tool, copy.deepcopy(args)))
+        envelope = {'account_key': args['account'], 'scope': args['scope'], 'start': args['start'], 'end': args['end'], 'next_cursor': None, 'pagination_exhausted': True}
+        if tool == 'reader': return {**envelope, 'items': [{'threadId': 'real-thread'}]}
+        assert tool == 'full_thread' and args['thread'] == 'real-thread'
+        millis = str(int(dt.datetime.fromisoformat(args['end']).timestamp() * 1000))
+        return {**envelope, 'items': [{'id': 'real-thread', 'complete': True, 'messages': [{'id': 'real-message', 'internalDate': millis, 'payload': {'mimeType': 'text/plain', 'headers': [{'name': 'From', 'value': 'Author <author@example.test>'}, {'name': 'Subject', 'value': 'Approve proof'}], 'body': {'data': base64.urlsafe_b64encode(b'Full primary source asks for approval.').decode()}}}]}]}
+    ctx.dispatch_tool = dispatch
+    tools = {}; ctx.register_tool = lambda **kw: tools.update({kw['name']: kw['handler']}); ctx.register_hook = lambda *a: None
+    register(ctx, integration=integration)
+    result = json.loads(tools['discovery_collect']({'run_id': run, 'source_key': 'feed'}, session_id='parent'))
+    assert result['ok'] and result['result']['status'] == 'complete', result
+    candidate = integration.store.source_state('work', 'feed')['backlog'][0]['candidate']
+    assert candidate['source_ids'] == ['gmail:account:real-thread']
+    assert 'Full primary source' in candidate['messages'][0]['body']
+    assert [c[0] for c in calls] == ['reader', 'full_thread']
+    assert list((integration.store.run_dir(run) / 'source-snapshots').glob('mail-*.json'))
+    frozen = integration.freeze(run, session_id='parent')
+    ledger = integration.store.get_run(run)
+    source_body = ledger['resources']['source-body-' + ledger['candidates'][0]['candidate_id']]
+    primary = (integration.store.run_dir(run) / 'resources' / source_body['sha256']).read_text()
+    assert 'Full primary source asks for approval.' in primary
+    assert frozen['context']['source-material']
+
+
 def test_discovery_phone_completion_uses_existing_sync_actual_adapter_readback(settings, data_dir, tmp_path):
     from test_discovery_conversion import joined
     from test_ios_sync import FakePhone, LIST_A
@@ -293,7 +358,9 @@ def test_enabled_phone_is_queued_and_only_actual_target_readback_completes(setti
     settings.git_transport = 'none'
     ios_sync.save(rt, {'config': {'enabled': True, 'device_id': 'phone-one', 'list_id': 'list-one', 'areas': ['work']}, 'mappings': {}, 'ops': {}, 'conflicts': {}, 'reads': {}, 'notes': {}})
     plan = conversion.prepare(run, wid, choice='create', reason='User chose task.', user_approved=True, area='work', undated=True)
+    before_queue = ios_sync.load(rt)
     receipt = conversion.deliver_git(run, wid)
+    assert ios_sync.load(rt) == before_queue  # observing queue must not overwrite the live sync engine's state
     assert receipt['state'] == 'phone_pending'
     assert receipt['phone']['state'] == 'queued'
     doc = rt.store().resolve(plan['task_id'])
@@ -418,7 +485,7 @@ def test_source_change_reconciles_existing_job_reader_toolsets(settings, data_di
     job = ctx.cron['job-one']
     assert {'alchemy-task-discovery', 'alchemy-task-discovery-child', 'approved-reader'} <= set(job['enabled_toolsets'])
     assert 'stale-reader' not in job['enabled_toolsets']
-    assert job['deliver'] == 'origin'
+    assert job['deliver'] == 'local'
     assert integration._stream('work')['job_id'] == 'job-one'
 
 

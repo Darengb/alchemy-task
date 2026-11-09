@@ -190,7 +190,7 @@ class DiscoveryRunner:
 
     def _context_names(self, run):
         ledger = self.store.get_run(run)
-        return {name for name in ledger['resources'] if name in {'context-bootstrap', 'task_inventory', 'source_config', 'context-rubric'} or name.startswith(('task-body-', 'skill-', 'installed-skill-'))}
+        return {name for name in ledger['resources'] if name in {'context-bootstrap', 'task_inventory', 'source_config', 'context-rubric', 'source-material'} or name.startswith(('task-body-', 'skill-', 'installed-skill-', 'source-body-'))}
 
     def fetch(self, run_id, resource, revision, *, token=None, binding=None, cursor=None, limit=8192, session_id='', task_id=''):
         if token:
@@ -218,7 +218,9 @@ class DiscoveryRunner:
             self.store.quarantine(run_id, token, caller={'session_id': session_id, 'task_id': task_id}, payload={'binding': binding, 'payload': payload, 'upload': upload})
             return {'quarantined': True, 'reason': str(exc), 'accepted': False}
         ledger = self.store.get_run(run_id)
-        required = self._context_names(run_id) - {n for n in self._context_names(run_id) if n.startswith(('task-body-', 'installed-skill-'))}
+        required = self._context_names(run_id) - {n for n in self._context_names(run_id) if n.startswith(('task-body-', 'installed-skill-', 'source-body-'))}
+        own_primary = 'source-body-' + attempt['candidate_id']
+        if own_primary in ledger['resources']: required.add(own_primary)
         if any(not self.store._has_pages(ledger, token, n) for n in required):
             raise UserError('fetch all context inventory/config/skill pages before submitting')
         if upload is None:
@@ -242,7 +244,7 @@ class DiscoveryRunner:
         ledger = self.store.get_run(run)
         resources = {name: ledger['resources'][name] for name in attempt['required_resources']}
         for name in self._context_names(run):
-            if not name.startswith(('task-body-', 'installed-skill-')):
+            if not name.startswith(('task-body-', 'installed-skill-', 'source-body-')) or name == 'source-body-' + attempt['candidate_id']:
                 resources[name] = ledger['resources'][name]
         data = {'run_id': run, 'token': attempt['token'], 'candidate_id': attempt['candidate_id'], 'ordinal': attempt['ordinal'],
                 'binding': {k: attempt[k] for k in BINDING_KEYS}, 'resources': resources,

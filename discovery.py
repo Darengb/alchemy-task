@@ -155,8 +155,7 @@ def create_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
         _assign_labels(streams)
         _save_streams(rt, streams)
     return {"stream": _public(stream), "job_id": job_id,
-            "message": f"Discovery stream '{name}' runs {when} ({tz['timezone']}) and posts its digest "
-                       f"{'in this chat' if deliver == 'origin' else 'to ' + deliver}."}
+            "message": f"Discovery stream '{name}' runs {when} ({tz['timezone']}). Configure its approved origin sender and exact-message readback before delivery. Scheduler final output is local-only to prevent duplicates."}
 
 
 def _assign_labels(streams: dict[str, dict[str, Any]]) -> None:

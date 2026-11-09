@@ -135,7 +135,7 @@ class DiscoveryDigest:
             receipt = data['delivery'][run]
             if receipt['state'] != 'prepared':
                 raise UserError('delivery is pending/unknown/delivered; reconcile exact receipt, never blindly resend')
-            receipt['state'] = 'pending'
+            receipt['state'] = 'inflight'
             atomic_json(self.path, data)
             return receipt
 

@@ -102,6 +102,7 @@ def inventory(timezone: str) -> list[dict[str, str]]:
 def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None) -> dict[str, Any]:
     """One supported source-first scheduled workflow, no separate executor."""
     return {
+        'deliver': 'local',  # verified plugin sender is the single delivery owner
         'enabled_toolsets': list(dict.fromkeys(['alchemy-task', 'alchemy-task-discovery', 'alchemy-task-discovery-child',
                                               'skills', 'web', 'file', 'session_search', *(reader_toolsets or [])])),
         'prompt': (f'Run the Alchemy Task discovery stream "{stream}". Load alchemy-task:discovery. '
@@ -110,10 +111,10 @@ def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None) 
                    'Use discovery_research_run, fetch every full callback, perform substantive parent semantic acceptance/repair, '
                    'reconcile all cohorts, then discovery_join. Only after global join perform serial discovery_match/discovery_decision. '
                    'Prepare discovery_digest. No freeform discovery_submit candidates, no task creation before approval, '
-                   'no generic post-creation research replacing accepted dossiers. If an approved explicit sender/readback binding exists, '
-                   'call discovery_digest action=send. This path requires local-only scheduler delivery; after sending or an unknown outcome '
-                   'return [SILENT], never repeat the digest in the final reply. Otherwise return the immutable digest for scheduler delivery '
-                   '(unverified); preparation is not delivery proof. If blocked, report the exact saved run rather than creating another run.')}
+                   'no generic post-creation research replacing accepted dossiers. Call discovery_digest action=send with the approved '
+                   'origin sender/readback binding. Scheduler delivery is local-only. Return [SILENT], never repeat the digest in the '
+                   'final reply, including unknown outcomes. Missing sender approval stays prepared and needs setup; no alternate '
+                   'scheduler send is allowed. If blocked, preserve the exact saved run rather than creating another run.')}
 
 
 def read_discovery_job(rt, stream):

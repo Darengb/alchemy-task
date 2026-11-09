@@ -225,9 +225,11 @@ def discovery_mirror_status(rt: Runtime, task_id: str) -> dict[str, Any]:
                 'list_id': proof['list_id'], 'readback_sha256': hashlib.sha256(json.dumps(proof, sort_keys=True).encode()).hexdigest()}
     if any(op.get('task_id') == task_id and op.get('state') in {'uncertain', 'dispatching'} for op in st['ops'].values()):
         return {'state': 'unknown', 'reason': 'Existing mirror outcome unknown; no new create authorized'}
-    st.setdefault('discovery_pending', {})[task_id] = wanted
-    save(rt, st, keep_disk_config=True)
+    # The existing engine queues by canonical task inventory. Keep its mutable
+    # outbox/mappings single-writer; the conversion receipt durably owns this
+    # waiting projection, rather than saving a stale copy over a concurrent sync.
     return {'state': 'queued', 'reason': 'Awaiting existing user-triggered approved phone sync and exact target readback',
+            'expected_projection_sha256': hashlib.sha256(json.dumps(wanted, sort_keys=True).encode()).hexdigest(),
             'device_id': cfg.get('device_id'), 'list_id': cfg.get('list_id')}
 
 

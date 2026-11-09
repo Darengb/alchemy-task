@@ -194,14 +194,14 @@ class DiscoveryIntegration:
         if len(hits) != 1: raise UserError('source not approved for this frozen run')
         return ledger, hits[0]
 
-    def _read_page(self, config, start, end, cursor):
-        binding = config.get('binding')
+    def _read_page(self, config, start, end, cursor, *, binding=None):
+        binding = binding or config.get('binding')
         if not binding:
             raise UserError('no verified structured reader binding; use explicitly partial attestation')
         args = copy.deepcopy(binding.get('arguments') or {})
         values = {**config, 'start': start, 'end': end, 'cursor': cursor}
         for parameter, field in binding.get('request_fields', {}).items():
-            args[parameter] = values[field]
+            args[parameter] = _pick(values, field)
         capability = None
         if binding.get('capability'):
             probe = binding['capability']
@@ -214,11 +214,24 @@ class DiscoveryIntegration:
         if binding.get('response_root'):
             raw = _pick(raw, binding['response_root'])
             raw = json.loads(raw) if isinstance(raw, str) else raw
-        if not isinstance(raw, dict) or raw.get('error') or raw.get('ok') is False:
+        if isinstance(raw, dict) and raw.get('error') and binding.get('error_fields'):
+            fields = {k: _pick(raw, path) for k, path in binding['error_fields'].items()}
+            if type(fields.get('status')) is not int or not isinstance(fields.get('headers'), dict):
+                raise UserError('reader structured-error mapping lacks actual numeric status/headers')
+            class Response(dict):
+                pass
+            response = Response(fields['headers']); response.status = fields['status']
+            failure = UserError('approved reader structured HTTP error')
+            failure.resp = response
+            content = fields.get('content')
+            failure.content = json.dumps(content).encode() if isinstance(content, dict) else content
+            raise failure
+        if not isinstance(raw, dict) or raw.get('error') or raw.get('ok') is False or raw.get('success') is False:
             raise UserError('approved reader returned failure/nonstructured response')
         # Missing fields remain missing. Never echo request account/window into a
         # provider receipt or invent pagination_exhausted from a short page.
         result = {name: _pick(raw, path) for name, path in binding['response_fields'].items()}
+        if raw.get('truncated'): result['truncated'] = raw['truncated']
         if binding.get('item_fields') or binding.get('item_identity'):
             from .core.discovery_identity import canonical_source_id
             items = result.get('items')
@@ -245,7 +258,22 @@ class DiscoveryIntegration:
                 normalized.append(mapped)
             result['items'] = normalized
         result['reader_evidence'] = {'tool': binding['tool'], 'arguments': args, 'response': raw, 'capability': capability}
+        proof = content_revision(result['reader_evidence']).split(':')[-1]
+        atomic_json(self.store.state_root / 'source-evidence' / (proof + '.json'), result['reader_evidence'])
         return result
+
+    def _collector_reader(self, run_id, config):
+        from .discovery_collectors import make_daily_reader
+        def thread(actual, start, end, identity):
+            binding = actual.get('thread_binding')
+            if not binding: raise UserError('approved full-thread reader binding required')
+            return self._read_page({**actual, 'collector_request': {'operation': 'thread', 'thread_id': identity}}, start, end, None, binding=binding)
+        def replies(actual, start, end, request):
+            binding = (actual.get('primary_bindings') or {}).get(request['operation']) or actual.get('replies_binding')
+            if not binding: raise UserError('approved Slack primary operation binding required: ' + request['operation'])
+            return self._read_page({**actual, 'collector_request': request}, start, end, None, binding=binding)
+        return make_daily_reader(config, self._read_page, snapshot_root=self.store.run_dir(run_id) / 'source-snapshots',
+                                 read_thread=thread, read_replies=replies)
 
     def collect(self, run_id, source_key, *, session_id, envelope=None, max_pages=None):
         ledger, config = self._source(run_id, source_key, session_id)
@@ -255,7 +283,7 @@ class DiscoveryIntegration:
         if prior and prior['status'] == 'complete': return prior
         window = ledger['config']['windows'][source_key]
         if envelope is None:
-            receipt = SourceAdapter(self.store, config, read_page=self._read_page).collect(ledger['stream'], **window, max_pages=max_pages, previous_receipt=prior)
+            receipt = SourceAdapter(self.store, config, read_page=self._collector_reader(run_id, config)).collect(ledger['stream'], **window, max_pages=max_pages, previous_receipt=prior if prior and prior.get('verification') == 'adapter_verified' else None)
         else:
             if any(envelope.get(k) != v for k, v in window.items()):
                 raise UserError('attestation must use SAME saved source window')
@@ -289,7 +317,19 @@ class DiscoveryIntegration:
                 if entry['status'] in {'queued', 'deferred'} or (entry['status'] == 'selected' and entry.get('lineage', {}).get('run_id') == run_id):
                     candidates.append(entry['candidate'])
                     selection.append({'source_key': config['source_key'], 'backlog_id': entry['backlog_id'], 'candidate_id': candidate_id(entry['source_ids'])})
-        self.store.add_candidates(run_id, candidates)
+        # Full primary bodies stay lossless and pageable, separate from the
+        # helper's intentionally compact, strictly typed candidate metadata.
+        grouped = {}
+        for candidate in candidates:
+            grouped.setdefault(candidate_id(candidate['source_ids']), []).append(candidate)
+        source_index, compact = [], []
+        allowed = {'title', 'source_ids', 'prefilter_disposition', 'prefilter_reason', 'summary', 'due', 'priority', 'source_revision', 'source_key'}
+        for cid, versions in grouped.items():
+            body = self.store.put_resource(run_id, 'source-body-' + cid, versions)
+            source_index.append({'candidate_id': cid, 'body': body, 'versions': len(versions)})
+            compact.append({k: v for k, v in versions[-1].items() if k in allowed})
+        primary_index = self.store.put_resource(run_id, 'source-material', source_index)
+        self.store.add_candidates(run_id, compact)
         self.store.put_resource(run_id, 'backlog-selection', selection)
         rubric = (Path(__file__).parent / 'skills' / 'discovery' / 'SKILL.md').read_text()
         approved_context = {'parent_supplied': context or {}, 'profile_documents': {}, 'unavailable': []}
@@ -302,6 +342,7 @@ class DiscoveryIntegration:
         resources = DiscoveryContext(self.rt, self.store, installed_skills_root=self.home / 'skills').freeze(
             run_id, source_config={'config': ledger['config'], 'available_context': approved_context,
                                    'capability_evidence': 'Approved reader bindings; live failures are retained. Context supplied by parent is not a complete tool catalog.'}, rubric=rubric)
+        resources['source-material'] = primary_index
         with self.runner._state(run_id) as state:
             state['context_resources'] = resources
         index = self.store.freeze_index(run_id, rubric=rubric)
@@ -381,7 +422,7 @@ class DiscoveryIntegration:
             raise UserError('only origin or an explicitly approved bound scheduled occurrence may deliver')
         if receipt['state'] == 'delivered': return receipt
         if not binding:
-            return {**receipt, 'reason': 'No approved origin sender/readback binding. Scheduler/final-response delivery is not verified by digest preparation.'}
+            return {**receipt, 'reason': 'No approved origin sender/readback binding. Scheduler delivery is local-only; no alternate send is authorized.'}
         if binding['origin_session'] != digest['origin']['session_id']:
             raise UserError('delivery mapping origin mismatch')
         if stream.get('job_id'):
@@ -404,7 +445,9 @@ class DiscoveryIntegration:
                     raise UserError('sender receipt lacks exact message identity')
                 receipt = self._delivery_record(run_id, {'message_id': message_id, 'send_receipt': response})
             if not receipt.get('message_id'):
-                return receipt  # pending/unknown never authorizes blind resend
+                if receipt['state'] in {'pending', 'inflight'}:
+                    return self._delivery_record(run_id, {'state': 'unknown', 'reason': 'Unfinished persisted send intent without exact message receipt; never blindly resend'})
+                return receipt  # unknown never authorizes blind resend
             values['message_id'] = receipt['message_id']
             args = copy.deepcopy(binding.get('read_arguments') or {})
             for parameter, field in binding['read_fields'].items(): args[parameter] = values[field]
@@ -608,6 +651,8 @@ class DiscoveryIntegration:
             return {'run_id': run, 'time': ledger['created'], 'day': ledger['business_date'], 'stream': ledger['config'].get('stream_name', ledger['stream']),
                     'status': ledger['status'], 'sources_checked': ledger['config'].get('sources', []),
                     'coverage': coverage, 'research': attempts, 'candidates': ledger['candidates'],
+                    'mode': ledger['config'].get('mode'), 'timezone': ledger['config'].get('timezone'),
+                    'legacy_proposals': list((self.rt.ctx.state.get('discovery_legacy:' + ledger['config'].get('stream_name', ledger['stream']), default={}) or {}).values()),
                     'proposals': digest['items'] if digest else [], 'decisions': decisions, 'conversions': conversions,
                     'conflicts': (ledger.get('review') or {}).get('conflicts', []), 'failures': ledger['errors'] + join.get('failures', []),
                     'recovery': read_json(self.store.run_dir(run) / 'supervisor.json', {}),

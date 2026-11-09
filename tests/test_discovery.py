@@ -59,7 +59,7 @@ def test_create_requires_approval_sources_and_timezone(ctx):
     out = make_stream()
     assert out["ok"] and out["stream"]["when"] == "daily at 6:00 PM"
     job = next(iter(ctx.cron.values()))
-    assert job["deliver"] == "origin" and job["attach_to_session"] and job["timezone"] == "America/New_York"
+    assert job["deliver"] == "local" and job["attach_to_session"] and job["timezone"] == "America/New_York"
     assert job["schedule"] == "0 18 * * *" and "discovery_start" in job["prompt"]
     assert 'discovery_research_run' in job['prompt'] and 'discovery_join' in job['prompt']
     assert 'alchemy-task-discovery' in job['enabled_toolsets']
@@ -128,7 +128,7 @@ def test_update_keeps_schedule_parts_and_chat(ctx):
                frequency="weekdays", user_approved=True)
     assert out["ok"] and out["stream"]["when"] == "weekdays at 7:00 PM"
     assert list(ctx.cron) == [jid] and ctx.cron[jid]["schedule"] == "0 19 * * 1-5"
-    assert ctx.cron[jid]["deliver"] == "origin"  # same job: still posts to its own chat
+    assert ctx.cron[jid]["deliver"] == "local"  # explicit verified sender owns delivery, never scheduler final text
     out = tool(task_tools.discovery_stream, action="update", name="work", time="8 AM", user_approved=True)
     assert out["stream"]["when"] == "weekdays at 8:00 AM"
 
