@@ -17,6 +17,9 @@ def test_explicit_review_selects_old_digest_without_transcript(settings, data_di
         _finalize(s, data_dir, stream='work', origin_session=origin, day='2030-01-02')
         reply = host.message(chat_id='999', chat_type='dm', user_id='other')
         assert s.decide({'dismiss': ['1'], 'review': code(old)}, session_id=reply)['dismissed'] == [old['items'][0]['proposal_id']]
+        # Exact references take precedence; irrelevant review hints cannot override them.
+        pid = old['items'][0]['proposal_id']
+        assert s.decide({'dismiss': [pid], 'review': 'not-a-code'}, session_id=reply)['dismissed'] == [pid]
     finally:
         host.close()
 
@@ -141,5 +144,24 @@ def test_owner_identity_is_confirmed_per_platform_with_host_alternate_id(setting
             assert s.decide({'dismiss': ['1']}, session_id=second)['dismissed'] == [digest['items'][0]['proposal_id']]
         finally:
             clear_session_vars(tokens)
+    finally:
+        host.close()
+
+
+@pytest.mark.parametrize('reference', ['review', 'id', 'quote'])
+def test_exact_digest_uses_its_own_frozen_timezone(settings, data_dir, tmp_path, monkeypatch, reference):
+    s, rt, ctx, host, origin = fixture(settings, data_dir, tmp_path, monkeypatch)
+    try:
+        digest = _finalize(s, data_dir, stream='work', origin_session=origin)
+        streams = ctx.state.get('streams'); streams['home'] = {**streams['work'], 'name': 'home'}; ctx.state.set('streams', streams)
+        home = _finalize(s, data_dir, stream='home', origin_session=origin, day='2030-01-02')
+        with s.store._lock(s.store._run_lock_name(home['run_id'])):
+            ledger = s.store.get_run(home['run_id']); ledger['config']['timezone'] = 'Asia/Tokyo'; s.store._save(home['run_id'], ledger)
+        reply = host.message(chat_id='999', chat_type='dm', user_id='other')
+        args = {'dismiss': ['1']}
+        if reference == 'review': args['review'] = code(digest)
+        elif reference == 'id': args['dismiss'] = [digest['items'][0]['proposal_id']]
+        else: host.db.append_message(reply, role='user', content=f'[Replying to: "{digest["text"]}"]\n\n1 dismiss')
+        assert s.decide(args, session_id=reply)['dismissed'] == [digest['items'][0]['proposal_id']]
     finally:
         host.close()

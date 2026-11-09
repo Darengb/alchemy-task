@@ -970,7 +970,9 @@ class DiscoveryIntegration:
         args['stream'] = value
         review = args.get('review')
         reviewed = None
-        if review is not None:
+        refs = [*(args.get('approve') or []), *(args.get('dismiss') or [])]
+        explicit = bool(refs) and (bool(args.get('day')) or all(str(ref).startswith('p_') for ref in refs))
+        if review is not None and not explicit:
             if not isinstance(review, str) or not re.fullmatch(r'[0-9a-fA-F]{12}', review):
                 raise UserError('Review code must be exactly 12 hex characters')
             reviewed = {r for r in data['digests'] if hashlib.sha256(r.encode()).hexdigest()[:12] == review.lower()}
@@ -1000,19 +1002,24 @@ class DiscoveryIntegration:
                     name = data['digests'][run]['stream']
                     if name not in latest: latest[name] = run
             transcript_runs = set(latest.values()) or None
+        if value and transcript_runs is not None:
+            transcript_runs = {r for r in transcript_runs if data['digests'][r]['stream'] == value} or None
+        selected = reviewed if reviewed is not None else transcript_runs
         if today is None:
-            candidates = [d for d in data['digests'].values() if not value or d['stream'] == value]
+            exact_runs = {data['proposals'][str(ref)]['binding']['run_id'] for ref in refs if str(ref) in data['proposals']}
+            relevant = exact_runs if refs and all(str(ref).startswith('p_') for ref in refs) else None
+            if not explicit: relevant = selected
+            candidates = [d for d in data['digests'].values() if (not value or d['stream'] == value)
+                          and (relevant is None or d['run_id'] in relevant)
+                          and (not args.get('day') or args['day'] == 'yesterday' or d['day'] == args['day'])]
             zones = {self.store.get_run(d['run_id'])['config'].get('timezone', self.rt.settings.timezone) for d in candidates}
             if len(zones) > 1 and not value:
                 raise UserError('streams have different frozen local days; specify stream for reply')
             today = self.utcnow().astimezone(ZoneInfo(next(iter(zones), self.rt.settings.timezone))).date().isoformat()
-        if value and transcript_runs is not None:
-            transcript_runs = {r for r in transcript_runs if data['digests'][r]['stream'] == value} or None
-        selected = reviewed if reviewed is not None else transcript_runs
         def resolve(ref):
             return self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=value, runs=selected)
         # Resolve the whole reply before the first dismissal or conversion writes anything.
-        resolved = {str(ref): resolve(ref) for ref in [*(args.get('approve') or []), *(args.get('dismiss') or [])]}
+        resolved = {str(ref): resolve(ref) for ref in refs}
         return self._decide_resolved(args, resolve=lambda ref: resolved.get(str(ref)) or resolve(ref))
 
     def _decide_resolved(self, args, *, resolve):

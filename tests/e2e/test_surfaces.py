@@ -109,8 +109,7 @@ def test_reply_from_another_chat_creates_once(world, host_factory):
 def test_reply_in_native_delivery_thread_resolves_the_digest(world, host_factory, monkeypatch):
     """The native job attaches to the session; for an origin without a topic the host opens a delivery
     thread in the same chat and seeds it with the delivered digest (the host's own SessionStore and cron
-    seeder). A numbered reply typed there answers the digest shown in that thread; another topic of the
-    same chat cannot."""
+    seeder). Both that thread and another topic can answer the digest, without duplicate tasks."""
     from host_threads import HostSessions
     host, day = day_with_one_proposal(world, host_factory, [])
     sessions = HostSessions(world.hermes_home, monkeypatch)

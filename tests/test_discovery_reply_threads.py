@@ -56,12 +56,10 @@ SOURCE_CONFIG = {'source_key': 'feed', 'name': 'Feed', 'account_key': 'account',
                  'relevance': {'identity_requirements': [], 'rules': 'All unresolved project issues'}}
 
 
-# ---------------------------------------------------------------- N2 exact origin wins
+# ---------------------------------------------------------------- conversation context wins, not origin location
 
-def test_bare_number_in_a_streams_own_thread_origin_resolves_that_stream(settings, data_dir, tmp_path, monkeypatch, home):
-    """Stream 'work' set up in chat 123; stream 'home' set up from inside thread 99 of chat 123.
-    Different surfaces render plain numbers, so a bare '1' typed in thread 99 (home's own origin,
-    where home's digests arrive) resolves home's item 1."""
+def test_origin_location_alone_does_not_choose_between_two_streams(settings, data_dir, tmp_path, monkeypatch, home):
+    """Without a digest in the transcript, two recent streams require a stream name."""
     from alchemy_task import discovery_integration
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     monkeypatch.setattr(discovery_integration, '_profile_home', lambda: integration.home)
@@ -80,9 +78,8 @@ def test_bare_number_in_a_streams_own_thread_origin_resolves_that_stream(setting
 
 
 def test_stream_set_up_inside_another_streams_delivery_thread_keeps_bare_replies(settings, data_dir, tmp_path, monkeypatch, home):
-    """Real host: work's digest is delivered into a host-opened thread of chat 123; the user sets
-    up stream 'home' while talking in that thread. A bare '1' there is home's (exact origin);
-    naming the stream reaches work's item from the same thread."""
+    """The mirrored work digest controls bare replies even if home was configured here later.
+    Naming home explicitly reaches its newest digest from the same thread."""
     from alchemy_task import discovery_integration
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     monkeypatch.setattr(discovery_integration, '_profile_home', lambda: integration.home)
@@ -254,8 +251,7 @@ def test_bare_number_in_an_older_digests_delivery_thread_resolves_that_digest(se
 
 
 def test_delivery_thread_still_answers_after_conversation_turns(settings, data_dir, tmp_path, monkeypatch):
-    """The proof is the thread's FIRST row (the host's seed); later user and assistant turns in
-    the delivery thread do not change which digest it answers."""
+    """Later conversation without another digest still resolves the mirrored digest."""
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     host = HostSessions(integration.home, monkeypatch)
     try:
@@ -277,9 +273,7 @@ def test_delivery_thread_still_answers_after_conversation_turns(settings, data_d
 # ---------------------------------------------------------------- R2-2 the delivery thread belongs to the origin
 
 def test_digest_delivered_into_another_chat_is_replyable(settings, data_dir, tmp_path, monkeypatch):
-    """Telegram keys a thread under its own chat: a thread this stream's own job opened in a
-    different chat (same header, same digest text, the job's own captured origin) is not the
-    origin's delivery thread."""
+    """A digest mirrored in a different Telegram chat is still replyable."""
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     host = HostSessions(integration.home, monkeypatch)
     try:
@@ -300,10 +294,7 @@ def test_digest_delivered_into_another_chat_is_replyable(settings, data_dir, tmp
                                         {'chat_name': 'general', 'scope_id': None}],
                          ids=['another_guild', 'another_channel_same_guild', 'job_origin_not_the_origin_channel'])
 def test_discord_job_channel_name_and_scope_do_not_filter_replies(settings, data_dir, tmp_path, monkeypatch, job_origin):
-    """Discord keys a thread as its own chat, so the chat check cannot bind it. A different job
-    with the same name (job-9, created in another channel) delivers this digest's full text into a
-    thread of its own channel. The host records the delivering job's origin channel and guild on
-    the thread it seeds, and that origin is not this stream's origin, so nothing is created."""
+    """Discord job headers, channel names and scope IDs do not authorize or filter replies."""
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     host = HostSessions(integration.home, monkeypatch)
     try:
@@ -321,8 +312,7 @@ def test_discord_job_channel_name_and_scope_do_not_filter_replies(settings, data
 # ---------------------------------------------------------------- N3 forum topics
 
 def test_any_forum_topic_accepts_replies_and_confirmed_config(settings, data_dir, tmp_path, monkeypatch):
-    """Origin: the General area of a forum group. A different member's unrelated topic cannot
-    approve a proposal or a source configuration; the topic the host opened for the digest can."""
+    """Any forum topic may approve the only recent digest and confirmed source configuration."""
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     host = HostSessions(integration.home, monkeypatch)
     try:

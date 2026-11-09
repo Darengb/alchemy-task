@@ -91,11 +91,11 @@ APPROVE_1 = {'approve': ['1'], 'edits': {'1': {'area': 'work', 'undated': True}}
 # host's own SessionStore and cron seeder in test_discovery_reply_threads.py.
 
 @pytest.mark.parametrize('origin,reply', [
-    # another chat (cross-chat isolation)
+    # another chat
     (dict(chat_id='123', chat_type='dm'), dict(chat_id='456', chat_type='dm')),
     # another chat's thread
     (dict(chat_id='123', chat_type='dm'), dict(chat_id='456', chat_type='dm', thread_id='99')),
-    # origin has its own topic: the host never opens a new thread, so another topic is refused
+    # another topic, even when the origin is itself a topic
     (dict(chat_id='123', chat_type='group', thread_id='7'), dict(chat_id='123', chat_type='group', thread_id='8')),
     # same chat id on a different platform
     (dict(chat_id='123', chat_type='dm'), dict(platform='discord', chat_id='123', chat_type='dm', thread_id='99')),
