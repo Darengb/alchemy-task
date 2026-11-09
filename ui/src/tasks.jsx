@@ -50,7 +50,7 @@ export function TaskRow({ task, from, compact, showDate, selected }) {
     overlay.open(e.currentTarget, (close) => <RowMenu task={task} close={close} />, { width: 236, align: 'end' })
   }
   return (
-    <div className={cx('at-row', compact && 'is-compact', done && 'is-done', selected && 'is-selected')}
+    <div className={cx('at-row', compact && 'is-compact', done && 'is-done', selected && 'is-selected', overdue && 'is-late')}
          {...bind(task, from)} onClick={() => { overlay.close(); actions.open(task.task_id) }}
          onKeyDown={(e) => {
            if (e.key === 'Enter') { overlay.close(); actions.open(task.task_id) }
@@ -58,13 +58,13 @@ export function TaskRow({ task, from, compact, showDate, selected }) {
          }}
          tabIndex={0} role="button" aria-label={task.title} data-task={task.task_id}>
       <Check checked={done} onChange={() => actions.toggle(task)} label={done ? 'Mark not done' : 'Mark done'}
-             size={compact ? 'sm' : 'md'} tone={task.priority === 'urgent' || task.priority === 'high' ? 'high' : undefined} />
+             size={compact ? 'sm' : 'md'} tone={overdue || task.priority === 'urgent' || task.priority === 'high' ? 'high' : undefined} />
       <div className="at-row-main">
         <div className="at-row-title" title={compact ? task.title : undefined}>{task.title}</div>
         {compact ? null : (
           <div className="at-row-meta">
             {task.area ? <span className="at-meta-area"><AreaDot area={task.area} />{task.area}</span> : null}
-            {showDate || overdue ? <span className={cx('at-meta-date', overdue && 'is-late')}>{D.relativeDay(D.taskDate(task), today)}</span> : null}
+            {showDate ? <span className={cx('at-meta-date', overdue && 'is-late')}>{D.relativeDay(D.taskDate(task), today)}</span> : null}
             {dueDiffers ? <span className="at-meta-due">due {D.relativeDay(task.due, today)}</span> : null}
             {task.priority === 'urgent' || task.priority === 'high' ? <span className="at-meta-prio">{task.priority}</span> : null}
             {task.status === 'waiting' ? <span className="at-meta-status">waiting</span> : null}
@@ -209,10 +209,11 @@ export function MonthView({ anchor, narrow }) {
   const expand = (date, el) => overlay.open(el, (close) => <DayPopover date={date} close={close} />, { width: 360 })
   const gridRef = React.useRef(null)
   const [cellH, setCellH] = React.useState(110)
+  const [cellW, setCellW] = React.useState(160)
   React.useLayoutEffect(() => {
     const el = gridRef.current
     if (!el) return undefined
-    const ro = new ResizeObserver(() => setCellH(el.clientHeight / weeks.length))
+    const ro = new ResizeObserver(() => { setCellH(el.clientHeight / weeks.length); setCellW(el.clientWidth / 7) })
     ro.observe(el)
     return () => ro.disconnect()
   }, [weeks.length])
@@ -237,9 +238,9 @@ export function MonthView({ anchor, narrow }) {
               <div className="at-cell-head">
                 <span className="at-cell-num">{D.dayNum(d) === 1 ? `${D.monthName(d, 'short')} 1` : D.dayNum(d)}</span>
                 {isToday && overdue.length ? (
-                  <button type="button" className="at-chip at-tone-late" data-no-drag=""
+                  <button type="button" className="at-chip at-tone-late" data-no-drag="" title={`${overdue.length} overdue`}
                           onClick={(e) => { e.stopPropagation(); expand(d, e.currentTarget.closest('.at-cell')) }}>
-                    {overdue.length} overdue
+                    {cellW < 140 ? `${overdue.length} late` : `${overdue.length} overdue`}
                   </button>
                 ) : null}
               </div>
@@ -430,7 +431,7 @@ export function TasksView({ narrow }) {
           <Button variant="ghost" size="sm" onClick={() => setAnchor(today)} disabled={a === today && view !== 'month'}>Today</Button>
           <IconButton icon="chevL" label="Previous" onClick={() => step(-1)} />
           <IconButton icon="chevR" label="Next" onClick={() => step(1)} />
-          <h1 className="at-period">{view === 'day' && narrow ? D.monthName(a) : D.periodLabel(view, a, today)}</h1>
+          <h1 className="at-period">{view === 'day' ? D.periodLabel('month', a, today) : D.periodLabel(view, a, today)}</h1>
         </div>
         <div className="at-toolbar-right">
           <Segmented label="View" value={view} onChange={(v) => setPrefs({ view: v })}

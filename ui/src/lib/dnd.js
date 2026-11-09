@@ -75,7 +75,6 @@ export function DragProvider({ onDrop, children }) {
     const g = document.createElement('div')
     g.className = 'at-drag-ghost at-vars'
     g.textContent = task.title
-    g.style.width = `${Math.min(w || 260, 300)}px`
     g.style.transform = `translate(${x + 12}px, ${y - 20}px)`
     document.body.appendChild(g)
     ghost.current = g
