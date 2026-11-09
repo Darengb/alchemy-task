@@ -916,3 +916,19 @@ html.at-dragging { -webkit-user-select: none; user-select: none; }
 .at-title-input.is-idle { cursor: text; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .at-title-input { transition: background .2s, box-shadow .2s, transform .2s var(--at-ease); }
 .at-title-input.is-armed { background: var(--at-accent-tint); box-shadow: 0 0 0 6px var(--at-accent-tint), 0 0 24px rgba(60, 70, 255, .35); transform: scale(.985); }
+
+/* "Copied" tooltip under the title, with a pointer up to it */
+.at-title-wrap { position: relative; flex: 1; min-width: 0; display: flex; }
+.at-copied {
+  position: absolute; left: 0; top: calc(100% + 10px); z-index: 5;
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: 6px;
+  background: #eef0ff; color: var(--at-ink); box-shadow: 0 8px 24px rgba(0, 0, 10, .5), 0 0 18px rgba(150, 160, 255, .35);
+  font-family: var(--at-display); font-size: 14px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+  pointer-events: none; animation: at-copied .2s var(--at-ease);
+}
+.at-copied::before {
+  content: ''; position: absolute; left: 16px; top: -5px; width: 10px; height: 10px; background: #eef0ff;
+  transform: rotate(45deg); border-radius: 2px 0 0 0;
+}
+.at-copied .at-icon { color: var(--at-accent); }
+@keyframes at-copied { from { opacity: 0; transform: translateY(-4px); } }

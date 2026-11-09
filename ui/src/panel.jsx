@@ -21,6 +21,16 @@ export function TaskPanel({ id, narrow, onClose }) {
   const [loadError, setLoadError] = React.useState(null)
   const [editing, setEditing] = React.useState(false)
   const [stale, setStale] = React.useState(false)
+  // The "Copied" tooltip under the title stays until the next tap, click or key press anywhere.
+  const [copied, setCopied] = React.useState(false)
+  React.useEffect(() => {
+    if (!copied) return undefined
+    const hide = () => setCopied(false)
+    document.addEventListener('pointerdown', hide, true)
+    document.addEventListener('keydown', hide, true)
+    return () => { document.removeEventListener('pointerdown', hide, true); document.removeEventListener('keydown', hide, true) }
+  }, [copied])
+  React.useEffect(() => setCopied(false), [id])
 
   const load = React.useCallback(() => {
     setLoadError(null)
@@ -120,11 +130,14 @@ export function TaskPanel({ id, narrow, onClose }) {
   ), { width: 180 })
 
   // Hand the task to chat: copies its title and ID. Runs inside the tap or release that triggers it.
+  // Success shows a "Copied" tooltip under the title; only failures get a toast.
   const copyForChat = async () => {
     const cur = store.getState().byId[id] || task
     if (navigator.vibrate) navigator.vibrate(12)
     const ok = await copyText(taskHandoff(cur))
-    toast(ok ? 'Copied title and ID. Paste it into a chat with Hermes.' : 'Could not copy. Your browser blocked the clipboard.', ok ? {} : { tone: 'error' })
+    if (ok) setCopied(true)
+    else toast('Could not copy. Your browser blocked the clipboard.', { tone: 'error' })
+    return ok
   }
 
   return (
@@ -143,7 +156,7 @@ export function TaskPanel({ id, narrow, onClose }) {
       ) : null}
       <div className="at-panel-titlerow">
         <Check checked={isDone(task)} onChange={async () => { if (await settle()) actions.toggle(store.getState().byId[id] || task) }} label={isDone(task) ? 'Mark not done' : 'Mark done'} size="lg" />
-        <TitleField value={task.title} done={isDone(task)} onSave={(title) => patch({ title })} onLongPress={copyForChat} />
+        <TitleField value={task.title} done={isDone(task)} onSave={(title) => patch({ title })} onLongPress={copyForChat} copied={copied} />
       </div>
       <div className="at-fields">
         <button type="button" className={cx('at-field', date && date < today && !isDone(task) && 'is-late')} onClick={pickDate}>
@@ -210,7 +223,7 @@ function PanelShell({ narrow, onClose, actions, children }) {
 
 // The title edits in place on a tap. Pressing and holding it (while it is not being edited) copies the task
 // for chat instead. The copy runs on release, because browsers only allow clipboard writes in a gesture.
-function TitleField({ value, done, onSave, onLongPress }) {
+function TitleField({ value, done, onSave, onLongPress, copied }) {
   const [v, setV] = React.useState(value)
   const [editing, setEditing] = React.useState(false)
   const [armed, setArmed] = React.useState(false)
@@ -259,6 +272,7 @@ function TitleField({ value, done, onSave, onLongPress }) {
     setEditing(true)
   }
   return (
+    <div className="at-title-wrap">
     <textarea ref={ref} rows={1} className={cx('at-title-input', done && 'is-done', armed && 'is-armed', !editing && 'is-idle')}
               value={v} aria-label="Title" readOnly={!editing}
               title={editing ? undefined : 'Tap to edit. Press and hold to copy for chat.'}
@@ -273,6 +287,8 @@ function TitleField({ value, done, onSave, onLongPress }) {
                 if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() }
                 if (e.key === 'Escape') { e.preventDefault(); setV(value); e.currentTarget.blur() }
               }} />
+      {copied ? <span className="at-copied" role="status"><Icon name="check" size={13} strokeWidth={2.4} />Copied</span> : null}
+    </div>
   )
 }
 
