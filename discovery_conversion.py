@@ -267,9 +267,11 @@ class DiscoveryConversion:
             if candidate.get('action_id'):
                 fm['discovery_action_ids'] = list(dict.fromkeys([*(fm.get('discovery_action_ids') or []), candidate['action_id']]))
             # Append synthesis before existing managed dossiers, preserving every old section.
+            # One block per dossier revision (source keys its context marker by revision),
+            # so a later run's context is added next to, never instead of, earlier context.
             additions = [x for x in active_research['new_information'] if x and x not in body]
             if additions or active_goal or correction_overlay is not None:
-                start_marker, end_marker = f'<!-- discovery-context:start {dossier_id} -->', f'<!-- discovery-context:end {dossier_id} -->'
+                start_marker, end_marker = f'<!-- discovery-context:start {dossier_id} {revision} -->', f'<!-- discovery-context:end {dossier_id} {revision} -->'
                 text = start_marker + '\n### Discovery context\n\n' + '\n'.join('- ' + x for x in additions) + '\n' + end_marker
                 if start_marker in body:
                     body, _ = upsert_managed_block(body, start_marker=start_marker, end_marker=end_marker, block=text)

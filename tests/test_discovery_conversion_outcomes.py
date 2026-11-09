@@ -160,6 +160,32 @@ def test_batch_approval_reports_complete_item_as_done_and_still_creates_new_item
     assert _proposal_states(integration, run) == {'1': 'complete', '2': 'complete'}
 
 
+# ---------------------------------------------------------------- F3 repeat enrichment keeps earlier context
+def test_later_enrichment_of_same_unit_appends_context_and_keeps_earlier(settings, data_dir, tmp_path):
+    tasks = TaskStore(settings, data_dir)
+    task = tasks.create(title='Launch work', area='work', undated=True, research=False, notes='User words. slack:T1:C1:171.1:171.2')
+    rt, store, run1, wid, conv = _one_unit(settings, data_dir, new_information=['Earlier finding: vendor approved budget.'])
+    conv.prepare(run1, wid, choice='auto', useful_delta=True, reason='Useful verified delta.', target_task_id=task.task_id,
+                 expected_revision=tf.content_hash(tf.parse_file(task.path).raw))
+    conv.apply(run1, wid)
+    run2 = _next_day_same_unit(store, wid, ['Later finding: launch moved to Friday.'], 'Launch is Friday.')
+    outcome = conv.match(run2, wid)
+    assert outcome['kind'] == 'exact'
+    plan2 = conv.prepare(run2, wid, choice='auto', useful_delta=True, reason='New verified delta.', target_task_id=task.task_id,
+                         expected_revision=outcome['targets'][0]['revision'])
+    conv.apply(run2, wid)
+    body = tf.parse_file(task.path).body
+    notes = body.split('## Notes', 1)[1].split('\n## ', 1)[0]
+    assert 'User words.' in notes
+    assert 'Earlier finding: vendor approved budget.' in notes and 'Later finding: launch moved to Friday.' in notes
+    assert notes.index('Earlier finding') < notes.index('Later finding')
+    assert notes.count('### Discovery context') == 2
+    assert body.count('Discovery context added') == 2
+    dossier = 'dos-' + wid[2:]
+    assert body.count(f'<!-- discovery-dossier:start {dossier} -->') == 1
+    assert f"**Content revision:** `{plan2['dossier_revision']}`" in body
+
+
 # ---------------------------------------------------------------- M6 visible Log line
 def test_enrichment_adds_one_dated_log_line_naming_the_revision(settings, data_dir, tmp_path):
     tasks = TaskStore(settings, data_dir)
