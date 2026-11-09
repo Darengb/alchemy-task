@@ -117,13 +117,14 @@ Handlers admit the request and parse asynchronous bodies before offloading synch
 ```json
 {
   "summary": {"pending": 0, "approved": 0, "complete": 0, "dismissed": 0,
-              "auto_updated": 0, "conflicts": 0, "failures": 0},
+              "auto_updated": 0, "conflicts": 0, "failures": 0, "deferred": 0},
   "degraded": false,
-  "outcomes": []
+  "outcomes": [],
+  "deferred": []
 }
 ```
 
-The four proposal counts read the current digest ledger. `auto_updated` counts locally applied existing-task outcomes (`local_verified`, `git_pending`, `phone_pending`, `complete`), excluding noops; pending remote delivery does not hide a completed local update. Conflicts/failures count the corresponding run arrays, with frozen digest failures included and title-enriched copies of the same failure counted once. `degraded` is true when failures exist or any checked source coverage status differs from `complete`. Every list record includes these fields without another detail request.
+The four proposal counts read the current digest ledger. `auto_updated` counts locally applied existing-task outcomes (`local_verified`, `git_pending`, `phone_pending`, `complete`), excluding noops; pending remote delivery does not hide a completed local update. Conflicts/failures count the corresponding run arrays, with frozen digest failures included and title-enriched copies of the same failure counted once. `degraded` is true when failures exist or any checked source coverage status differs from `complete`. `deferred` lists the never-started candidates the daily research cap deferred to the next run (each with `candidate_id`, `title` and `reason`), and `summary.deferred` is its count (additive; adaptation-plan summary deferred count). Deferred work is neither a failure nor degraded. Every list record includes these fields without another detail request.
 
 Every proposal preserves all frozen content, including `proposal_id`, `unit_id`, `run_id`, `ref`, `number`, `day`, `expires`, `kind`, `title`, `current_understanding`, `substantive_next_action`, `new_information`, `source_links`, `related_context_links`, `sources_unavailable`, `research_disposition`, `uncertainty`, and `targets`. Targets retain `task_id`, `title`, `path`, `status`, `revision` and any additional existing fields. Proposals add `state:"pending"|"approved"|"dismissed"|"complete"`, `expired:boolean`, and, for approved/complete items:
 

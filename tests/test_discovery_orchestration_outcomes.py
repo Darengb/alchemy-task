@@ -406,7 +406,7 @@ def test_cap_deferral_is_a_separate_digest_line_and_stays_queued_for_the_next_ru
     backlog = {e['candidate']['title']: e['status'] for e in integration.store.source_state('work', 'feed')['backlog']}
     assert backlog == {'Review release notes': 'accepted', 'Plan vendor renewal': 'deferred'}
     record = call('discovery_runs', {'run_id': run})
-    assert record['summary']['failures'] == 0 and not record['degraded']
+    assert record['summary']['failures'] == 0 and record['summary']['deferred'] == 1 and not record['degraded']
     assert [d['title'] for d in record['deferred']] == ['Plan vendor renewal']
 
     # Same day, nothing new at the source: the deferred item is carried, researched

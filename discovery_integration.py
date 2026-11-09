@@ -1006,7 +1006,7 @@ class DiscoveryIntegration:
                 if receipt.get('applied_at'): outcome['applied_at'] = receipt['applied_at']
         result['summary'] = {state: sum(p['state'] == state for p in proposals) for state in ('pending', 'approved', 'complete', 'dismissed')}
         result['summary'].update(auto_updated=sum(o['status'] in {'local_verified', 'git_pending', 'phone_pending', 'complete'} for o in result['outcomes']),
-                                 conflicts=len(result['conflicts']), failures=len(result['failures']))
+                                 conflicts=len(result['conflicts']), failures=len(result['failures']), deferred=len(result['deferred']))
         result['degraded'] = bool(result['failures'] or any(c.get('status') != 'complete' for c in result['coverage']))
         return result
 

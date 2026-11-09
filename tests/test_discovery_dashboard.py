@@ -65,7 +65,7 @@ def test_projection_reads_current_ledger_preserving_frozen_fields(tmp_path, sett
     item = result['proposals'][0]
     assert item == {**proposal, 'state': 'dismissed', 'expired': False}
     assert result['summary'] == dict(pending=0, approved=0, complete=0, dismissed=1,
-                                    auto_updated=0, conflicts=0, failures=0)
+                                    auto_updated=0, conflicts=0, failures=0, deferred=0)
     assert result['degraded'] is False
     assert result['outcomes'] == []
     assert service.digest.get(run)['items'][0] == proposal
@@ -327,7 +327,7 @@ def test_run_list_newest_filters_and_full_summaries(tmp_path, settings, data_dir
     url = '/api/plugins/alchemy-task/runs'
     records = client.get(url, headers=owner).json()['runs']
     assert [r['run_id'] for r in records] == [later, run]
-    assert all(set(r['summary']) == {'pending', 'approved', 'complete', 'dismissed', 'auto_updated', 'conflicts', 'failures'} for r in records)
+    assert all(set(r['summary']) == {'pending', 'approved', 'complete', 'dismissed', 'auto_updated', 'conflicts', 'failures', 'deferred'} for r in records)
     assert [r['run_id'] for r in client.get(url + '?stream=work', headers=owner).json()['runs']] == [run]
     assert [r['run_id'] for r in client.get(url + '?day_from=2030-01-02&day_to=2030-01-02', headers=owner).json()['runs']] == [later]
     assert client.get(url + '?day_from=bad', headers=owner).json()['error']['code'] == 'invalid_request'
