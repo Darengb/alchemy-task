@@ -311,12 +311,22 @@ class DiscoveryConversion:
                 if key not in latest or order > latest[key][0]:
                     latest[key] = (order, receipt, plan)
         tasks, repairs = self.rt.store(), []
+        by_id = {}
+        if latest:
+            # One workspace scan indexes every task (resolve() rescans per call).
+            for doc in tasks.scan().tasks:
+                by_id.setdefault(doc.fm.get('task_id'), []).append(doc)
         for (task_id, dossier_id), (_, receipt, plan) in sorted(latest.items()):
             base = {'run_id': receipt['run_id'], 'unit_id': receipt['unit_id'], 'task_id': task_id, 'dossier_id': dossier_id}
-            try:
-                body = tasks.resolve(task_id).body
-            except Exception as exc:  # noqa: BLE001 - report, never repair
-                repairs.append({**base, 'reason': 'task missing: ' + type(exc).__name__}); continue
+            hits = by_id.get(task_id, [])
+            if len(hits) != 1:
+                repairs.append({**base, 'reason': 'task missing: NeedsInput'}); continue  # same label resolve() gave
+            doc = hits[0]
+            body = doc.body
+            ids = doc.fm.get('dossier_ids')
+            if not isinstance(ids, list) or dossier_id not in ids:
+                # Source _inline_dossier_valid also requires the frontmatter link.
+                repairs.append({**base, 'reason': 'dossier_ids missing dossier'}); continue
             start, end = f'<!-- discovery-dossier:start {dossier_id} -->', f'<!-- discovery-dossier:end {dossier_id} -->'
             if body.count(start) != 1 or body.count(end) != 1 or body.index(end) < body.index(start):
                 repairs.append({**base, 'reason': 'inline dossier mismatch'}); continue

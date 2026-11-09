@@ -386,3 +386,43 @@ def test_registered_link_audit_tool_is_read_only(settings, data_dir, tmp_path):
     assert path.read_bytes() == tampered
     outsider = json.loads(tools['discovery_link_audit']({}, session_id='outsider'))
     assert outsider['ok'] is True and outsider['result']['repairs'] == []
+
+
+def test_link_audit_reports_a_task_whose_frontmatter_lost_the_dossier_id(settings, data_dir, tmp_path):
+    """Source _inline_dossier_valid also needs the dossier ID in frontmatter dossier_ids."""
+    rt, store, run, wid, conv = _one_unit(settings, data_dir)
+    conv.prepare(run, wid, choice='create', user_approved=True, area='work', undated=True, reason='Approved.')
+    receipt = conv.apply(run, wid)
+    path = rt.store().resolve(receipt['task_id']).path
+    raw = path.read_text()
+    doc = tf.parse_file(path)
+    assert doc.fm.get('dossier_ids')
+    assert conv.audit_links()['repairs'] == []
+    head, sep, body = raw[3:].partition('\n---')
+    lines = head.split('\n')
+    start = next(i for i, line in enumerate(lines) if line.startswith('dossier_ids:'))
+    end = start + 1
+    while end < len(lines) and lines[end].startswith(('- ', '  ')):
+        end += 1
+    lines[start:end] = ['dossier_ids: []']
+    path.write_text('---' + '\n'.join(lines) + sep + body)
+    assert tf.parse_file(path).fm.get('dossier_ids') == []
+    assert '<!-- discovery-dossier:start ' in path.read_text()  # inline block itself untouched
+    tampered = path.read_bytes()
+    out = conv.audit_links()
+    assert [(r['task_id'], r['reason']) for r in out['repairs']] == [(receipt['task_id'], 'dossier_ids missing dossier')]
+    assert path.read_bytes() == tampered
+
+
+def test_link_audit_scans_the_task_workspace_once_for_many_links(settings, data_dir, tmp_path, monkeypatch):
+    integration, rt, ctx, store, run = _integration(settings, data_dir, tmp_path, count=3)
+    _propose_all(integration, store, run)
+    out = integration.decide({'approve': ['1', '2', '3'], 'day': '2030-01-01',
+                              'edits': {n: {'area': 'work', 'undated': True} for n in ('1', '2', '3')}},
+                             session_id='parent', today='2030-01-02')
+    assert len({r['task_id'] for r in out['results']}) == 3
+    scans = []
+    original = TaskStore.scan
+    monkeypatch.setattr(TaskStore, 'scan', lambda self: scans.append(1) or original(self))
+    assert integration.conversion.audit_links() == {'dry_run': True, 'repairs': []}
+    assert len(scans) == 1
