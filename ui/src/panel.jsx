@@ -163,7 +163,7 @@ export function TaskPanel({ id, narrow, onClose }) {
       }
       // Route 1 (a messaging chat) answers in seconds; route 2 (a new session) through the scheduler in about
       // a minute. A messaging handoff the gateway does not take within ~10 s becomes a new session.
-      const newChat = 'Starting a new chat for this task. Hermes will message you there within a minute.'
+      const newChat = 'Starting a new chat for this task. Hermes will message you there in about a minute.'
       const res = await api.handoff(id, narrow ? 'phone' : 'dashboard')
       const h = res.handoff
       if (h.route === 'session') { toast(newChat, { duration: 7000 }); return }
@@ -174,7 +174,7 @@ export function TaskPanel({ id, narrow, onClose }) {
         const st = (await api.handoffStatus(h.id)).handoff
         if (st.state === 'sent') { toast(`Sent. Hermes will message you on ${where}.`); return }
         if (st.route === 'session' && st.state === 'started') {
-          toast(`${where} did not respond, so Hermes is starting a new chat instead. It will message you there within a minute.`,
+          toast(`${where} did not respond, so Hermes is starting a new chat instead. It will message you there in about a minute.`,
             { duration: 8000 })
           return
         }

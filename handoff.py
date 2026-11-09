@@ -236,6 +236,10 @@ def request(rt: Runtime, task: dict[str, Any], surface: str) -> dict[str, Any]:
     else:
         rec.update(route="session", state="started", reason=why, session=start_session(rt, task, surface))
     _write(_queue_dir(rt) / (f"{hid}.json" if target else f"{hid}.done.json"), rec)
+    if target:
+        # Make sure a background worker in this process watches the request, so the fallback happens even if
+        # the user closes the app and the gateway never takes it. It inherits this request's profile.
+        ensure_relay(rt.ctx, Path(rt.data_dir))
     return public(rec)
 
 
@@ -329,12 +333,6 @@ def in_gateway_process() -> bool:
         return False
 
 
-def in_dashboard_process() -> bool:
-    """True in the dashboard's process or its plugin host (``HERMES_DASHBOARD_PUBLIC_URL`` is set there).
-    Like the gateway check, a disclosed seam: Hermes has no public "which host am I in" call yet."""
-    return bool(os.environ.get("HERMES_DASHBOARD_PUBLIC_URL"))
-
-
 def relay_once(rt: Any, now: float | None = None, *, data_dir: Path | None = None) -> list[str]:
     """Deliver pending messaging requests from the gateway's process. ``rt`` only needs ``ctx`` (and
     ``data_dir`` when none is passed): the relay thread passes its profile's folder explicitly."""
@@ -388,19 +386,16 @@ class _RelayRuntime:
 
 
 def _loop(ctx: Any, data_dir: Path, stop: threading.Event) -> None:
-    """Runs in the context captured when the plugin loaded (see ensure_relay), so Hermes's notion of the
-    current profile is the plugin's own: a job it schedules lands in this profile."""
-    wait = POLL_SECONDS
+    """Runs in the context captured when it was started (see ensure_relay), so Hermes's notion of the current
+    profile is the plugin's own: a job it schedules lands in this profile. Only the gateway's process delivers
+    to messaging chats; any process may do the fallback, because the claim lets only one act on a request."""
     relay_rt = _RelayRuntime(ctx)
-    while not stop.wait(wait):
+    while not stop.wait(POLL_SECONDS):
         try:
-            gateway, dashboard = in_gateway_process(), in_dashboard_process()
-            # Outside the gateway's and dashboard's processes there is nothing to do; check now and then.
-            wait = POLL_SECONDS if (gateway or dashboard) else 30.0
-            if gateway:
+            if in_gateway_process():
                 relay_once(relay_rt, data_dir=data_dir)
-            if (gateway or dashboard) and any(not p.name.endswith(".done.json")
-                                              for p in (Path(data_dir) / "handoffs").glob("*.json")):
+            folder = Path(data_dir) / "handoffs"
+            if folder.is_dir() and any(not p.name.endswith(".done.json") for p in folder.glob("*.json")):
                 fallback_once(Runtime(ctx, data_dir=Path(data_dir)), data_dir)
         except Exception:  # noqa: BLE001 - keep relaying
             pass
