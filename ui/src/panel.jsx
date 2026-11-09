@@ -10,7 +10,7 @@ import { AreaDot, Button, Check, DatePicker, Disclosure, Icon, IconButton, Menu,
 import { isDone } from './tasks.jsx'
 
 const PRIORITIES = ['urgent', 'high', 'normal', 'low']
-const PLATFORMS = { telegram: 'Telegram', discord: 'Discord', slack: 'Slack', whatsapp: 'WhatsApp', signal: 'Signal',
+const PLATFORMS = { gui: 'the Hermes app', desktop: 'Hermes Desktop', tui: 'the terminal', telegram: 'Telegram', discord: 'Discord', slack: 'Slack', whatsapp: 'WhatsApp', signal: 'Signal',
   photon: 'iMessage', bluebubbles: 'iMessage', matrix: 'Matrix', teams: 'Teams', email: 'email', sms: 'SMS' }
 // "Telegram" for the home channel; "Telegram (Ops team)" for a named chat that worked on the task.
 const chatLabel = (t) => {
@@ -164,11 +164,12 @@ export function TaskPanel({ id, narrow, onClose }) {
       const res = await api.handoff(id, narrow ? 'phone' : 'dashboard')
       const h = res.handoff
       const where = chatLabel(h.target)
+      const into = h.target && h.target.kind === 'app' ? 'in' : 'on'
       toast(`Sending to ${where}…`)
       for (let i = 0; i < 100; i++) {
         await new Promise((r) => setTimeout(r, 1000))
         const st = (await api.handoffStatus(h.id)).handoff
-        if (st.state === 'sent') { toast(`Sent. Hermes will message you on ${where}.`); return }
+        if (st.state === 'sent') { toast(`Sent. Hermes will message you ${into} ${where}.`); return }
         if (st.state === 'failed') { toast(st.error || 'Could not send it to chat.', { tone: 'error' }); return }
       }
       toast('Still sending. Hermes will message you when it picks this up.', { tone: 'error' })

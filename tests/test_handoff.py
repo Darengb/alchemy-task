@@ -17,12 +17,13 @@ TELEGRAM_DM = {"session_key": "agent:main:telegram:dm:555", "source": "telegram"
                "last_activity_at": 100.0}
 TELEGRAM_GROUP = {"session_key": "agent:main:telegram:group:-1:7", "source": "telegram", "display_name": "Ops",
                   "last_activity_at": 200.0}
-DESKTOP = {"session_key": "ses_abc", "source": "desktop", "last_activity_at": 300.0}
+APP = {"id": "20261109_080859_ca6a5c", "session_key": None, "source": "gui", "title": "Hi", "last_activity_at": 300.0}
+CRON = {"id": "c1", "session_key": "agent:main:local:dm:c1", "source": "cron", "last_activity_at": 400.0}
 
 
 @pytest.fixture
 def sessions(monkeypatch):
-    rows = {"s-dm": TELEGRAM_DM, "s-group": TELEGRAM_GROUP, "s-desk": DESKTOP}
+    rows = {"s-dm": TELEGRAM_DM, "s-group": TELEGRAM_GROUP, "s-app": APP, "s-cron": CRON}
     monkeypatch.setattr(ho, "_session_row", lambda sid: rows.get(sid))
     monkeypatch.setattr(ho, "_home_targets", lambda: [ho._chat_target(TELEGRAM_DM, "home")])
     monkeypatch.setattr(ho, "injection_allowed", lambda: True)
@@ -64,9 +65,12 @@ def test_target_prefers_the_newest_chat_that_worked_on_the_task(ctx, sessions):
     rt = runtime.Runtime(ctx)
     ho.remember_chat(rt, "t1", "s-dm")
     ho.remember_chat(rt, "t1", "s-group")
-    ho.remember_chat(rt, "t1", "s-desk")  # local sessions are not messaging chats
+    ho.remember_chat(rt, "t1", "s-cron")  # a cron run is not a chat anyone reads
     t = ho.resolve_target(rt, "t1")
-    assert t["session_key"] == TELEGRAM_GROUP["session_key"] and t["reason"] == "task"
+    assert t["session_key"] == TELEGRAM_GROUP["session_key"] and t["reason"] == "task" and t["kind"] == "chat"
+    ho.remember_chat(rt, "t1", "s-app")  # a newer chat in the Hermes app wins, addressed by its session id
+    t = ho.resolve_target(rt, "t1")
+    assert t["kind"] == "app" and t["session_key"] == APP["id"] and t["chat_name"] == "Hi"
 
 
 def test_target_uses_a_linked_work_session(ctx, sessions):
@@ -106,13 +110,17 @@ def test_route_queues_and_the_gateway_relay_injects_into_that_chat(client, ctx, 
     out = client.post(f"/tasks/{t['task_id']}/handoff", json={"surface": "phone"}).json()
     assert out["ok"] and out["mode"] == "chat"
     h = out["handoff"]
-    assert h["state"] == "pending" and h["target"] == {"platform": "telegram", "chat_name": "Sam", "reason": "home"}
+    assert h["state"] == "pending"
+    assert h["target"] == {"platform": "telegram", "kind": "chat", "chat_name": "Sam", "reason": "home"}
 
     inject = Injector()
     ctx.inject_message = inject
     rt = runtime.Runtime(ctx)
     monkeypatch.setattr(ho, "in_gateway_process", lambda: False)
+    monkeypatch.setattr(ho, "in_dashboard_process", lambda: False)
     assert ho.relay_once(rt) == [] and not inject.calls  # never outside the gateway's process
+    monkeypatch.setattr(ho, "in_dashboard_process", lambda: True)
+    assert ho.relay_once(rt) == [] and not inject.calls  # the dashboard leaves messaging chats to the gateway
     monkeypatch.setattr(ho, "in_gateway_process", lambda: True)
     assert ho.relay_once(rt) == [h["id"]]
     assert inject.calls[0]["session_key"] == TELEGRAM_DM["session_key"] and inject.calls[0]["role"] == "user"
@@ -126,6 +134,7 @@ def test_a_refused_injection_is_retried_later_then_reported(client, ctx, session
     h = client.post(f"/tasks/{t['task_id']}/handoff", json={}).json()["handoff"]
     ctx.inject_message = Injector(ok=False)
     monkeypatch.setattr(ho, "in_gateway_process", lambda: True)
+    monkeypatch.setattr(ho, "in_dashboard_process", lambda: False)
     rt = runtime.Runtime(ctx)
     now = time.time()
     assert ho.relay_once(rt, now) == []
@@ -150,3 +159,36 @@ def test_without_permission_the_route_says_how_to_allow_it(client, sessions, mon
     body = out.json()
     assert out.status_code == 400 and body["error"]["code"] == "permission"
     assert "allow_gateway_injection true" in body["error"]["message"]
+
+
+def test_app_chats_go_through_the_dashboard_process(client, ctx, sessions, monkeypatch):
+    t = make_task(client, "Plan the offsite")
+    ho.remember_chat(runtime.Runtime(ctx), t["task_id"], "s-app")
+    h = client.post(f"/tasks/{t['task_id']}/handoff", json={"surface": "phone"}).json()["handoff"]
+    assert h["target"]["kind"] == "app" and h["target"]["platform"] == "gui"
+    inject = Injector()
+    ctx.inject_message = inject
+    rt = runtime.Runtime(ctx)
+    monkeypatch.setattr(ho, "in_gateway_process", lambda: True)
+    monkeypatch.setattr(ho, "in_dashboard_process", lambda: False)
+    assert ho.relay_once(rt) == [] and not inject.calls  # the gateway leaves app chats alone
+    monkeypatch.setattr(ho, "in_gateway_process", lambda: False)
+    monkeypatch.setattr(ho, "in_dashboard_process", lambda: True)
+    assert ho.relay_once(rt) == [h["id"]] and inject.calls[0]["session_key"] == APP["id"]
+
+
+def test_an_app_chat_that_is_not_open_reports_it_quickly(client, ctx, sessions, monkeypatch):
+    t = make_task(client, "Order the banners")
+    ho.remember_chat(runtime.Runtime(ctx), t["task_id"], "s-app")
+    h = client.post(f"/tasks/{t['task_id']}/handoff", json={}).json()["handoff"]
+    ctx.inject_message = Injector(ok=False)
+    monkeypatch.setattr(ho, "in_gateway_process", lambda: False)
+    monkeypatch.setattr(ho, "in_dashboard_process", lambda: True)
+    rt = runtime.Runtime(ctx)
+    now = time.time()
+    ho.relay_once(rt, now)
+    ho.relay_once(rt, now + 3)  # retried after a short wait
+    assert len(ctx.inject_message.calls) == 2
+    ho.relay_once(rt, now + ho.APP_GIVE_UP_SECONDS + 1)
+    st = client.get(f"/handoffs/{h['id']}").json()["handoff"]
+    assert st["state"] == "failed" and "Open it" in st["error"]

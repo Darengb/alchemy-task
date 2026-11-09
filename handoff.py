@@ -28,8 +28,12 @@ PLUGIN = "alchemy-task"
 SURFACES = {"dashboard": "the web dashboard", "phone": "a phone", "desktop": "the desktop app"}
 POLL_SECONDS = 1.0
 GIVE_UP_SECONDS = 90  # no gateway took it in this long: report it instead of waiting forever
+APP_GIVE_UP_SECONDS = 20  # an app chat that is not open in the dashboard's process now cannot take it
 KEEP_SECONDS = 24 * 3600
-NOT_CHATS = {"cli", "tui", "desktop", "gui", "acp", "cron", "subagent", "api", "webhook", "batch", ""}
+# Chats in the Hermes app and desktop app run in the dashboard's process and are addressed by session id;
+# messaging chats (Telegram, Discord, ...) run in the gateway and are addressed by their routing key.
+APP_SOURCES = {"gui", "desktop", "tui"}
+NOT_CHATS = {"cli", "acp", "cron", "subagent", "api", "webhook", "batch", "oneshot", "local", ""}
 _lock = threading.Lock()
 _relay: threading.Thread | None = None
 _stop = threading.Event()
@@ -101,15 +105,17 @@ def _session_row(session_id: str) -> dict[str, Any] | None:
 
 
 def _chat_target(row: dict[str, Any] | None, reason: str) -> dict[str, Any] | None:
-    """A messaging chat Hermes can inject into: a row with a session key from a chat platform."""
-    if not row or not row.get("session_key"):
+    """A chat Hermes can inject into: an app chat (by session id) or a messaging chat (by routing key)."""
+    if not row:
         return None
     platform = str(row.get("source") or "").lower()
-    if platform in NOT_CHATS:
+    name = str(row.get("display_name") or row.get("title") or "")[:80]
+    base = {"platform": platform, "chat_name": name, "reason": reason, "last_activity": row.get("last_activity_at") or 0}
+    if platform in APP_SOURCES and row.get("id"):
+        return {**base, "kind": "app", "session_key": str(row["id"])}
+    if platform in NOT_CHATS or platform in APP_SOURCES or not row.get("session_key"):
         return None
-    name = row.get("display_name") or row.get("title") or ""
-    return {"session_key": row["session_key"], "platform": platform, "chat_name": str(name)[:80], "reason": reason,
-            "last_activity": row.get("last_activity_at") or 0}
+    return {**base, "kind": "chat", "session_key": row["session_key"]}
 
 
 def _home_targets() -> list[dict[str, Any]]:
@@ -196,7 +202,8 @@ def request(rt: Runtime, task: dict[str, Any], surface: str) -> dict[str, Any]:
 def public(rec: dict[str, Any]) -> dict[str, Any]:
     t = rec.get("target") or {}
     return {"id": rec["id"], "task_id": rec["task_id"], "state": rec["state"], "error": rec.get("error"),
-            "target": {"platform": t.get("platform"), "chat_name": t.get("chat_name"), "reason": t.get("reason")}}
+            "target": {"platform": t.get("platform"), "kind": t.get("kind") or "chat", "chat_name": t.get("chat_name"),
+                       "reason": t.get("reason")}}
 
 
 def status(rt: Runtime, hid: str) -> dict[str, Any]:
@@ -207,9 +214,8 @@ def status(rt: Runtime, hid: str) -> dict[str, Any]:
         p = d / name
         if p.exists():
             rec = json.loads(p.read_text(encoding="utf-8"))
-            if rec["state"] == "pending" and time.time() - rec["created"] > GIVE_UP_SECONDS:
-                rec["state"], rec["error"] = "failed", ("Hermes did not pick this up. Check that the messaging "
-                                                        "gateway is running.")
+            if rec["state"] == "pending" and time.time() - rec["created"] > _give_up(rec) + 10:
+                rec["state"], rec["error"] = "failed", _late_error(rec)
             return public(rec)
     if any(d.glob(f"{hid}.claimed-*")):
         return {"id": hid, "state": "sending"}
@@ -219,6 +225,22 @@ def status(rt: Runtime, hid: str) -> dict[str, Any]:
 # ------------------------------------------------------------------ relay (a thread in every process that
 # loads the plugin; only the messaging gateway's own process takes requests, so a classic CLI, a cron worker
 # or the dashboard never receives one)
+
+def _give_up(rec: dict[str, Any]) -> float:
+    return APP_GIVE_UP_SECONDS if (rec.get("target") or {}).get("kind") == "app" else GIVE_UP_SECONDS
+
+
+def _late_error(rec: dict[str, Any]) -> str:
+    if (rec.get("target") or {}).get("kind") == "app":
+        return "That chat is not open in the Hermes app right now. Open it, then press Send to chat again."
+    return "Hermes did not pick this up. Check that the messaging gateway is running."
+
+
+def in_dashboard_process() -> bool:
+    """True in the dashboard's process (which runs app and desktop chats) or its plugin host. Like the gateway
+    check, this reads the marker the dashboard sets, since Hermes has no public call for it yet."""
+    return bool(os.environ.get("HERMES_DASHBOARD_PUBLIC_URL"))
+
 
 def in_gateway_process() -> bool:
     """True in the messaging gateway's process, or in the plugin host it starts (``plugins.isolation: host``).
@@ -236,7 +258,8 @@ def in_gateway_process() -> bool:
 
 def relay_once(rt: Runtime, now: float | None = None) -> list[str]:
     now = now or time.time()
-    if not in_gateway_process():
+    kinds = {k for k, here in (("chat", in_gateway_process()), ("app", in_dashboard_process())) if here}
+    if not kinds:
         return []
     d = _queue_dir(rt)
     sent = []
@@ -251,6 +274,12 @@ def relay_once(rt: Runtime, now: float | None = None) -> list[str]:
         hid = p.stem
         if _skip_until.get(hid, 0) > now:
             continue
+        try:
+            peek = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if ((peek.get("target") or {}).get("kind") or "chat") not in kinds:
+            continue  # another process's job
         claimed = p.with_name(f"{hid}.claimed-{os.getpid()}")
         try:
             os.rename(p, claimed)  # only one process wins the claim
@@ -261,9 +290,8 @@ def relay_once(rt: Runtime, now: float | None = None) -> list[str]:
         except (OSError, ValueError):
             claimed.unlink(missing_ok=True)
             continue
-        if now - rec.get("created", now) > GIVE_UP_SECONDS:
-            rec.update(state="failed", error="Hermes did not pick this up. Check that the messaging gateway is "
-                                             "running.")
+        if now - rec.get("created", now) > _give_up(rec):
+            rec.update(state="failed", error=_late_error(rec))
             _write(d / f"{hid}.done.json", rec)
             claimed.unlink(missing_ok=True)
             continue
@@ -276,8 +304,8 @@ def relay_once(rt: Runtime, now: float | None = None) -> list[str]:
             _write(d / f"{hid}.done.json", rec)
             claimed.unlink(missing_ok=True)
             sent.append(hid)
-        else:  # not the gateway process, or the gateway refused: give it back
-            _skip_until[hid] = now + 15
+        else:  # refused (for an app chat: not open here right now): give it back and retry shortly
+            _skip_until[hid] = now + (2 if (rec.get("target") or {}).get("kind") == "app" else 15)
             os.rename(claimed, p)
     return sent
 
@@ -288,7 +316,7 @@ def _loop() -> None:
         try:
             # Outside the gateway's process there is nothing to do; check again now and then, in case this
             # process becomes the gateway.
-            wait = POLL_SECONDS if in_gateway_process() else 30.0
+            wait = POLL_SECONDS if (in_gateway_process() or in_dashboard_process()) else 30.0
             if wait == POLL_SECONDS:
                 relay_once(Runtime())
         except Exception:  # noqa: BLE001 - keep relaying
