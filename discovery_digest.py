@@ -127,7 +127,7 @@ class DiscoveryDigest:
         except KeyError as exc:
             raise UserError('no immutable digest for this run') from exc
 
-    def resolve(self, ref, *, session_id, today, day='', stream='', origin_sessions=(), runs=None):
+    def resolve(self, ref, *, session_id, today, day='', stream='', origin_sessions=(), runs=None, days=None):
         date = dt.date.fromisoformat(today)
         if day == 'yesterday': day = (date - dt.timedelta(days=1)).isoformat()
         data = self._load()
@@ -137,6 +137,12 @@ class DiscoveryDigest:
                 and (not day or x['binding']['day'] == day)]
         if runs is not None and not day and not str(ref).startswith('p_'):
             hits = [x for x in hits if x['run_id'] in runs]
+        elif days is not None and not day and not str(ref).startswith('p_'):
+            # A digest seen unquoted in the conversation selects its stream's whole
+            # local day: daily numbers continue across same-day digests.
+            hits = [x for x in hits if days.get(x['stream']) == x['day']]
+            if not stream and str(ref).isdigit() and len(days) > 1:
+                raise UserError('ambiguous reply; which stream? ' + ', '.join(sorted(days)))
         elif not day and not str(ref).startswith('p_'):
             # The newest digest selects each stream's daily numbering. Numbers continue
             # across same-day invocations, including an empty rerun; old days never
@@ -155,7 +161,10 @@ class DiscoveryDigest:
             if not stream and str(ref).isdigit() and len(selected) > 1:
                 raise UserError('ambiguous reply; which stream? ' + ', '.join(sorted(selected)))
         if len(hits) != 1:
-            raise UserError('proposal reply is missing or ambiguous; specify which stream and exact day/proposal_id')
+            streams = sorted({x['stream'] for x in hits})
+            if len(streams) > 1:
+                raise UserError('ambiguous reply; which stream? ' + ', '.join(streams))
+            raise UserError('proposal reply is missing or ambiguous; specify the day or exact proposal_id, or reply to the digest message')
         if hits[0]['expires'] < today:
             raise UserError('proposal expired after seven days')
         return hits[0]

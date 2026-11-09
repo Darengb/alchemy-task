@@ -988,10 +988,12 @@ class DiscoveryIntegration:
             return sorted(positions, key=lambda run: positions[run], reverse=True)
         # The latest user's reply-to pointer wins over any digest elsewhere in history.
         transcript_runs = None
+        quoted = False
         users = [m for m in reversed(messages) if m.get('role') == 'user' and isinstance(m.get('content'), str)]
         if users:
             quote = re.search(r'\[Replying to(?: your previous message)?: "(.*?)"\]', users[0]['content'], re.S)
             if quote: transcript_runs = set(present(quote[1])) or None
+            quoted = transcript_runs is not None
         if transcript_runs is None:
             # Different streams anywhere in the active conversation need disambiguation;
             # for one stream take only its most recently mentioned digest.
@@ -1016,8 +1018,12 @@ class DiscoveryIntegration:
             if len(zones) > 1 and not value:
                 raise UserError('streams have different frozen local days; specify stream for reply')
             today = self.utcnow().astimezone(ZoneInfo(next(iter(zones), self.rt.settings.timezone))).date().isoformat()
+        # A review code or reply-to quote binds that exact digest. An unquoted digest in
+        # the conversation selects its stream's local day, so same-day reruns keep numbers.
+        exact = reviewed if reviewed is not None else (transcript_runs if quoted else None)
+        days = None if exact is not None or transcript_runs is None else {data['digests'][r]['stream']: data['digests'][r]['day'] for r in transcript_runs}
         def resolve(ref):
-            return self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=value, runs=selected)
+            return self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=value, runs=exact, days=days)
         # Resolve the whole reply before the first dismissal or conversion writes anything.
         resolved = {str(ref): resolve(ref) for ref in refs}
         return self._decide_resolved(args, resolve=lambda ref: resolved.get(str(ref)) or resolve(ref))
