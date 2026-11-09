@@ -339,10 +339,10 @@ class DiscoveryIntegration:
         for old in self._all_runs():
             if old['config'].get('stream_name', old['stream']) == current['name'] and old.get('review'):
                 self.reconcile_endstate(old['run_id'])
-        # Production retention: closed runs older than 30 days (well past the
+        # Production retention: closed runs older than 60 days (well past the
         # seven-day reply window) become readable tombstones. prune() itself
         # keeps open, unresolved, referenced and pending-delivery runs.
-        self.store.prune(days=30)
+        self.store.prune(days=60)
         with self.store._lock('start:' + current['name']):
             # A finalized digest is distinct from unresolved conversion/delivery.
             # Resume unfinished scan/research on its ORIGINAL window and config.
@@ -1002,6 +1002,8 @@ class DiscoveryIntegration:
             if len(zones) > 1 and not value:
                 raise UserError('streams have different frozen local days; specify stream for reply')
             today = self.utcnow().astimezone(ZoneInfo(next(iter(zones), self.rt.settings.timezone))).date().isoformat()
+        if value and transcript_runs is not None:
+            transcript_runs = {r for r in transcript_runs if data['digests'][r]['stream'] == value} or None
         selected = reviewed if reviewed is not None else transcript_runs
         def resolve(ref):
             return self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=value, runs=selected)

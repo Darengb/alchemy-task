@@ -107,6 +107,32 @@ def _production(ledger):
         raise APIError('not_production', 'Only production runs permit mutation', 409)
 
 
+@router.get('/settings')
+async def settings(request: Request):
+    try:
+        _admit(request)
+        _query(request)
+        return await asyncio.to_thread(lambda: {'ok': True, 'approvals': _service().approval_settings()})
+    except (UserError, HTTPException, ValueError, KeyError, TypeError, OSError) as exc:
+        return _error(exc)
+
+
+@router.post('/settings')
+async def update_settings(request: Request):
+    try:
+        _admit(request)
+        _query(request)
+        body = await request.json()
+        if not isinstance(body, dict) or set(body) != {'approvals', 'user_approved'} or not isinstance(body['approvals'], dict):
+            raise APIError('invalid_request', 'Expected approvals:{owner_only:boolean} and user_approved:true')
+        def work():
+            return {'ok': True, 'approvals': _service().configure_approvals(body['approvals'],
+                    user_approved=body['user_approved'], dashboard=True)}
+        return await asyncio.to_thread(work)
+    except (UserError, HTTPException, ValueError, KeyError, TypeError, OSError) as exc:
+        return _error(exc)
+
+
 @router.get('/runs')
 async def runs(request: Request):
     try:

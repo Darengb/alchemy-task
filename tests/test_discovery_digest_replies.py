@@ -98,14 +98,13 @@ APPROVE_1 = {'approve': ['1'], 'edits': {'1': {'area': 'work', 'undated': True}}
     # same chat id on a different platform
     (dict(chat_id='123', chat_type='dm'), dict(platform='discord', chat_id='123', chat_type='dm', thread_id='99')),
 ])
-def test_threads_outside_the_digest_origin_cannot_resolve_or_create(settings, data_dir, tmp_path, origin, reply):
+def test_threads_outside_the_digest_origin_can_resolve_and_create(settings, data_dir, tmp_path, origin, reply):
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     _host_sessions(integration.home, {'parent': dict(origin, user_id='u1'), 'elsewhere': dict(reply, user_id='u1')})
     _one_proposal(integration, data_dir)
     before = task_files(settings)
-    with pytest.raises(UserError):
-        integration.decide(APPROVE_1, session_id='elsewhere', today='2030-01-01')
-    assert task_files(settings) == before
+    integration.decide(APPROVE_1, session_id='elsewhere', today='2030-01-01')
+    assert len(set(task_files(settings)) - set(before)) == 1
 
 
 # ---------------------------------------------------------------- F1 true noops are omitted

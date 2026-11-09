@@ -470,7 +470,7 @@ def _closed_work_run(integration, *, day, delivery, proposal_state=None, frozen_
     atomic_json(integration.digest.path, data)
     # An earlier start already reconciled it; it has been untouched since.
     integration.reconcile_endstate(run)
-    old = time.time() - 40 * 86400
+    old = time.time() - 70 * 86400
     import os
     os.utime(store.run_dir(run) / 'ledger.json', (old, old))
     return run
@@ -521,5 +521,5 @@ def test_native_digest_window_follows_the_owner_frozen_with_the_digest(settings,
     assert store.get_run(unsent)['pending_operations'] == ['digest_delivery']
     streams = _streams(rt); streams['work'] = {**streams['work'], 'delivery_owner': 'native_origin'}; _save_streams(rt, streams)
     assert integration.reconcile_endstate(unsent)['pending_operations'] == ['digest_delivery']
-    out = store.prune(days=30)
+    out = store.prune(days=60)
     assert native in out['deleted_runs'] and unsent not in out['deleted_runs']

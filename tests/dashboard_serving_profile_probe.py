@@ -111,6 +111,43 @@ base = '/api/plugins/alchemy-task'
 mine = '?profile=' + serving
 other = '?profile=beta'
 
+# Settings use the real mounted host, canonical auth and profile-local state.
+settings_url = base + '/settings'
+assert client.get(settings_url + mine).status_code == 401
+initial = client.get(settings_url + mine, headers=owner)
+assert initial.status_code == 200 and initial.json()['approvals']['owner_only'] is False, initial.text
+assert client.post(settings_url + mine, headers=owner, json={'approvals': {'owner_only': True}, 'user_approved': True}).status_code == 400
+# Owner identity must first come from a confirmed host-recorded sender in chat.
+token = set_hermes_home_override(str(home))
+try:
+    from host_threads import HostSessions
+    from pytest import MonkeyPatch
+    mp = MonkeyPatch()
+    sessions = HostSessions(home, mp)
+    try:
+        sid = sessions.message(chat_id='100', chat_type='dm', user_id='synthetic-owner')
+        settings = api._service().configure_approvals({'owner_only': True}, session_id=sid, user_approved=True)
+        assert settings['owners'] == {'telegram': ['synthetic-owner']}
+    finally:
+        sessions.close(); mp.undo()
+finally:
+    reset_hermes_home_override(token)
+assert client.get(settings_url + mine, headers=owner).json()['approvals']['owner_only'] is True
+for headers, query in (({}, mine), (owner, other)):
+    denied = client.post(settings_url + query, headers=headers, json={'approvals': {'owner_only': False}, 'user_approved': True})
+    assert denied.status_code >= 400, denied.text
+assert client.get(settings_url + mine, headers=owner).json()['approvals']['owner_only'] is True
+assert client.post(settings_url + mine, headers=owner, json={'approvals': {'owner_only': False}}).status_code == 400
+changed = client.post(settings_url + mine, headers=owner, json={'approvals': {'owner_only': False}, 'user_approved': True})
+assert changed.status_code == 200 and changed.json()['approvals']['owner_only'] is False, changed.text
+assert client.get(settings_url + mine, headers=owner).json()['approvals']['owner_only'] is False
+assert client.post(settings_url + mine, headers=owner, json={'approvals': {'owner_only': True}, 'user_approved': True}).json()['approvals']['owner_only'] is True
+token = set_hermes_home_override(str(beta))
+try:
+    assert api._service().approval_settings() == {'owner_only': False, 'owners': {}}
+finally:
+    reset_hermes_home_override(token)
+
 
 def snapshot():
     files = sorted(str(p.relative_to(ws)) for p in ws.glob('areas/*/tasks/*.md'))

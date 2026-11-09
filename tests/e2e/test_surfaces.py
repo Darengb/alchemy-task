@@ -93,15 +93,17 @@ def test_reply_from_a_new_session_in_the_origin_chat_resolves(world, host_factor
     assert proposal_states(host, day['run_id']) == {1: 'complete'}
 
 
-def test_reply_from_another_chat_is_refused_and_writes_nothing(world, host_factory):
+def test_reply_from_another_chat_creates_once(world, host_factory):
     host, day = day_with_one_proposal(world, host_factory, [('other-chat', '2002', '')])
     before = snapshot(world)
     out = P.approve(host, ['1'], session='other-chat')
-    assert out['ok'] is False and 'ambiguous' in out['message'], out
+    assert out['ok'], out
+    after = snapshot(world)
+    assert len(after['local']) == len(before['local']) + 1
     out = P.approve(host, ['1'], session='other-chat', day='2026-11-03')
-    assert out['ok'] is False, out
-    assert snapshot(world) == before
-    assert proposal_states(host, day['run_id']) == {1: 'pending'}
+    assert out['ok'], out
+    assert snapshot(world) == after
+    assert proposal_states(host, day['run_id']) == {1: 'complete'}
 
 
 def test_reply_in_native_delivery_thread_resolves_the_digest(world, host_factory, monkeypatch):
@@ -120,11 +122,12 @@ def test_reply_in_native_delivery_thread_resolves_the_digest(world, host_factory
     finally:
         sessions.close()
     before = snapshot(world)
-    refused = P.approve(host, ['1'], session=other_topic)
-    assert refused['ok'] is False and 'origin chat' in refused['message'], refused
-    assert snapshot(world) == before
+    accepted = P.approve(host, ['1'], session=other_topic)
+    assert accepted['ok'], accepted
+    after = snapshot(world)
     out = P.approve(host, ['1'], session=delivery_thread)
     assert out['ok'], out
+    assert snapshot(world) == after
     created = [p for p in world.task_files() if world.rel(p) not in before['local']]
     assert len(created) == 1 and frontmatter(created[0].read_text())['title'] == 'Draft Q1 vendor contract'
     assert proposal_states(host, day['run_id']) == {1: 'complete'}

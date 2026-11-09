@@ -73,7 +73,9 @@ def test_bare_number_in_a_streams_own_thread_origin_resolves_that_stream(setting
     assert labels == {'work': '', 'home': ''}
     _finalize(integration, data_dir, stream='work', origin_session='s-main')
     home_digest = _finalize(integration, data_dir, stream='home', origin_session='s-thread')
-    out = integration.decide({'dismiss': ['1']}, session_id='s-thread', today='2030-01-01')
+    with pytest.raises(UserError, match='which stream'):
+        integration.decide({'dismiss': ['1']}, session_id='s-thread', today='2030-01-01')
+    out = integration.decide({'dismiss': ['1'], 'stream': 'home'}, session_id='s-thread', today='2030-01-01')
     assert out['dismissed'] == [home_digest['items'][0]['proposal_id']]
 
 
@@ -97,9 +99,9 @@ def test_stream_set_up_inside_another_streams_delivery_thread_keeps_bare_replies
     finally:
         host.close()
     out = integration.decide({'dismiss': ['1']}, session_id=thread, today='2030-01-01')
-    assert out['dismissed'] == [home_digest['items'][0]['proposal_id']]
-    out = integration.decide({'dismiss': ['1'], 'stream': 'work'}, session_id=thread, today='2030-01-01')
     assert out['dismissed'] == [work['items'][0]['proposal_id']]
+    out = integration.decide({'dismiss': ['1'], 'stream': 'home'}, session_id=thread, today='2030-01-01')
+    assert out['dismissed'] == [home_digest['items'][0]['proposal_id']]
 
 
 # ---------------------------------------------------------------- host-opened delivery thread
@@ -163,7 +165,7 @@ def test_discord_reply_in_the_host_opened_delivery_thread_resolves_the_digest(se
 @pytest.mark.parametrize('case', ['thread_opened_by_a_member', 'thread_of_another_stream', 'same_text_under_another_job',
                                   'same_job_without_this_digest', 'member_thread_quoting_the_digest',
                                   'delivered_to_another_target', 'other_platform'])
-def test_discord_threads_that_are_not_this_digests_delivery_thread_are_refused(settings, data_dir, tmp_path, monkeypatch, case):
+def test_discord_reply_has_no_location_job_or_platform_filter(settings, data_dir, tmp_path, monkeypatch, case):
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     host = HostSessions(integration.home, monkeypatch)
     try:
@@ -201,9 +203,9 @@ def test_discord_threads_that_are_not_this_digests_delivery_thread_are_refused(s
     finally:
         host.close()
     before = task_files(settings)
-    with pytest.raises(UserError):
-        integration.decide(APPROVE_1, session_id=reply, today='2030-01-01')
-    assert task_files(settings) == before
+    result = integration.decide(APPROVE_1, session_id=reply, today='2030-01-01')
+    assert result['results'][0]['state'] == 'complete'
+    assert len(set(task_files(settings)) - set(before)) == 1
 
 
 # ---------------------------------------------------------------- R2-1 a delivery thread answers its own digest
@@ -274,7 +276,7 @@ def test_delivery_thread_still_answers_after_conversation_turns(settings, data_d
 
 # ---------------------------------------------------------------- R2-2 the delivery thread belongs to the origin
 
-def test_same_job_delivering_into_another_chat_is_refused(settings, data_dir, tmp_path, monkeypatch):
+def test_digest_delivered_into_another_chat_is_replyable(settings, data_dir, tmp_path, monkeypatch):
     """Telegram keys a thread under its own chat: a thread this stream's own job opened in a
     different chat (same header, same digest text, the job's own captured origin) is not the
     origin's delivery thread."""
@@ -289,16 +291,15 @@ def test_same_job_delivering_into_another_chat_is_refused(settings, data_dir, tm
     finally:
         host.close()
     before = task_files(settings)
-    with pytest.raises(UserError):
-        integration.decide(APPROVE_1, session_id=reply, today='2030-01-01')
-    assert task_files(settings) == before
+    integration.decide(APPROVE_1, session_id=reply, today='2030-01-01')
+    assert len(set(task_files(settings)) - set(before)) == 1
 
 
 @pytest.mark.parametrize('job_origin', [{'chat_name': 'Other guild / #general', 'scope_id': 'g2'},
                                         {'chat_name': 'Guild / #random', 'scope_id': 'g1'},
                                         {'chat_name': 'general', 'scope_id': None}],
                          ids=['another_guild', 'another_channel_same_guild', 'job_origin_not_the_origin_channel'])
-def test_discord_same_named_job_thread_in_another_channel_is_refused(settings, data_dir, tmp_path, monkeypatch, job_origin):
+def test_discord_job_channel_name_and_scope_do_not_filter_replies(settings, data_dir, tmp_path, monkeypatch, job_origin):
     """Discord keys a thread as its own chat, so the chat check cannot bind it. A different job
     with the same name (job-9, created in another channel) delivers this digest's full text into a
     thread of its own channel. The host records the delivering job's origin channel and guild on
@@ -313,14 +314,13 @@ def test_discord_same_named_job_thread_in_another_channel_is_refused(settings, d
     finally:
         host.close()
     before = task_files(settings)
-    with pytest.raises(UserError):
-        integration.decide(APPROVE_1, session_id=reply, today='2030-01-01')
-    assert task_files(settings) == before
+    integration.decide(APPROVE_1, session_id=reply, today='2030-01-01')
+    assert len(set(task_files(settings)) - set(before)) == 1
 
 
 # ---------------------------------------------------------------- N3 forum topics
 
-def test_forum_origin_accepts_only_the_host_opened_topic_for_replies_and_approvals(settings, data_dir, tmp_path, monkeypatch):
+def test_any_forum_topic_accepts_replies_and_confirmed_config(settings, data_dir, tmp_path, monkeypatch):
     """Origin: the General area of a forum group. A different member's unrelated topic cannot
     approve a proposal or a source configuration; the topic the host opened for the digest can."""
     integration, rt, ctx = service(settings, data_dir, tmp_path)
@@ -336,13 +336,11 @@ def test_forum_origin_accepts_only_the_host_opened_topic_for_replies_and_approva
         host.close()
     tools = _tools(integration, ctx)
     before = task_files(settings)
-    with pytest.raises(UserError):
-        integration.decide(APPROVE_1, session_id=other_topic, today='2030-01-01')
-    assert task_files(settings) == before
-    refused = json.loads(tools['discovery_config']({'action': 'source', 'stream': 'work', 'config': SOURCE_CONFIG,
+    integration.decide(APPROVE_1, session_id=other_topic, today='2030-01-01')
+    assert len(set(task_files(settings)) - set(before)) == 1
+    configured = json.loads(tools['discovery_config']({'action': 'source', 'stream': 'work', 'config': SOURCE_CONFIG,
                                                     'user_approved': True}, session_id=other_topic))
-    assert refused['ok'] is False and 'origin' in refused['error']
-    assert not ctx.state.get('discovery_sources')
+    assert configured['ok'] and ctx.state.get('discovery_sources')['work']['feed']['approved']
     integration.decide(APPROVE_1, session_id=delivery_topic, today='2030-01-01')
     assert len(set(task_files(settings)) - set(before)) == 1
     accepted = json.loads(tools['discovery_config']({'action': 'source', 'stream': 'work', 'config': SOURCE_CONFIG,
@@ -350,7 +348,7 @@ def test_forum_origin_accepts_only_the_host_opened_topic_for_replies_and_approva
     assert accepted['ok'] is True and ctx.state.get('discovery_sources')['work']['feed']['approved'] is True
 
 
-def test_reply_from_an_unrelated_thread_says_where_to_reply(settings, data_dir, tmp_path, monkeypatch):
+def test_reply_from_an_unrelated_thread_uses_the_only_recent_digest(settings, data_dir, tmp_path, monkeypatch):
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     host = HostSessions(integration.home, monkeypatch)
     try:
@@ -359,8 +357,9 @@ def test_reply_from_an_unrelated_thread_says_where_to_reply(settings, data_dir, 
                              user_name='Bee', parent_chat_id='555')
     finally:
         host.close()
-    with pytest.raises(UserError, match='reply in the origin chat'):
-        integration.decide(APPROVE_1, session_id=reply, today='2030-01-01')
+    before = task_files(settings)
+    integration.decide(APPROVE_1, session_id=reply, today='2030-01-01')
+    assert len(set(task_files(settings)) - set(before)) == 1
 
 
 # ---------------------------------------------------------------- N4 removed verified-sender stream

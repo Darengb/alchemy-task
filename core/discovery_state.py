@@ -1076,19 +1076,20 @@ class DiscoveryStore:
             ledger.pop('lease')
             self._save(run_id, ledger)
 
-    def prune(self, *, days: int = 30) -> dict[str, Any]:
+    def prune(self, *, days: int = 60) -> dict[str, Any]:
         """Age-prune resolved artifacts, retaining readable review/run tombstones.
 
-        Unlike the daily helper, age never deletes an open run, unresolved error,
-        attempt, upload, review choice or source backlog (backlog lives outside
-        run directories; a run with backlog still selected for it is kept). Conversion/delivery
-        completion states must be supplied by the later coordinator.
+        Pending, never-approved proposals can expire from storage after sixty days.
+        Open/resumable runs, errors, attempts, selected backlog, approved plans,
+        conversions and unverified explicit sends remain protected.
         """
         if type(days) is not int or days < 0:
             raise UserError('retention days must be non-negative')
         cutoff = dt.datetime.now(dt.timezone.utc).timestamp() - days * 86400
         retained, deleted = [], []
-        with self._lock('retention'):
+        with self._lock('retention'), self._lock('digest-ledger'):
+            digest_path = self.state_root / 'digest-ledger.json'
+            digest_data = read_json(digest_path, {'digests': {}, 'proposals': {}, 'delivery': {}})
             referenced_originals = {read_json(p, {}).get('lineage', {}).get('original_run_id') for p in (self.state_root / 'runs').glob('*/ledger.json')}
             # Backlog lives under sources/ and is never pruned; only a run that
             # still has backlog selected for it in progress is kept for it.
@@ -1098,11 +1099,23 @@ class DiscoveryStore:
                     continue
                 with self._lock(self._run_lock_name(path.name)):
                     ledger = self._load(path.name)
+                    # Pending review choices alone must not retain obsolete research forever.
+                    # Never infer this exemption from candidate state alone: require the exact
+                    # pending proposal and no saved conversion plan for that unit.
+                    old_pending = set()
+                    age = dt.datetime.now(dt.timezone.utc).timestamp() - (path / 'ledger.json').stat().st_mtime
+                    if age > 60 * 86400:
+                        old_pending = {p['binding']['unit_id'] for p in digest_data['proposals'].values()
+                                       if p['binding']['run_id'] == path.name and p['state'] == 'pending'
+                                       and not (path / 'conversions' / (p['binding']['unit_id'] + '.plan.json')).exists()}
                     unsettled = any(not x.get('parent_candidate_id') and x.get('prefilter_disposition') != 'excluded' and x.get('research_selection') != 'pilot_skipped' and x.get('decomposition_state') != 'complete' for x in ledger['candidates'])
-                    unsettled = unsettled or any(x.get('parent_candidate_id') and not x.get('research_disposition', '').startswith('exclude_') and x.get('state') != 'complete' for x in ledger['candidates'])
+                    unsettled = unsettled or any(x.get('parent_candidate_id') and x['candidate_id'] not in old_pending and not x.get('research_disposition', '').startswith('exclude_') and x.get('state') != 'complete' for x in ledger['candidates'])
                     attempts_pending = any(x['state'] != 'accepted_bundle' or x['fenced'] for x in ledger['attempts'].values())
                     young = (path / 'ledger.json').stat().st_mtime >= cutoff
-                    if path.name in referenced_originals or young or ledger['status'] != 'finalized' or path.name in selected_by or ledger['errors'] or unsettled or attempts_pending or ledger.get('pending_operations'):
+                    pending = [op for op in ledger.get('pending_operations', []) if op not in {'candidate:' + wid for wid in old_pending}]
+                    conversion_pending = any(not read_json(plan.with_name(plan.name.replace('.plan.json', '.receipt.json')), {}).get('state') == 'complete'
+                                             for plan in (path / 'conversions').glob('*.plan.json'))
+                    if path.name in referenced_originals or young or ledger['status'] != 'finalized' or path.name in selected_by or ledger['errors'] or unsettled or attempts_pending or pending or conversion_pending:
                         retained.append({'run_id': path.name, 'reason': 'unresolved_or_not_expired', 'status': ledger['status']})
                         continue
                     tombstone = {**ledger, 'pruned_at': now()}
@@ -1125,6 +1138,12 @@ class DiscoveryStore:
                     finally:
                         os.close(dirfd)
                     deleted.append(path.name)
+            if deleted and digest_path.exists():
+                digest_data['proposals'] = {pid: p for pid, p in digest_data['proposals'].items() if p['binding']['run_id'] not in deleted}
+                for run_id in deleted:
+                    digest_data['digests'].pop(run_id, None)
+                    digest_data['delivery'].pop(run_id, None)
+                atomic_json(digest_path, digest_data)
         return {'deleted_runs': deleted, 'retained_runs': retained, 'days': days}
 
     def quarantine(self, run_id: str, token: str, *, caller: dict[str, Any], payload: Any) -> dict[str, Any]:
