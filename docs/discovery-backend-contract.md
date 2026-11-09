@@ -8,7 +8,7 @@ The installing profile owns all mutable discovery state under its plugin data di
 
 ## Registered tools
 
-All handlers consume host `session_id`/`task_id` kwargs, never model-provided caller identity. New tools return `{ok,result}` or `{ok:false,error}`. Existing `discovery_start`, `discovery_submit`, `discovery_decide` retain the plugin's top-level receipt convention.
+All handlers consume host `session_id`/`task_id` kwargs, never model-provided caller identity. New tools return `{ok,result}` or `{ok:false,error}`. A stale task revision (the task changed after the caller read it) returns the structured `{ok:false,error:{code:"stale_revision",message}}`; re-read with `discovery_match` and decide again. Existing `discovery_start`, `discovery_submit`, `discovery_decide` retain the plugin's top-level receipt convention.
 
 | Tool | Required inputs and effect |
 | --- | --- |

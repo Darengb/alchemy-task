@@ -273,6 +273,23 @@ def test_prepare_with_outdated_task_revision_is_refused_without_plan(settings, d
     assert not (store.run_dir(run) / 'conversions' / (wid + '.plan.json')).exists()
 
 
+# ---------------------------------------------------------------- E2E-3 structured stale refusal from registered tools
+def test_registered_decision_with_stale_revision_returns_structured_refusal(settings, data_dir, tmp_path):
+    integration, rt, ctx, store, run = _integration(settings, data_dir, tmp_path, count=1)
+    unit = next(c['candidate_id'] for c in store.get_run(run)['candidates'] if c.get('parent_candidate_id'))
+    task = rt.store().create(title='Existing action', area='work', undated=True, research=False, notes='slack:T1:C1:171.1:171.2')
+    old_revision = integration.conversion.match(run, unit)['targets'][0]['revision']
+    rt.store().update(task.task_id, {'notes_append': 'Concurrent user edit.'})
+    edited = task.path.read_bytes()
+    tools = _register_tools(integration, ctx)
+    out = json.loads(tools['discovery_decision']({'run_id': run, 'unit_id': unit, 'decision': 'auto', 'reason': 'Useful verified delta.',
+                                                  'target_task_id': task.task_id, 'expected_revision': old_revision, 'useful_delta': True},
+                                                 session_id='parent'))
+    assert out['ok'] is False and out['error']['code'] == 'stale_revision' and out['error']['message'], out
+    assert task.path.read_bytes() == edited
+    assert not (store.run_dir(run) / 'decisions' / (unit + '.json')).exists()
+
+
 # ---------------------------------------------------------------- M2 exact proposal cannot become a plain proposal
 def test_exact_destination_cannot_be_recorded_as_a_user_proposal(settings, data_dir, tmp_path):
     integration, rt, ctx, store, run = _integration(settings, data_dir, tmp_path, count=1)

@@ -1077,6 +1077,9 @@ def register(ctx, *, integration=None):
                 if service.runner._child_for(session_id, task_id):
                     raise UserError('research child cannot use parent mutation/integration tools')
                 return json.dumps({'ok': True, 'result': handler(args, session_id=session_id, task_id=task_id, **kwargs)}, default=str)
+            except tf.ConcurrentEditError as exc:
+                # Same stable code the dashboard uses; the parent re-reads with discovery_match and retries.
+                return json.dumps({'ok': False, 'error': {'code': 'stale_revision', 'message': str(exc)[:1000] + '. The task changed; re-read it with discovery_match and decide again with the current revision.'}})
             except (UserError, ValueError, KeyError, TypeError, OSError) as exc:
                 return json.dumps({'ok': False, 'error': str(exc)[:1000]})
         return call
