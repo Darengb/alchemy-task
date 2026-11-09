@@ -242,6 +242,7 @@ def test_hooks_stay_fast_and_write_nothing_with_a_month_of_retained_runs(tmp_pat
     for _ in range(100):
         assert runner.pre_llm_call(session_id='unrelated') is None
     llm_ms = (time.perf_counter() - started) * 10
+    print(f'pre_tool_call {tool_ms:.3f} ms, pre_llm_call {llm_ms:.3f} ms per unrelated call')
     assert tool_ms < 5 and llm_ms < 5, (tool_ms, llm_ms)
     after = {p: p.read_bytes() for p in root.rglob('*') if p.is_file() and 'locks' not in p.parts}
     assert {p: b for p, b in after.items() if p in before} == before
@@ -368,3 +369,31 @@ def test_cap_deferral_is_a_separate_digest_line_and_stays_queued_for_the_next_ru
     assert 'No new follow-ups found.' not in digest2['text'] and 'degraded' not in digest2['text']
     assert 'Deferred: Plan vendor renewal: Daily research cap reached; queued for the next run' in digest2['text'].splitlines()
     assert {e['candidate']['title']: e['status'] for e in integration.store.source_state('work', 'feed')['backlog']}['Plan vendor renewal'] == 'deferred'
+
+
+def test_start_prunes_old_closed_runs_but_keeps_replyable_and_resumable_ones(settings, data_dir, tmp_path):
+    import os
+    from test_discovery_integration import configure, service
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    configure(integration)
+    store = integration.store
+    month_ago = time.time() - 40 * 86400
+
+    def closed(stream, age):
+        run = store.init_run(stream=stream, business_date='2026-01-01', origin={'session_id': 'old-parent'})
+        store.save_review(run, {'joined': {'accepted': [], 'failures': []}})
+        os.utime(store.run_dir(run) / 'ledger.json', (age, age))
+        return run
+    old = closed('archive', month_ago)
+    recent = closed('archive', time.time() - 3 * 86400)  # still inside the seven-day reply window
+    unfinished = store.init_run(stream='archive', business_date='2026-01-01', origin={'session_id': 'old-parent'})
+    os.utime(store.run_dir(unfinished) / 'ledger.json', (month_ago, month_ago))
+    # A blocked item in some source's durable backlog does not pin every run forever;
+    # the backlog itself lives outside run directories and is never pruned.
+    store.enqueue_backlog('archive', 'feed', [{'source_ids': ['source:feed:account:issue:x'], 'source_revision': 'v1', 'candidate': {'title': 'Blocked', 'source_ids': ['source:feed:account:issue:x']}}])
+    bid = store.source_state('archive', 'feed')['backlog'][0]['backlog_id']
+    store.update_backlog('archive', 'feed', bid, status='blocked', lineage={'run_id': unfinished})
+    integration.start('work', session_id='parent')
+    assert not store.run_dir(old).exists() and store.get_run(old)['pruned_at']  # readable tombstone
+    assert store.run_dir(recent).exists() and store.run_dir(unfinished).exists()
+    assert store.source_state('archive', 'feed')['backlog'][0]['status'] == 'blocked'

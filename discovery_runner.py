@@ -33,6 +33,14 @@ KNOWN_MUTATORS = frozenset({'task_create', 'task_update', 'task_checkpoint', 'ta
     'send_message', 'cronjob', 'write_file', 'patch'})
 
 
+# Discovery launches whose returned handle is not yet bound, per store root and
+# run: {(state_root, run_id): {token: parent_session}}. A subagent_start that
+# arrives meanwhile may be one of these children, so it is recorded on that run
+# only; an ordinary child started from the same chat at any other time is not.
+_INFLIGHT: dict[tuple[str, str], dict[str, str]] = {}
+_INFLIGHT_LOCK = threading.Lock()
+
+
 def normalize(value: Any) -> Any:
     """Public dataclasses and host wire Records, recursively including enums."""
     if isinstance(value, enum.Enum):
@@ -97,9 +105,24 @@ class DiscoveryRunner:
         # Trusted store lock, never held across a public/source/network call.
         with self.store._lock('runner:' + run):
             path = self.store.run_dir(run) / 'supervisor.json'
+            existed = path.exists()
             state = read_json(path, {'holds': [], 'reconciliations': {}, 'context_resources': self.context_resources})
+            before = json.dumps(state, sort_keys=True, default=str)
             yield state
-            atomic_json(path, state)
+            # Reads do not rewrite the file (it is consulted on hot paths).
+            if not existed or json.dumps(state, sort_keys=True, default=str) != before:
+                atomic_json(path, state)
+
+    def _inflight(self, run, token, parent=None):
+        key = (str(self.store.state_root), run)
+        with _INFLIGHT_LOCK:
+            tokens = _INFLIGHT.setdefault(key, {})
+            if parent is None:
+                tokens.pop(token, None)
+            else:
+                tokens[token] = parent
+            if not tokens:
+                _INFLIGHT.pop(key, None)
 
     def _parent(self, run, session_id):
         if not isinstance(session_id, str) or not session_id:
@@ -117,30 +140,53 @@ class DiscoveryRunner:
 
     def _child_for(self, session_id='', task_id=''):
         # Local durable run files only, never private host/lifecycle registries.
-        for path in (self.store.state_root / 'runs').iterdir():
-            if not (path / 'ledger.json').exists():
+        # The store's hook index names the only runs that can know this caller,
+        # so an unrelated session costs two small reads, not a ledger scan.
+        subagent = task_id if task_id.startswith('sa-') else ''
+        for run in self.store.child_runs(session_id, subagent):
+            if not (self.store.state_root / 'runs' / run / 'ledger.json').exists():
                 continue
-            ledger = self.store.get_run(path.name)
+            ledger = self.store.get_run(run)
             for attempt in ledger['attempts'].values():
                 handle = attempt.get('handle') or {}
-                if (session_id and attempt.get('child_session') == session_id) or (task_id.startswith('sa-') and handle.get('subagent_id') == task_id):
-                    return path.name, attempt
+                if (session_id and attempt.get('child_session') == session_id) or (subagent and handle.get('subagent_id') == subagent):
+                    return run, attempt
             for event in ledger.get('start_events', {}).values():
-                if session_id and event['child_session'] == session_id or task_id.startswith('sa-') and event['subagent_id'] == task_id:
-                    return path.name, None
+                if (session_id and event['child_session'] == session_id or subagent and event['subagent_id'] == subagent) and self._discovery_event(ledger, event):
+                    return run, None
         return None
+
+    @staticmethod
+    def _discovery_event(ledger, event):
+        # A start seen while discovery launches were unresolved is a discovery
+        # child until each of those launches returned a DIFFERENT bound handle.
+        # A launch that never returned a handle stays conservatively unknown.
+        if 'inflight' not in event:
+            return True
+        attempts = ledger['attempts']
+        if any((a.get('handle') or {}).get('subagent_id') == event['subagent_id'] for a in attempts.values()):
+            return True
+        return any(not (attempts.get(token) or {}).get('handle') for token in event['inflight'])
 
     def subagent_start(self, *, parent_session_id='', child_session_id='', child_subagent_id='', **_):
         if not parent_session_id or not child_session_id or not child_subagent_id:
             return
-        # A start may precede launch return. Store exact provisional pairs on all
-        # this parent's open research runs, never match title/launch position.
-        for path in (self.store.state_root / 'runs').iterdir():
-            if not (path / 'ledger.json').exists():
+        # A start may precede launch return. Record the exact provisional pair
+        # only on runs with an unresolved discovery launch from this parent (or
+        # a run already holding this handle), never on every open run of the
+        # chat and never by title/launch position (ORC-F4).
+        targets = {}
+        with _INFLIGHT_LOCK:
+            for (root, run), tokens in _INFLIGHT.items():
+                mine = sorted(t for t, parent in tokens.items() if parent == parent_session_id)
+                if root == str(self.store.state_root) and mine:
+                    targets[run] = mine
+        for run in self.store.child_runs(subagent_id=child_subagent_id):
+            targets.setdefault(run, None)
+        for run, inflight in targets.items():
+            if not (self.store.state_root / 'runs' / run / 'ledger.json').exists() or self.store.get_run(run)['status'] != 'open':
                 continue
-            ledger = self.store.get_run(path.name)
-            if ledger['status'] == 'open' and any(a['owner_session'] == parent_session_id for a in ledger['attempts'].values()):
-                self.store.record_start(path.name, parent_session=parent_session_id, child_session=child_session_id, subagent_id=child_subagent_id)
+            self.store.record_start(run, parent_session=parent_session_id, child_session=child_session_id, subagent_id=child_subagent_id, inflight=inflight)
 
     def pre_tool_call(self, tool_name='', args=None, session_id='', task_id='', **_):
         found = self._child_for(session_id, task_id)
@@ -160,14 +206,14 @@ class DiscoveryRunner:
         if not session_id:
             return None
         pending = []
-        for path in (self.store.state_root / 'runs').iterdir():
-            if not (path / 'ledger.json').exists():
+        # Index lookup, then exact read-only confirmation; no lock or write.
+        for run in self.store.open_runs_for(session_id):
+            if not (self.store.state_root / 'runs' / run / 'ledger.json').exists():
                 continue
-            ledger = self.store.get_run(path.name)
-            with self._state(path.name) as state:
-                owner = state.get('parent_session', ledger['origin'].get('session_id'))
+            ledger = self.store.get_run(run)
+            owner = read_json(self.store.run_dir(run) / 'supervisor.json', {}).get('parent_session', ledger['origin'].get('session_id'))
             if ledger['status'] == 'open' and owner == session_id:
-                pending.append(path.name)
+                pending.append(run)
         if pending:
             return {'context': 'Saved discovery work requires continuation in the SAME frozen run before any new source window: ' + ', '.join(pending) + '. Call discovery_research_run/recovery or review saved full payloads; this pointer does not schedule a turn.'}
         return None
@@ -341,6 +387,7 @@ class DiscoveryRunner:
             state['parent_session'] = session_id
             if fenced:
                 state['holds'] = list(set(state['holds'] + ['unknown_owner']))
+        self.store.set_open_parent(run_id, session_id)
         if old_parent == session_id and not owner_restarted:
             for a in self.store.get_run(run_id)['attempts'].values():
                 if a['terminal'] or not a['handle'] or a['owner_session'] != session_id:
@@ -392,6 +439,7 @@ class DiscoveryRunner:
         interrupted = False
         deferred = []
         cancelling = {}
+        launched = set()
         lifecycle = self.ctx.subagent_lifecycle
 
         def launch_worker(token, request, context):
@@ -436,6 +484,7 @@ class DiscoveryRunner:
                     except queue.Empty: break
                     if token not in active:
                         continue # late launch remains fenced/unknown audit, no new authority
+                    self._inflight(run_id, token)
                     if error:
                         self.store.fence_attempt(run_id, token, reason='launch_unknown', cancellation={'accepted': False, 'outcome': 'unknown', 'diagnostic': error})
                         active.pop(token)
@@ -451,7 +500,7 @@ class DiscoveryRunner:
                     handle = slot.get('handle')
                     if not handle:
                         if self.clock.monotonic() - slot['launch_start'] >= self.policy.pending_seconds:
-                            self._cancel(run_id, token, None, 'launch_unknown'); active.pop(token)
+                            self._cancel(run_id, token, None, 'launch_unknown'); active.pop(token); self._inflight(run_id, token)
                             admit_until = self.clock.monotonic()
                         continue
                     try:
@@ -500,6 +549,7 @@ class DiscoveryRunner:
                         raise
                     request = self._bootstrap(run_id, a)
                     active[a['token']] = {'handle': None, 'launch_start': self.clock.monotonic()}
+                    launched.add(a['token']); self._inflight(run_id, a['token'], session_id)
                     context = contextvars.copy_context()
                     threading.Thread(target=launch_worker, args=(a['token'], request, context), daemon=True, name='discovery-launch-' + a['token'][:8]).start()
                     maximum = max(maximum, len(active))
@@ -522,6 +572,8 @@ class DiscoveryRunner:
             raise
         finally:
             gate.clear()
+            for token in launched:
+                self._inflight(run_id, token)
             if active:
                 interrupted = True
                 for token, slot in active.items():

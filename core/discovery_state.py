@@ -83,10 +83,115 @@ class DiscoveryStore:
 
     def __init__(self, state_root: Path):
         self.state_root = Path(state_root)
-        for name in ('', 'runs', 'locks', 'sources', 'budgets', 'reviews', 'tombstones'):
+        for name in ('', 'runs', 'locks', 'sources', 'budgets', 'reviews', 'tombstones', 'hooks', 'hooks/children'):
             path = self.state_root / name
             path.mkdir(parents=True, exist_ok=True, mode=0o700)
             os.chmod(path, 0o700)
+        self._ensure_hook_index()
+
+    # Hook index: every tool and model call consults it, so lookups must not
+    # scan or parse run ledgers. Child keys map to the runs that recorded
+    # them; open runs map to their owner sessions. Both are derived data.
+    @staticmethod
+    def _child_key(key: str) -> tuple[str, str]:
+        digest = _hash(key.encode())
+        return digest[:2], digest[:40]
+
+    def _index_child(self, run_id: str, *keys: str) -> None:
+        """Map child keys to this run. 256 small bucket files keep each lookup tiny."""
+        wanted: dict[str, list[str]] = {}
+        for key in keys:
+            if key.split(':', 1)[1]:
+                bucket, digest = self._child_key(key)
+                wanted.setdefault(bucket, []).append(digest)
+        for bucket, digests in wanted.items():
+            path = self.state_root / 'hooks' / 'children' / (bucket + '.json')
+            if all(run_id in read_json(path, {}).get(d, []) for d in digests):
+                continue
+            with self._lock('hook-index:children:' + bucket):
+                index = read_json(path, {})
+                for digest in digests:
+                    if run_id not in index.setdefault(digest, []):
+                        index[digest].append(run_id)
+                atomic_json(path, index)
+
+    def child_runs(self, session_id: str = '', subagent_id: str = '') -> list[str]:
+        """Runs that recorded this child session or subagent ID (index lookup only)."""
+        found: list[str] = []
+        for key in ('session:' + (session_id or ''), 'subagent:' + (subagent_id or '')):
+            if key.split(':', 1)[1]:
+                bucket, digest = self._child_key(key)
+                runs = read_json(self.state_root / 'hooks' / 'children' / (bucket + '.json'), {}).get(digest, [])
+                found += [r for r in runs if r not in found]
+        return found
+
+    def _open_index_path(self) -> Path:
+        return self.state_root / 'hooks' / 'open-runs.json'
+
+    def _index_open(self, run_id: str, ledger: dict[str, Any], parent: str | None = None) -> None:
+        path = self._open_index_path()
+        entry = read_json(path, {}).get(run_id)
+        want = None
+        if ledger['status'] == 'open':
+            want = {**(entry or {}), 'origin': ledger['origin'].get('session_id')}
+            if parent is not None:
+                want['parent'] = parent
+        if want == entry:
+            return
+        with self._lock('hook-index:open'):
+            index = read_json(path, {})
+            if want is None:
+                index.pop(run_id, None)
+            else:
+                index[run_id] = {**index.get(run_id, {}), **want}
+            atomic_json(path, index)
+
+    def set_open_parent(self, run_id: str, session_id: str) -> None:
+        self._index_open(run_id, self._load(run_id), parent=session_id)
+
+    def open_runs_for(self, session_id: str) -> list[str]:
+        """Open runs whose current owner is this session (index lookup only)."""
+        return [run for run, entry in read_json(self._open_index_path(), {}).items()
+                if (entry.get('parent') or entry.get('origin')) == session_id]
+
+    def _ensure_hook_index(self) -> None:
+        ready = self.state_root / 'hooks' / 'ready'
+        if ready.exists():
+            return
+        # One-time build for state written before the index existed.
+        with self._lock('hook-index:build'):
+            if ready.exists():
+                return
+            buckets: dict[str, dict[str, list[str]]] = {}
+            opened = read_json(self._open_index_path(), {})
+            for path in sorted((self.state_root / 'runs').glob('*/ledger.json')):
+                ledger = read_json(path)
+                run_id = path.parent.name
+                keys = []
+                for attempt in ledger.get('attempts', {}).values():
+                    keys += ['session:' + (attempt.get('child_session') or ''),
+                             'subagent:' + ((attempt.get('handle') or {}).get('subagent_id') or '')]
+                for event in ledger.get('start_events', {}).values():
+                    keys += ['session:' + event['child_session'], 'subagent:' + event['subagent_id']]
+                for key in keys:
+                    if key.split(':', 1)[1]:
+                        bucket, digest = self._child_key(key)
+                        runs = buckets.setdefault(bucket, {}).setdefault(digest, [])
+                        if run_id not in runs:
+                            runs.append(run_id)
+                if ledger['status'] == 'open':
+                    parent = read_json(path.parent / 'supervisor.json', {}).get('parent_session')
+                    opened[run_id] = {'origin': ledger['origin'].get('session_id'), **({'parent': parent} if parent else {})}
+            for bucket, entries in buckets.items():
+                path = self.state_root / 'hooks' / 'children' / (bucket + '.json')
+                with self._lock('hook-index:children:' + bucket):
+                    index = read_json(path, {})
+                    for digest, runs in entries.items():
+                        index[digest] = [*index.get(digest, []), *[r for r in runs if r not in index.get(digest, [])]]
+                    atomic_json(path, index)
+            with self._lock('hook-index:open'):
+                atomic_json(self._open_index_path(), {**read_json(self._open_index_path(), {}), **opened})
+            atomic_write(ready, b'1\n')
 
     @contextlib.contextmanager
     def _lock(self, name: str) -> Iterator[None]:
@@ -126,6 +231,7 @@ class DiscoveryStore:
             raise UserError('pruned run cannot be recreated by a late transition')
         ledger['revision'] += 1
         atomic_json(self.run_dir(run_id) / 'ledger.json', ledger)
+        self._index_open(run_id, ledger)
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         return self._load(run_id)
@@ -148,7 +254,9 @@ class DiscoveryStore:
             for directory in (path, path / 'resources', path / 'spool', path / 'research', path / 'commits', path / 'uploads'):
                 directory.mkdir(parents=True, exist_ok=True, mode=0o700)
                 os.chmod(directory, 0o700)
-            atomic_json(path / 'ledger.json', {'schema_version': 2, 'run_id': run_id, 'stream': stream, 'business_date': business_date, 'config': config, 'config_revision': _hash(_json_bytes(config)), 'schema_revision': schema_revision or _hash(_json_bytes(child_schema())), 'origin': copy.deepcopy(origin or {}), 'lineage': copy.deepcopy(lineage or {}), 'created': now(), 'status': 'open', 'revision': 1, 'index_revision': None, 'candidates': [], 'cohorts': [], 'attempts': {}, 'resources': {}, 'page_receipts': {}, 'start_events': {}, 'errors': [], 'action_registry': {}})
+            ledger = {'schema_version': 2, 'run_id': run_id, 'stream': stream, 'business_date': business_date, 'config': config, 'config_revision': _hash(_json_bytes(config)), 'schema_revision': schema_revision or _hash(_json_bytes(child_schema())), 'origin': copy.deepcopy(origin or {}), 'lineage': copy.deepcopy(lineage or {}), 'created': now(), 'status': 'open', 'revision': 1, 'index_revision': None, 'candidates': [], 'cohorts': [], 'attempts': {}, 'resources': {}, 'page_receipts': {}, 'start_events': {}, 'errors': [], 'action_registry': {}}
+            atomic_json(path / 'ledger.json', ledger)
+            self._index_open(run_id, ledger)
         return run_id
 
     def add_candidates(self, run_id: str, supplied_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -411,10 +519,15 @@ class DiscoveryStore:
             raise UserError('attempt deadline passed')
         return attempt
 
-    def record_start(self, run_id: str, *, parent_session: str, child_session: str, subagent_id: str) -> None:
+    def record_start(self, run_id: str, *, parent_session: str, child_session: str, subagent_id: str, inflight: list[str] | None = None) -> None:
         with self._lock(self._run_lock_name(run_id)):
             ledger = self._load(run_id, open_only=True)
             event = {'parent_session': parent_session, 'child_session': child_session, 'subagent_id': subagent_id}
+            if inflight is not None:
+                # The discovery launches unresolved when this start arrived. The
+                # event belongs to one of them or to an unrelated child; it is
+                # never attached by position or title.
+                event['inflight'] = list(inflight)
             old = ledger['start_events'].get(subagent_id)
             if old and old != event:
                 raise UserError('contradictory start binding')
@@ -425,6 +538,7 @@ class DiscoveryStore:
                     if attempt['owner_session'] != parent_session:
                         raise UserError('start parent binding conflict')
                     attempt['child_session'] = child_session
+            self._index_child(run_id, 'session:' + child_session, 'subagent:' + subagent_id)
             self._save(run_id, ledger)
 
     def bind_attempt(self, run_id: str, token: str, handle: dict[str, Any], *, owner_session: str) -> dict[str, Any]:
@@ -445,6 +559,7 @@ class DiscoveryStore:
                 attempt['child_session'] = event['child_session']
             if attempt['state'] == 'launch_intent':
                 attempt['state'] = 'handle_bound'
+            self._index_child(run_id, 'subagent:' + handle['subagent_id'], 'session:' + (attempt['child_session'] or ''))
             self._save(run_id, ledger)
             return attempt
 
@@ -961,7 +1076,8 @@ class DiscoveryStore:
         """Age-prune resolved artifacts, retaining readable review/run tombstones.
 
         Unlike the daily helper, age never deletes an open run, unresolved error,
-        attempt, upload, review choice or source backlog. Conversion/delivery
+        attempt, upload, review choice or source backlog (backlog lives outside
+        run directories; a run with backlog still selected for it is kept). Conversion/delivery
         completion states must be supplied by the later coordinator.
         """
         if type(days) is not int or days < 0:
@@ -970,7 +1086,9 @@ class DiscoveryStore:
         retained, deleted = [], []
         with self._lock('retention'):
             referenced_originals = {read_json(p, {}).get('lineage', {}).get('original_run_id') for p in (self.state_root / 'runs').glob('*/ledger.json')}
-            backlog_pending = any(any(x.get('status') not in {'accepted', 'excluded', 'resolved'} for x in read_json(p, {}).get('backlog', [])) for p in (self.state_root / 'sources').glob('*.json'))
+            # Backlog lives under sources/ and is never pruned; only a run that
+            # still has backlog selected for it in progress is kept for it.
+            selected_by = {x.get('lineage', {}).get('run_id') for p in (self.state_root / 'sources').glob('*.json') for x in read_json(p, {}).get('backlog', []) if x.get('status') == 'selected'}
             for path in sorted((self.state_root / 'runs').iterdir()):
                 if not path.is_dir():
                     continue
@@ -980,7 +1098,7 @@ class DiscoveryStore:
                     unsettled = unsettled or any(x.get('parent_candidate_id') and not x.get('research_disposition', '').startswith('exclude_') and x.get('state') != 'complete' for x in ledger['candidates'])
                     attempts_pending = any(x['state'] != 'accepted_bundle' or x['fenced'] for x in ledger['attempts'].values())
                     young = (path / 'ledger.json').stat().st_mtime >= cutoff
-                    if path.name in referenced_originals or young or ledger['status'] != 'finalized' or backlog_pending or ledger['errors'] or unsettled or attempts_pending or ledger.get('pending_operations'):
+                    if path.name in referenced_originals or young or ledger['status'] != 'finalized' or path.name in selected_by or ledger['errors'] or unsettled or attempts_pending or ledger.get('pending_operations'):
                         retained.append({'run_id': path.name, 'reason': 'unresolved_or_not_expired', 'status': ledger['status']})
                         continue
                     tombstone = {**ledger, 'pruned_at': now()}

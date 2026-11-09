@@ -226,6 +226,10 @@ class DiscoveryIntegration:
         for old in self._all_runs():
             if old['config'].get('stream_name', old['stream']) == current['name'] and old.get('review'):
                 self.reconcile_endstate(old['run_id'])
+        # Production retention: closed runs older than 30 days (well past the
+        # seven-day reply window) become readable tombstones. prune() itself
+        # keeps open, unresolved, referenced and pending-delivery runs.
+        self.store.prune(days=30)
         with self.store._lock('start:' + current['name']):
             # A finalized digest is distinct from unresolved conversion/delivery.
             # Resume unfinished scan/research on its ORIGINAL window and config.
