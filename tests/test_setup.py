@@ -107,6 +107,27 @@ def test_fresh_setup_flow(home, tmp_path, data_dir):
     assert ctx.get_config("workspace_root") == str(ws.resolve())
 
 
+@pytest.mark.parametrize("areas", [None, ["work"], ["job", "music", "app", "personal"]])
+def test_fresh_workspace_area_choices(home, tmp_path, data_dir, areas):
+    ctx = make_ctx(data_dir)
+    ws = tmp_path / "newtasks"
+    args = {"action": "save", "workspace_root": str(ws), "create_workspace": True}
+    if areas is not None:
+        args["areas"] = areas
+    out = call(**args)
+    expected = areas if areas is not None else ["general"]
+    assert out["ok"], out
+    assert out["receipt"]["areas"]["areas"] == expected
+    assert sorted(p.name for p in (ws / "areas").iterdir()) == sorted(expected)
+    if len(expected) == 1:
+        assert ctx.get_config("default_area") == expected[0]
+        created = json.loads(task_tools.task_create({"title": "Read the setup guide", "due": "2026-12-01",
+                                                    "research": False}, session_id="setup-chat"))
+        assert created["ok"], created
+    else:
+        assert not ctx.get_config("default_area")
+
+
 def test_check_files_and_push_actions(home, workspace, data_dir, settings):
     make_ctx(data_dir, workspace_root=str(workspace), timezone="America/New_York")
     out = call(action="check_files")
