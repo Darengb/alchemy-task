@@ -152,12 +152,25 @@ class DiscoveryIntegration:
         if 'aliases' in identity and (not isinstance(identity['aliases'], list) or any(not isinstance(a, str) or not a for a in identity['aliases'])):
             raise UserError('aliases must be explicit nonempty strings')
         accounts = self.rt.ctx.state.get('discovery_identity_accounts', default={}) or {}
+        previous = accounts.get(account_key)
         accounts[account_key] = metadata
         self.rt.ctx.state.set('discovery_identity_accounts', accounts)
+        if previous is not None and previous != metadata:
+            # Saved sources copied the old mapping and may carry its literals in
+            # approved queries. They need visible review, not silent reuse.
+            configs = self.rt.ctx.state.get('discovery_sources', default={}) or {}
+            changed = False
+            for stream_configs in configs.values():
+                for saved in stream_configs.values():
+                    if saved.get('account_key') == account_key and (saved.get('relevance') or {}).get('identity_requirements'):
+                        saved['needs_reconfigure'] = {'status': 'needs_input', 'reason': 'confirmed account identity changed; review seed queries and relevance, then run discovery_config action=source again'}
+                        changed = True
+            if changed: self.rt.ctx.state.set('discovery_sources', configs)
         return accounts[account_key]
 
     def configure(self, stream, config, *, user_approved=False):
         configured = copy.deepcopy(config)
+        configured.pop('needs_reconfigure', None)
         current = self._stream(stream)
         if user_approved is not True:
             raise UserError('approve source/account/scope/reader mapping before configuration')
@@ -232,6 +245,9 @@ class DiscoveryIntegration:
 
             if len(configs) != len(current['sources']):
                 raise UserError('configure approved source/account/read-method bindings and relevance before starting')
+            stale = sorted(key for key, c in configs.items() if c.get('needs_reconfigure'))
+            if stale:
+                raise UserError('needs_input: reconfigure source(s) %s: %s' % (', '.join(stale), configs[stale[0]]['needs_reconfigure']['reason']))
             approved = [(s['name'], s['scope']) for s in current['sources']]
             configured = [(s.get('name'), s.get('scope')) for s in configs.values()]
             if any(configured.count(pair) != 1 for pair in approved) or any(pair not in approved for pair in configured):

@@ -174,3 +174,32 @@ def test_failed_first_run_window_is_reread_by_the_next_run(settings, data_dir, t
     integration.finalize(second['run_id'], session_id='parent')
     third = integration.start('work', session_id='parent')
     assert third['windows']['feed']['start'] == day2.isoformat()
+
+
+def test_changed_identity_makes_dependent_source_need_reconfigure(settings, data_dir, tmp_path):
+    import pytest
+    from alchemy_task.core.discovery_identity import UserError
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    config = configure(integration)
+    config['relevance']['identity_requirements'] = ['name']
+    config['seed_queries'] = ['"First Person"']
+    integration.confirm_identity('account', {'name': 'First Person', 'aliases': [], 'user_id': None}, user_confirmed=True)
+    integration.configure('work', config, user_approved=True)
+    # Re-confirming the same mapping changes nothing.
+    integration.confirm_identity('account', {'name': 'First Person', 'aliases': [], 'user_id': None}, user_confirmed=True)
+    assert 'needs_reconfigure' not in ctx.state.get('discovery_sources')['work']['feed']
+    # The user corrects the mapping; the saved source still holds the old name literal.
+    integration.confirm_identity('account', {'name': 'Second Person', 'aliases': ['SP'], 'user_id': None}, user_confirmed=True)
+    saved = ctx.state.get('discovery_sources')['work']['feed']
+    assert saved['needs_reconfigure']['status'] == 'needs_input'
+    assert 'identity' in saved['needs_reconfigure']['reason']
+    runs_before = len(integration._all_runs())
+    with pytest.raises(UserError, match='needs_input'):
+        integration.start('work', session_id='parent')
+    assert len(integration._all_runs()) == runs_before
+    # Reconfiguring with reviewed queries clears the flag and the run uses the new identity.
+    config['seed_queries'] = ['"Second Person"', '"SP"']
+    integration.configure('work', {k: v for k, v in config.items() if k not in {'identity', 'needs_reconfigure'}}, user_approved=True)
+    started = integration.start('work', session_id='parent')
+    assert [s['identity']['name'] for s in started['sources']] == ['Second Person']
+    assert started['sources'][0]['seed_queries'] == ['"Second Person"', '"SP"']
