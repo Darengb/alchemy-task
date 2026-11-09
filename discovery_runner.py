@@ -269,7 +269,7 @@ class DiscoveryRunner:
         ledger = self.store.get_run(run)
         first, retry = [], []
         for c in ledger['candidates']:
-            if c.get('parent_candidate_id') or c['prefilter_disposition'] == 'excluded' or c.get('decomposition_state') == 'complete':
+            if c.get('parent_candidate_id') or (c['prefilter_disposition'] == 'excluded' or c.get('research_selection') == 'pilot_skipped') or c.get('decomposition_state') == 'complete':
                 continue
             attempts = sorted((a for a in ledger['attempts'].values() if a['candidate_id'] == c['candidate_id']), key=lambda a: a['ordinal'])
             if not attempts:
@@ -526,7 +526,7 @@ class DiscoveryRunner:
         if assessment['accepted'] is False:
             return self.store.reject_attempt(run_id, token, reason=assessment['reason'], retryable=assessment.get('retryable') is True, semantic=True)
         payload = read_json(self.store.run_dir(run_id) / 'spool' / (token + '.json'))
-        others = {c['candidate_id']: c['source_ids'] for c in ledger['candidates'] if not c.get('parent_candidate_id') and c['candidate_id'] != a['candidate_id'] and c['prefilter_disposition'] == 'research'}
+        others = {c['candidate_id']: c['source_ids'] for c in ledger['candidates'] if not c.get('parent_candidate_id') and c['candidate_id'] != a['candidate_id'] and c['prefilter_disposition'] == 'research' and c.get('research_selection') != 'pilot_skipped'}
         try:
             validate_bundle(payload, a['candidate_id'], self.store.get_candidate(run_id, a['candidate_id'])['source_ids'], other_sources=others, action_registry=ledger['action_registry'].get(a['candidate_id']))
         except UserError as exc:
@@ -563,7 +563,7 @@ class DiscoveryRunner:
         pending, failures, accepted = [], [], []
         for c in ledger['candidates']:
             cid = c['candidate_id']
-            if c.get('parent_candidate_id') or c['prefilter_disposition'] == 'excluded': continue
+            if c.get('parent_candidate_id') or (c['prefilter_disposition'] == 'excluded' or c.get('research_selection') == 'pilot_skipped'): continue
             attempts = sorted((a for a in ledger['attempts'].values() if a['candidate_id'] == cid), key=lambda a: a['ordinal'])
             if self.store.accepted_bundle(run_id, cid):
                 cohort = next(x for x in ledger['cohorts'] if cid in x['candidate_ids'])
@@ -583,7 +583,7 @@ class DiscoveryRunner:
                 else: failures.append({'candidate_id': cid, 'title': c['title'], 'reason': degraded[cid]})
             else:
                 pending.append({'candidate_id': cid, 'reason': attempts[-1]['state'] if attempts else 'unstarted_or_budget_deferred'})
-        result = {'run_id': run_id, 'joined': not pending, 'degraded': bool(failures), 'accepted': accepted, 'failures': failures, 'pending': pending, 'index_revision': ledger['index_revision']}
+        result = {'pilot_skipped': [c['candidate_id'] for c in ledger['candidates'] if c.get('research_selection') == 'pilot_skipped'], 'run_id': run_id, 'joined': not pending, 'degraded': bool(failures), 'accepted': accepted, 'failures': failures, 'pending': pending, 'index_revision': ledger['index_revision']}
         if result['joined']:
             self.store.put_resource(run_id, 'join-record', result)
             if self.proposal_hook:

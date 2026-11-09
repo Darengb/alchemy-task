@@ -177,8 +177,20 @@ Setup fills them in for you.
   something changes. The research sweep's script starts the agent only when a task is waiting.
 - **Discovery reads and writes:** discovery jobs read only the sources you approve for each stream, through
   your existing tools and connectors; the plugin itself connects to nothing. Digests are written into the
-  chat where the stream was created (`deliver: origin`). Suggestions and their source IDs are kept in plugin
-  state for 7 and 60 days to avoid repeats.
+  chat where the stream was created by one approved sender with exact-message readback; scheduler final
+  delivery is local-only. Fresh streams remain SETUP_BLOCKED with no cron job until delivery setup verifies
+  an existing origin message and the public job readback. If the host has no usable sender/exact-reader,
+  setup explains the missing capability instead of silently enabling an undeliverable job. See the bundled
+  discovery skill for actual mapping/approval steps. Same-chat new sessions require public host metadata,
+  never model origin claims. Suggestions and source IDs retain their existing seven-/60-day policies.
+- **Explicit research pilots and historical reviews:** shadow/research_only `pilot_limit` retains the full
+  index with audited `pilot_skipped` units; production selection is unchanged. `discovery_replay` distinguishes
+  saved-input replay (original date/window/typed identities/primary resources, distinct review) from CURRENT
+  fresh validation and targeted supplements. These nonproduction operations never automatically mutate old
+  tasks or send a digest. Hash/schema incompatibility refuses replay. User corrections support approved
+  structured active recommendation overlays while keeping accepted source evidence/history immutable.
+  Normal digest text uses task titles, bounded operational status and a review token, not task UUIDs or
+  raw backend exception/cache paths. Full diagnostics remain in `discovery_runs`.
 - **Apple Reminders sync (only if you turn it on):** runs only when you ask (`/task ios`, "sync reminders").
   It calls the Hermes mobile connector's tools (`mobile_devices`, `mobile_reminders_list`,
   `mobile_reminder_create`, `mobile_reminder_update`, `mobile_reminder_complete`, `mobile_request_result`) on

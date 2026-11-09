@@ -58,12 +58,8 @@ def test_create_requires_approval_sources_and_timezone(ctx):
     assert make_stream(sources=[])["needs"] == "discovery"
     out = make_stream()
     assert out["ok"] and out["stream"]["when"] == "daily at 6:00 PM"
-    job = next(iter(ctx.cron.values()))
-    assert job["deliver"] == "local" and job["attach_to_session"] and job["timezone"] == "America/New_York"
-    assert job["schedule"] == "0 18 * * *" and "discovery_start" in job["prompt"]
-    assert 'discovery_research_run' in job['prompt'] and 'discovery_join' in job['prompt']
-    assert 'alchemy-task-discovery' in job['enabled_toolsets']
-    assert 'alchemy-task-discovery-child' in job['enabled_toolsets']
+    assert out['stream']['activation_state'] == 'SETUP_BLOCKED'
+    assert not ctx.cron and out['job_id'] is None
 
 
 def test_freeform_research_is_not_a_discovery_acceptance(ctx):
@@ -123,7 +119,12 @@ def test_malformed_hint_cannot_be_converted_from_freeform(ctx):
 
 def test_update_keeps_schedule_parts_and_chat(ctx):
     make_stream(time="7 PM")
-    jid = next(iter(ctx.cron))
+    # Legacy known binding/job stays supported; fresh setup is tested separately.
+    streams = ctx.state.get('streams')
+    streams['work']['job_id'] = 'known-job'
+    ctx.state.set('streams', streams)
+    ctx.cron['known-job'] = {'name': 'alchemy-task: discovery work', 'deliver': 'local'}
+    jid = 'known-job'
     out = tool(task_tools.discovery_stream, session="other-chat", action="update", name="work",
                frequency="weekdays", user_approved=True)
     assert out["ok"] and out["stream"]["when"] == "weekdays at 7:00 PM"
@@ -135,7 +136,12 @@ def test_update_keeps_schedule_parts_and_chat(ctx):
 
 def test_update_one_thing_at_a_time(ctx):
     make_stream()
-    jid = next(iter(ctx.cron))
+    # Legacy known binding/job stays supported; fresh setup is tested separately.
+    streams = ctx.state.get('streams')
+    streams['work']['job_id'] = 'known-job'
+    ctx.state.set('streams', streams)
+    ctx.cron['known-job'] = {'name': 'alchemy-task: discovery work', 'deliver': 'local'}
+    jid = 'known-job'
     out = tool(task_tools.discovery_stream, action="update", name="work", frequency="hourly", user_approved=True)
     assert out["stream"]["when"] == "hourly" and ctx.cron[jid]["schedule"] == "5 * * * *"
     out = tool(task_tools.discovery_stream, action="update", name="work", time="9 AM", user_approved=True)

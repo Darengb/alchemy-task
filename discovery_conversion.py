@@ -133,7 +133,7 @@ class DiscoveryConversion:
     def prepare(self, run, wid, *, choice, reason, target_task_id='', expected_revision='',
                 useful_delta=False, user_approved=False, area='', title='', due='', undated=False,
                 expected_plan_revision='', scope_notes='', priority='', scheduled='', execution_method='',
-                notes='', plan='', checklist=None, active_goal='', manual_binding=False):
+                notes='', plan='', checklist=None, active_goal='', manual_binding=False, correction_overlay=None):
         self._production(run)
         if not isinstance(reason, str) or not reason.strip() or len(reason) > 2000:
             raise UserError('substantive parent decision reason required')
@@ -155,7 +155,7 @@ class DiscoveryConversion:
                        expected_revision=expected_revision, useful_delta=useful_delta,
                        user_approved=user_approved, area=area, title=title, due=due, undated=undated,
                        scope_notes=scope_notes, priority=priority, scheduled=scheduled, execution_method=execution_method,
-                       notes=notes, plan=plan, checklist=checklist, active_goal=active_goal, manual_binding=manual_binding)
+                       notes=notes, plan=plan, checklist=checklist, active_goal=active_goal, manual_binding=manual_binding, correction_overlay=correction_overlay)
         plan_path, _ = self._paths(run, wid)
         with self.store._lock('conversion:' + run + ':' + wid):
             old = read_json(plan_path)
@@ -223,13 +223,40 @@ class DiscoveryConversion:
                 body = self._append_section(body, 'Plan', '\n'.join('- [ ] ' + x for x in checklist))
             dossier_id = 'dos-' + wid[2:]
             active_research = copy.deepcopy(research)
-            if active_goal or execution_method:
-                active_research['substantive_next_action'] = (active_goal or research['substantive_next_action']) + ('\n\nExecution method: ' + execution_method if execution_method else '')
-                active_research['implementation_context'] += ['User approval constraint: ' + x for x in (scope_notes, notes, plan) if x]
+            # An explicit new goal supersedes recommendations, not source evidence.
+            # Do not infer the meaning of the user's correction from keywords.
+            if active_goal:
+                active_research.update(title=title or active_goal[:200],
+                    current_understanding=notes or active_goal, new_information=[],
+                    substantive_next_action=active_goal,
+                    decisions_and_open_questions={'decisions': [], 'open_questions': []},
+                    implementation_context=[x for x in (plan, scope_notes) if x],
+                    dependencies_and_risks=[])
+            if execution_method:
+                active_research['substantive_next_action'] += '\n\nExecution method: ' + execution_method
+            if correction_overlay is not None:
+                if user_approved is not True or not isinstance(correction_overlay, dict):
+                    raise UserError('structured correction requires explicit user approval and an object')
+                text_fields = {'title', 'current_understanding', 'substantive_next_action'}
+                list_fields = {'new_information', 'implementation_context', 'dependencies_and_risks'}
+                if set(correction_overlay) - text_fields - list_fields - {'decisions_and_open_questions'}:
+                    raise UserError('unsupported structured correction field')
+                from .core.discovery_dossiers import _bounded_strings
+                for key, value in correction_overlay.items():
+                    if key in text_fields:
+                        if not isinstance(value, str) or not value.strip() or len(value) > (300 if key == 'title' else 4000):
+                            raise UserError('invalid correction text: ' + key)
+                    elif key in list_fields:
+                        value = _bounded_strings(value, key, chars=4000)
+                    else:
+                        if not isinstance(value, dict) or set(value) != {'decisions', 'open_questions'}:
+                            raise UserError('correction decisions require decisions and open_questions lists')
+                        value = {k: _bounded_strings(v, k, chars=4000) for k, v in value.items()}
+                    active_research[key] = copy.deepcopy(value)
             revision, block = render_discovery_dossier(active_research, dossier_id=dossier_id, candidate_source_ids=candidate['source_ids'])
             if active_research != research:
                 marker = f'<!-- discovery-dossier:end {dossier_id} -->'
-                block = block.replace(marker, '### Historical Accepted Recommendation\n\n' + research['substantive_next_action'] + '\n\nAccepted evidence revision: ' + content_revision(research) + '\n' + marker)
+                block = block.replace(marker, '### Historical Accepted Recommendation\n\nSuperseded recommendations; not active instructions. Immutable accepted evidence:\n\n```json\n' + json.dumps(research, ensure_ascii=False, indent=2) + '\n```\n\nAccepted evidence revision: ' + content_revision(research) + '\n' + marker)
             ids = fm.get('dossier_ids') or []
             if isinstance(ids, str): ids = [ids]
             if not isinstance(ids, list): raise UserError('invalid task dossier_ids')
@@ -237,8 +264,8 @@ class DiscoveryConversion:
             if candidate.get('action_id'):
                 fm['discovery_action_ids'] = list(dict.fromkeys([*(fm.get('discovery_action_ids') or []), candidate['action_id']]))
             # Append synthesis before existing managed dossiers, preserving every old section.
-            additions = [x for x in research['new_information'] if x and x not in body]
-            if additions:
+            additions = [x for x in active_research['new_information'] if x and x not in body]
+            if additions or active_goal or correction_overlay is not None:
                 start_marker, end_marker = f'<!-- discovery-context:start {dossier_id} -->', f'<!-- discovery-context:end {dossier_id} -->'
                 text = start_marker + '\n### Discovery context\n\n' + '\n'.join('- ' + x for x in additions) + '\n' + end_marker
                 if start_marker in body:
@@ -269,7 +296,7 @@ class DiscoveryConversion:
     def revise(self, run, wid, *, expected_plan_revision, edits, reason):
         plan = read_json(self._paths(run, wid)[0])
         if not plan: raise UserError('no prepared plan to revise')
-        if set(edits) - {'choice', 'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated', 'scope_notes', 'priority', 'scheduled', 'execution_method', 'notes', 'plan', 'checklist', 'active_goal'}:
+        if set(edits) - {'choice', 'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated', 'scope_notes', 'priority', 'scheduled', 'execution_method', 'notes', 'plan', 'checklist', 'active_goal', 'correction_overlay'}:
             raise UserError('unsupported pending plan edits')
         request = {**plan['request'], **edits, 'reason': reason, 'user_approved': True}
         return self.prepare(run, wid, **request, expected_plan_revision=expected_plan_revision)

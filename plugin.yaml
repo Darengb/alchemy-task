@@ -35,6 +35,7 @@ provides_tools:
   - discovery_conversion_recover
   - discovery_digest
   - discovery_runs
+  - discovery_replay
   - research_skills_list
   - research_skill_view
   - research_capabilities

@@ -130,32 +130,23 @@ def create_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
         raise DiscoveryError("a stream needs at least one approved source")
     cron, when = schedule_for(args.get("frequency", "daily"), args.get("time", "6 PM"))
     deliver = str(args.get("deliver") or "origin").strip()
-    job_args = {"action": "create", "name": f"{PREFIX}: discovery {name}", "schedule": cron,
-                "timezone": tz["timezone"] or "UTC", "deliver": deliver, "attach_to_session": True,
-                "skills": ["alchemy-task:discovery"]}
-    from .jobs import discovery_job_config
-    job_args.update(discovery_job_config(name, [toolset for source in sources for toolset in source.get('toolsets', [])]))
-    from .jobs import parse_job_id
-    raw = rt.ctx.dispatch_tool("cronjob_manage", job_args)
-    job_id = parse_job_id(raw)
-    if not job_id:
-        raise DiscoveryError(f"could not create the scheduled job: {str(raw)[:300]}")
+    # No job until approved exact origin delivery has passed a real readback.
+    # CREATE-paused is not portable across hosts; withholding CREATE is.
+    job_id = None
     stream = {"name": name, "areas": areas, "sources": sources, "schedule": cron, "when": when,
               "frequency": args.get("frequency", "daily"), "time": args.get("time", "6 PM"),
               "timezone": tz["timezone"], "deliver": deliver, "origin_session": session_id, "job_id": job_id,
               "research_cap": max(0, min(int(args.get("research_cap", DEFAULT_CAP)), 200)),
               "created_at": time.time(), "last_run": None, "label": "", "mode": "production"}
-    from .jobs import read_discovery_job
-    read_discovery_job(rt, stream)
-    stream['job_binding'] = {'job_id': job_id, 'origin_session': session_id,
-                             'profile': rt.ctx.profile_name, 'verified': True}
+    stream.update(activation_state='SETUP_BLOCKED', delivery_state='pending',
+                  setup_blocked_reason='Discover an available origin sender and exact-message reader; approve their mapping with discovery_config action=delivery. No scheduled job exists until verified.')
     with _lock:
         streams = _streams(rt)
         streams[name] = stream
         _assign_labels(streams)
         _save_streams(rt, streams)
     return {"stream": _public(stream), "job_id": job_id,
-            "message": f"Discovery stream '{name}' runs {when} ({tz['timezone']}). Configure its approved origin sender and exact-message readback before delivery. Scheduler final output is local-only to prevent duplicates."}
+            "message": f"SETUP_BLOCKED: '{name}' saved for {when} ({tz['timezone']}); no active job. Use discovery_config action=delivery after discovering and approving an actual sender/exact-reader and verifying an existing origin message. See alchemy-task:discovery setup walkthrough."}
 
 
 def _assign_labels(streams: dict[str, dict[str, Any]]) -> None:
@@ -176,7 +167,7 @@ def _assign_labels(streams: dict[str, dict[str, Any]]) -> None:
 
 def _public(s: dict[str, Any]) -> dict[str, Any]:
     return {k: s.get(k) for k in ("name", "areas", "sources", "when", "timezone", "deliver", "research_cap",
-                                  "last_run", "label", "job_id")}
+                                  "last_run", "label", "job_id", "activation_state", "delivery_state", "setup_blocked_reason")}
 
 
 def update_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[str, Any]:
@@ -227,19 +218,21 @@ def update_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
     readers = [t for source in sources for t in source.get('toolsets', [])]
     configs = (rt.ctx.state.get('discovery_sources', default={}) or {}).get(current['name'], {})
     readers += [t for config in configs.values() if any(s['name'] == config.get('name') and s['scope'] == config.get('scope') for s in sources) for t in config.get('toolsets', [])]
-    raw = rt.ctx.dispatch_tool("cronjob_manage", {"action": "update", "job_id": current["job_id"],
-                                                  "schedule": cron, "timezone": tz,
-                                                  **discovery_job_config(current['name'], readers)})
-    try:
-        result = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
-    except (TypeError, ValueError):
-        result = {"error": str(raw)[:300]}
-    if result.get("success") is False or result.get("error"):
-        raise DiscoveryError(f"could not update the scheduled job: {str(result.get('error') or raw)[:300]}")
-    from .jobs import read_discovery_job
-    observed = read_discovery_job(rt, current)
-    if observed.get('enabled_toolsets') != discovery_job_config(current['name'], readers)['enabled_toolsets']:
-        raise DiscoveryError('scheduled toolsets readback mismatch; retry in-place reconciliation')
+    readers += ((rt.ctx.state.get('discovery_delivery', default={}) or {}).get(current['name'], {})).get('toolsets', [])
+    if current.get('job_id'):
+        raw = rt.ctx.dispatch_tool("cronjob_manage", {"action": "update", "job_id": current["job_id"],
+                                                      "schedule": cron, "timezone": tz,
+                                                      **discovery_job_config(current['name'], readers)})
+        try:
+            result = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
+        except (TypeError, ValueError):
+            result = {"error": str(raw)[:300]}
+        if result.get("success") is False or result.get("error"):
+            raise DiscoveryError(f"could not update the scheduled job: {str(result.get('error') or raw)[:300]}")
+        from .jobs import read_discovery_job
+        observed = read_discovery_job(rt, current)
+        if observed.get('enabled_toolsets') != discovery_job_config(current['name'], readers)['enabled_toolsets']:
+            raise DiscoveryError('scheduled toolsets readback mismatch; retry in-place reconciliation')
     with _lock:
         streams = _streams(rt)
         s = streams[current["name"]]
@@ -302,7 +295,7 @@ def teardown_streams(rt: Runtime) -> list[str]:
 
 def status_summary(rt: Runtime) -> dict[str, Any]:
     streams = _streams(rt)
-    return {"ready": bool(streams), "streams": len(streams),
+    return {"ready": bool(streams) and all(s.get('activation_state', 'ACTIVE') == 'ACTIVE' for s in streams.values()), "streams": len(streams),
             "names": [f"{n} ({s['when']})" for n, s in streams.items()]}
 
 
@@ -312,9 +305,9 @@ def _today(rt: Runtime) -> str:
     return rt.settings.today()
 
 
-def start(rt: Runtime, name: str, session_id: str = "", mode=None) -> dict[str, Any]:
+def start(rt: Runtime, name: str, session_id: str = "", mode=None, pilot_limit=None) -> dict[str, Any]:
     from .discovery_integration import get_service
-    return get_service(rt).start(name, session_id=session_id, mode=mode)
+    return get_service(rt).start(name, session_id=session_id, mode=mode, pilot_limit=pilot_limit)
 
 
 def submit(rt: Runtime, name: str, candidates=None, coverage=None, *, run_id="", session_id="") -> dict[str, Any]:

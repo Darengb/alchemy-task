@@ -134,6 +134,8 @@ class DiscoveryStore:
         run_id = _name(run_id or uuid.uuid4().hex)
         _name(stream)
         config = copy.deepcopy(config or {})
+        if 'pilot_limit' in config and (config.get('mode') not in {'shadow', 'research_only'} or type(config['pilot_limit']) is not int or not 0 <= config['pilot_limit'] <= 200):
+            raise UserError('pilot_limit requires shadow/research_only mode and integer 0..200')
         with self._lock(self._run_lock_name(run_id)):
             path = self.run_dir(run_id)
             if (self.state_root / 'tombstones' / (run_id + '.json')).exists():
@@ -239,6 +241,12 @@ class DiscoveryStore:
             ledger = self._load(run_id, open_only=True)
             if ledger['index_revision']:
                 return {'index_revision': ledger['index_revision'], 'cohorts': ledger['cohorts']}
+            if 'pilot_limit' in ledger['config']:
+                survivors = [c for c in ledger['candidates'] if c['prefilter_disposition'] == 'research']
+                selected = [c['candidate_id'] for c in survivors[:ledger['config']['pilot_limit']]]
+                skipped = [c['candidate_id'] for c in survivors[ledger['config']['pilot_limit']:]]
+                for c in survivors: c['research_selection'] = 'selected' if c['candidate_id'] in selected else 'pilot_skipped'
+                self._put_resource_locked(run_id, ledger, 'pilot-selection', {'mode': ledger['config']['mode'], 'limit': ledger['config']['pilot_limit'], 'selected': selected, 'pilot_skipped': skipped})
             index = [{key: x[key] for key in ('candidate_id', 'title', 'source_ids', 'prefilter_disposition')} for x in ledger['candidates']]
             chunks, current = [], []
             for item in index:
@@ -337,7 +345,7 @@ class DiscoveryStore:
             ledger = self._load(run_id, open_only=True)
             item = self._candidate(ledger, cid)
             self._assert_no_accept_intent(run_id, cid)
-            if not ledger['index_revision'] or item.get('parent_candidate_id') or item['prefilter_disposition'] != 'research' or item.get('decomposition_state') == 'complete':
+            if not ledger['index_revision'] or item.get('parent_candidate_id') or item.get('research_selection') == 'pilot_skipped' or item['prefilter_disposition'] != 'research' or item.get('decomposition_state') == 'complete':
                 raise UserError('candidate is not eligible for a fresh attempt')
             previous = [a for a in ledger['attempts'].values() if a['candidate_id'] == cid]
             if len(previous) >= 2 or previous and previous[-1]['state'] not in RETRY_STATES:
@@ -815,7 +823,7 @@ class DiscoveryStore:
             return state
 
     def update_backlog(self, stream: str, source: str, backlog_id: str, *, status: str, lineage: dict[str, Any]) -> dict[str, Any]:
-        if status not in {'queued', 'selected', 'deferred', 'blocked', 'accepted', 'excluded', 'resolved'} or not isinstance(lineage, dict):
+        if status not in {'queued', 'selected', 'deferred', 'blocked', 'accepted', 'excluded', 'resolved', 'pilot_skipped'} or not isinstance(lineage, dict):
             raise UserError('invalid backlog status or lineage')
         with self._lock('source:' + _name(stream) + ':' + _name(source)):
             state = self.source_state(stream, source)
@@ -935,17 +943,18 @@ class DiscoveryStore:
         cutoff = dt.datetime.now(dt.timezone.utc).timestamp() - days * 86400
         retained, deleted = [], []
         with self._lock('retention'):
+            referenced_originals = {read_json(p, {}).get('lineage', {}).get('original_run_id') for p in (self.state_root / 'runs').glob('*/ledger.json')}
             backlog_pending = any(any(x.get('status') not in {'accepted', 'excluded', 'resolved'} for x in read_json(p, {}).get('backlog', [])) for p in (self.state_root / 'sources').glob('*.json'))
             for path in sorted((self.state_root / 'runs').iterdir()):
                 if not path.is_dir():
                     continue
                 with self._lock(self._run_lock_name(path.name)):
                     ledger = self._load(path.name)
-                    unsettled = any(not x.get('parent_candidate_id') and x.get('prefilter_disposition') != 'excluded' and x.get('decomposition_state') != 'complete' for x in ledger['candidates'])
+                    unsettled = any(not x.get('parent_candidate_id') and x.get('prefilter_disposition') != 'excluded' and x.get('research_selection') != 'pilot_skipped' and x.get('decomposition_state') != 'complete' for x in ledger['candidates'])
                     unsettled = unsettled or any(x.get('parent_candidate_id') and not x.get('research_disposition', '').startswith('exclude_') and x.get('state') != 'complete' for x in ledger['candidates'])
                     attempts_pending = any(x['state'] != 'accepted_bundle' or x['fenced'] for x in ledger['attempts'].values())
                     young = (path / 'ledger.json').stat().st_mtime >= cutoff
-                    if young or ledger['status'] != 'finalized' or backlog_pending or ledger['errors'] or unsettled or attempts_pending or ledger.get('pending_operations'):
+                    if path.name in referenced_originals or young or ledger['status'] != 'finalized' or backlog_pending or ledger['errors'] or unsettled or attempts_pending or ledger.get('pending_operations'):
                         retained.append({'run_id': path.name, 'reason': 'unresolved_or_not_expired', 'status': ledger['status']})
                         continue
                     tombstone = {**ledger, 'pruned_at': now()}

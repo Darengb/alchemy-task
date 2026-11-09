@@ -7,6 +7,8 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+import hashlib
+import sqlite3
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from .runtime import Runtime
@@ -68,6 +70,8 @@ class DiscoveryIntegration:
     def _authorize_recovery(self, run_id, old_parent, session_id):
         run = self.store.get_run(run_id)
         stream = self._stream(run['config'].get('stream_name', run['stream']))
+        if self.origin_authorized(stream, session_id) and run['origin'].get('stream_origin_session', run['origin'].get('session_id')) == stream['origin_session']:
+            return True
         execution = self._scheduled_identity(stream)
         frozen = run['origin'].get('job_binding')
         if not execution or not frozen or frozen != stream.get('job_binding'):
@@ -78,6 +82,27 @@ class DiscoveryIntegration:
             state.setdefault('adoptions', []).append({'from_session': old_parent, 'to_session': session_id,
                                                       'execution': execution, 'job_binding': frozen})
         return True
+
+    def _host_origin(self, session_id):
+        """Read the installing profile's public SessionDB by ACTUAL host id."""
+        path = self.home / 'state.db'
+        if not path.is_file(): return None
+        try:
+            from hermes_state import SessionDB
+            db = SessionDB(db_path=path, read_only=True)
+            try: row = db.get_session(session_id)
+            finally: db.close()
+            if not row or not row.get('chat_id') or not row.get('source') or row['source'] in {'cli', 'cron', 'subagent', 'tool', 'api_server'}:
+                return None
+            return {'profile': self.rt.ctx.profile_name, 'source': row['source'],
+                    'chat_id': str(row['chat_id']), 'thread_id': str(row.get('thread_id') or '')}
+        except (ImportError, OSError, ValueError, RuntimeError, sqlite3.Error):
+            return None
+
+    def origin_authorized(self, stream, session_id):
+        if session_id == stream.get('origin_session'): return True
+        original = self._host_origin(stream.get('origin_session'))
+        return bool(original and original == self._host_origin(session_id))
 
     def _stream(self, stream):
         from .discovery import _get
@@ -136,15 +161,17 @@ class DiscoveryIntegration:
     def _all_runs(self):
         return [self.store.get_run(p.parent.name) for p in sorted((self.store.state_root / 'runs').glob('*/ledger.json'))]
 
-    def start(self, stream, *, session_id, mode=None):
+    def start(self, stream, *, session_id, mode=None, pilot_limit=None, _distinct=False, _lineage=None):
         current = self._stream(stream)
         mode = mode or current.get('mode')
         if mode not in {'production', 'shadow', 'research_only'}:
             raise UserError('choose explicit production, shadow or research_only mode before run')
+        if pilot_limit is not None and (mode == 'production' or type(pilot_limit) is not int or not 0 <= pilot_limit <= 200):
+            raise UserError('pilot_limit requires shadow/research_only mode and an integer 0..200')
         storage_stream = current['name'] if ' ' not in current['name'] else 'stream-' + content_revision(current['name']).split(':')[-1][:24]
         if mode != 'production': storage_stream += '-' + mode
         if not session_id: raise UserError('actual parent session required')
-        if session_id != current['origin_session'] and not self._scheduled_identity(current):
+        if not self.origin_authorized(current, session_id) and not self._scheduled_identity(current):
             raise UserError('only origin chat or verified bound scheduled occurrence can start/resume stream')
         self._retain_legacy(current['name'])
         for old in self._all_runs():
@@ -154,8 +181,10 @@ class DiscoveryIntegration:
             # A finalized digest is distinct from unresolved conversion/delivery.
             # Resume unfinished scan/research on its ORIGINAL window and config.
             pending = [r for r in self._all_runs() if r['config'].get('stream_name', r['stream']) == current['name'] and r['config'].get('mode') == mode and not r.get('review')]
-            if pending:
+            if pending and not _distinct:
                 run = pending[0]
+                if pilot_limit != run['config'].get('pilot_limit'):
+                    raise UserError('pilot selection is frozen; resume with original pilot_limit')
                 try:
                     self.runner._parent(run['run_id'], session_id)
                 except UserError:
@@ -179,14 +208,73 @@ class DiscoveryIntegration:
                 windows[key] = {'start': watermark or (now - dt.timedelta(days=1)).isoformat(), 'end': now.isoformat()}
             config = {'stream_name': current['name'], 'mode': mode, 'sources': list(configs.values()), 'windows': windows, 'areas': current['areas'],
                       'research_cap': current['research_cap'], 'timezone': current.get('timezone', self.rt.settings.timezone)}
+            if pilot_limit is not None: config['pilot_limit'] = pilot_limit
             business_date = now.astimezone(ZoneInfo(config['timezone'])).date().isoformat()
             run = self.store.init_run(stream=storage_stream, business_date=business_date, config=config,
                                       origin={'session_id': session_id, 'deliver': current.get('deliver', 'origin'),
                                               'stream_origin_session': current['origin_session'],
                                               'job_binding': copy.deepcopy(current.get('job_binding')),
-                                              'cron_execution': self._scheduled_identity(current)})
+                                              'cron_execution': self._scheduled_identity(current)}, lineage=_lineage)
             return {'run_id': run, 'resumed': False, 'stream': current['name'], 'sources': config['sources'],
                     'windows': windows, 'research_remaining_today': current['research_cap']}
+
+    def replay(self, run_id, *, operation, mode, session_id, user_approved=False, candidate_ids=None):
+        """Three explicit operations; never relabel a current query as old input."""
+        if operation not in {'saved_input', 'fresh_validation', 'targeted_supplement'}:
+            raise UserError('unknown replay operation')
+        if mode not in {'shadow', 'research_only'}:
+            raise UserError('historical operations require explicit shadow/research_only mode; no automatic old task mutations')
+        old = self.store.get_run(run_id)
+        stream = self._stream(old['config'].get('stream_name', old['stream']))
+        if user_approved is not True or not self.origin_authorized(stream, session_id):
+            raise UserError('explicit actual origin approval required for historical operation')
+        if not old.get('review') or not old.get('index_revision'):
+            raise UserError('historical operation requires finalized frozen original input')
+        parents = [c for c in old['candidates'] if not c.get('parent_candidate_id')]
+        ids = [c['candidate_id'] for c in parents]
+        if operation == 'targeted_supplement':
+            if not isinstance(candidate_ids, list) or not candidate_ids or len(set(candidate_ids)) != len(candidate_ids) or any(c not in ids for c in candidate_ids):
+                raise UserError('targeted supplement requires distinct retained original candidate_ids')
+        elif candidate_ids is not None:
+            raise UserError('candidate_ids only supported for targeted_supplement')
+        lineage = {'operation': operation, 'original_run_id': run_id,
+                   'original_index_revision': old['index_revision'], 'original_business_date': old['business_date'],
+                   'expected_candidates': [{'candidate_id': c['candidate_id'], 'source_ids': c['source_ids'], 'title': c['title']} for c in parents if candidate_ids is None or c['candidate_id'] in candidate_ids]}
+        if operation != 'saved_input':
+            return {**self.start(stream['name'], session_id=session_id, mode=mode, _distinct=True, _lineage=lineage),
+                    'operation': operation, 'faithful_replay': False}
+        # Verify every saved input before creating a distinct run. No old writes.
+        from .core.discovery_research import child_schema
+        from .core.discovery_state import _json_bytes
+        if old.get('schema_version') != 2 or old.get('schema_revision') != hashlib.sha256(_json_bytes(child_schema())).hexdigest():
+            raise UserError('saved replay schema compatibility failed')
+        inputs = {}
+        for name, info in old['resources'].items():
+            raw = (self.store.run_dir(run_id) / 'resources' / info['sha256']).read_bytes()
+            if hashlib.sha256(raw).hexdigest() != info['sha256'] or len(raw) != info['total_bytes']:
+                raise UserError('saved replay resource integrity failed')
+            inputs[name] = raw.decode('utf-8')
+        if 'source-material' not in inputs or any('source-body-' + c['candidate_id'] not in inputs for c in parents):
+            raise UserError('saved replay primary resources unavailable; choose current validation/supplement explicitly')
+        config = {**copy.deepcopy(old['config']), 'mode': mode, 'replay_operation': 'saved_input'}
+        storage = old['stream'] + '-replay'
+        # Stream identifiers have a bounded shared format; avoid length expansion.
+        storage = 'replay-' + content_revision(storage).split(':')[-1][:24]
+        new = self.store.init_run(stream=storage, business_date=old['business_date'], config=config,
+            origin={'session_id': session_id, 'stream_origin_session': stream['origin_session'], 'deliver': 'local'}, lineage=lineage)
+        fields = {'title', 'source_ids', 'prefilter_disposition', 'prefilter_reason', 'summary', 'due', 'priority', 'source_revision', 'source_key'}
+        self.store.add_candidates(new, [{k: v for k, v in c.items() if k in fields} for c in parents])
+        prefixes = ('source-body-', 'collection-', 'task-body-', 'installed-skill-', 'skill-')
+        names = {'source-material', 'task_inventory', 'skill-inventory', 'source_config', 'context-rubric', 'context-bootstrap'}
+        for name, raw in inputs.items():
+            if name in names or name.startswith(prefixes): self.store.put_resource(new, name, json.loads(raw) if old['resources'][name].get('entry_count') is not None else raw)
+        self.store.put_resource(new, 'replay-inputs', lineage)
+        context = json.loads(inputs.get('context-bootstrap', '{}'))
+        context['source-material'] = self.store.resource_info(new, 'source-material')
+        with self.runner._state(new) as state: state['context_resources'] = context
+        self.store.freeze_index(new, rubric=inputs['rubric'])
+        return {'run_id': new, 'operation': operation, 'faithful_replay': True,
+                'original_run_id': run_id, 'business_date': old['business_date'], 'windows': config['windows']}
 
     def _source(self, run_id, source_key, session_id):
         ledger = self.runner._parent(run_id, session_id)
@@ -314,9 +402,18 @@ class DiscoveryIntegration:
         candidates, selection = [], []
         for config in ledger['config']['sources']:
             for entry in self.store.source_state(ledger['stream'], config['source_key'])['backlog']:
-                if entry['status'] in {'queued', 'deferred'} or (entry['status'] == 'selected' and entry.get('lineage', {}).get('run_id') == run_id):
+                if entry['status'] in {'queued', 'deferred', 'pilot_skipped'} or (entry['status'] == 'selected' and entry.get('lineage', {}).get('run_id') == run_id):
                     candidates.append(entry['candidate'])
                     selection.append({'source_key': config['source_key'], 'backlog_id': entry['backlog_id'], 'candidate_id': candidate_id(entry['source_ids'])})
+        if ledger.get('lineage', {}).get('operation') == 'targeted_supplement':
+            expected = ledger['lineage']['expected_candidates']
+            wanted = {x['candidate_id'] for x in expected}
+            present = {candidate_id(c['source_ids']) for c in candidates}
+            self.store.put_resource(run_id, 'supplement-selection', {'expected': expected,
+                'present': sorted(wanted & present), 'missing_current': sorted(wanted - present),
+                'outside_target': sorted(present - wanted)})
+            candidates = [c for c in candidates if candidate_id(c['source_ids']) in wanted]
+            selection = [s for s in selection if s['candidate_id'] in wanted]
         # Full primary bodies stay lossless and pageable, separate from the
         # helper's intentionally compact, strictly typed candidate metadata.
         grouped = {}
@@ -359,6 +456,7 @@ class DiscoveryIntegration:
             candidate = self.store.get_candidate(run_id, cid)
             lineage = {'run_id': run_id, 'candidate_id': cid}
             if candidate['prefilter_disposition'] == 'excluded': state = 'excluded'
+            elif candidate.get('research_selection') == 'pilot_skipped': state = 'pilot_skipped'
             elif join and cid in join['accepted']: state = 'accepted'
             elif join:
                 attempted = any(a['candidate_id'] == cid for a in ledger['attempts'].values())
@@ -396,6 +494,20 @@ class DiscoveryIntegration:
             raise UserError('delivery binding requires actual send AND exact readback tools/mappings')
         if set(binding['read_response']) != {'message_id', 'target', 'text'}:
             raise UserError('readback must verify message_id, origin target and full text')
+        if current.get('activation_state'):
+            if binding.get('scheduled_approved') is not True or not isinstance(binding.get('toolsets'), list) or not binding['toolsets'] or any(not isinstance(t, str) or not t for t in binding['toolsets']):
+                raise UserError('approve scheduled origin delivery and actual sender/reader toolsets before activation')
+            # Verify existing origin content without sending a test message.
+            values = {'target': binding['target'], 'message_id': binding.get('verification_message_id')}
+            if not values['message_id'] or not isinstance(binding.get('verification_text'), str):
+                raise UserError('setup readback requires an existing origin message id and exact full text')
+            args = copy.deepcopy(binding.get('read_arguments') or {})
+            for parameter, field in binding['read_fields'].items(): args[parameter] = values[field]
+            observed = self.rt.ctx.dispatch_tool(binding['read_tool'], args)
+            observed = json.loads(observed) if isinstance(observed, str) else observed
+            actual = {key: _pick(observed, path) for key, path in binding['read_response'].items()}
+            if actual != {**values, 'text': binding['verification_text']}:
+                raise UserError('setup readback does not match exact origin message/target/full text')
         if current.get('job_id'):
             from .jobs import read_discovery_job
             read_discovery_job(self.rt, current)
@@ -406,7 +518,11 @@ class DiscoveryIntegration:
         configs = self.rt.ctx.state.get('discovery_delivery', default={}) or {}
         configs[current['name']] = copy.deepcopy(binding)
         self.rt.ctx.state.set('discovery_delivery', configs)
-        return {'configured': True, 'stream': current['name'], 'origin_session': current['origin_session']}
+        if current.get('activation_state'):
+            from .jobs import activate_discovery_job
+            current = activate_discovery_job(self.rt, current, binding)
+        return {'configured': True, 'stream': current['name'], 'origin_session': current['origin_session'],
+                'activation_state': current.get('activation_state', 'ACTIVE'), 'job_id': current.get('job_id')}
 
     def deliver(self, run_id, *, session_id):
         with self.store._lock('delivery-send:' + run_id):
@@ -418,7 +534,7 @@ class DiscoveryIntegration:
         binding = receipt.get('binding') or (self.rt.ctx.state.get('discovery_delivery', default={}) or {}).get(digest['stream'])
         stream = self._stream(digest['stream'])
         scheduled = self._scheduled_identity(stream)
-        if digest['origin']['session_id'] != session_id and not (scheduled and binding and binding.get('scheduled_approved') is True):
+        if not self.origin_authorized(stream, session_id) and not (scheduled and binding and binding.get('scheduled_approved') is True):
             raise UserError('only origin or an explicitly approved bound scheduled occurrence may deliver')
         if receipt['state'] == 'delivered': return receipt
         if not binding:
@@ -565,10 +681,15 @@ class DiscoveryIntegration:
                                  'git': receipt.get('git'), 'phone': receipt.get('phone'),
                                  'resume_action': {'tool': 'discovery_conversion_recover', 'run_id': run_id, 'unit_id': candidate['candidate_id']} if receipt.get('state') != 'complete' and decision['request']['decision'] == 'auto' else None})
         coverage = list(self._collection_receipts(ledger).values())
+        supplement_failures = []
+        if 'supplement-selection' in ledger['resources']:
+            info = ledger['resources']['supplement-selection']
+            selection = read_json(self.store.run_dir(run_id) / 'resources' / info['sha256'])
+            supplement_failures = [{'title': x['title'], 'reason': 'Retained candidate not found in current approved window; original input remains saved'} for x in selection['expected'] if x['candidate_id'] in selection['missing_current']]
         stream = self._stream(ledger['config'].get('stream_name', ledger['stream']))
         origin = {**ledger['origin'], 'session_id': ledger['origin'].get('stream_origin_session', ledger['origin']['session_id'])}
         digest = self.digest.prepare(run_id, stream=ledger['config'].get('stream_name', ledger['stream']), day=ledger['business_date'], origin=origin,
-                                     items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + conflicts], coverage=coverage, outcomes=outcomes, label=stream.get('label', ''))
+                                     items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + conflicts + supplement_failures], coverage=coverage, outcomes=outcomes, label=stream.get('label', ''), review_namespace=run_id if ledger.get('lineage', {}).get('operation') else '')
         with self.store._lock(self.store._run_lock_name(run_id)):
             pending = self.store.get_run(run_id); pending['pending_operations'] = ['finalization_projection']; self.store._save(run_id, pending)
         self.store.save_review(run_id, {'digest': digest, 'conflicts': conflicts, 'joined': join})
@@ -576,6 +697,8 @@ class DiscoveryIntegration:
         return digest
 
     def decide(self, args, *, session_id, today=None):
+        origins = {d['origin']['session_id'] for d in self.digest._load()['digests'].values() if (not args.get('stream') or d['stream'] == args['stream']) and self.origin_authorized(self._stream(d['stream']), session_id)}
+        if len(origins) == 1: session_id = next(iter(origins))
         if today is None:
             candidates = [d for d in self.digest._load()['digests'].values() if d['origin']['session_id'] == session_id and (not args.get('stream') or d['stream'] == args['stream'])]
             zones = {self.store.get_run(d['run_id'])['config'].get('timezone', self.rt.settings.timezone) for d in candidates}
@@ -610,7 +733,7 @@ class DiscoveryIntegration:
                     raise UserError('semantic proposal requires explicit update or create choice')
                 if kind == 'selection' and choice == 'update' and not edit.get('target_task_id'):
                     raise UserError('select one of ALL nominated target_task_id options')
-                allowed = {'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated', 'scope_notes', 'priority', 'scheduled', 'execution_method', 'notes', 'plan', 'checklist', 'active_goal'}
+                allowed = {'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated', 'scope_notes', 'priority', 'scheduled', 'execution_method', 'notes', 'plan', 'checklist', 'active_goal', 'correction_overlay'}
                 if set(edit) - allowed: raise UserError('unsupported approval edits: ' + ', '.join(sorted(set(edit) - allowed)))
                 self.conversion.prepare(run_id, unit_id, choice=choice, reason='User approved exact immutable proposal ' + proposal['proposal_id'],
                                         user_approved=True, **edit)
@@ -637,7 +760,7 @@ class DiscoveryIntegration:
         def project(ledger):
             # UI sees full records; child capability tokens/launch capabilities remain internal.
             run = ledger['run_id']
-            if session_id not in {ledger['origin'].get('session_id'), ledger['origin'].get('stream_origin_session')}:
+            if session_id not in {ledger['origin'].get('session_id'), ledger['origin'].get('stream_origin_session')} and not self.origin_authorized(self._stream(ledger['config'].get('stream_name', ledger['stream'])), session_id):
                 self.runner._parent(run, session_id)
             if ledger.get('review'):
                 self.reconcile_endstate(run)
@@ -652,13 +775,14 @@ class DiscoveryIntegration:
                     'status': ledger['status'], 'sources_checked': ledger['config'].get('sources', []),
                     'coverage': coverage, 'research': attempts, 'candidates': ledger['candidates'],
                     'mode': ledger['config'].get('mode'), 'timezone': ledger['config'].get('timezone'),
+                    'lineage': ledger.get('lineage', {}), 'pilot_skipped': join.get('pilot_skipped', []),
                     'legacy_proposals': list((self.rt.ctx.state.get('discovery_legacy:' + ledger['config'].get('stream_name', ledger['stream']), default={}) or {}).values()),
                     'proposals': digest['items'] if digest else [], 'decisions': decisions, 'conversions': conversions,
                     'conflicts': (ledger.get('review') or {}).get('conflicts', []), 'failures': ledger['errors'] + join.get('failures', []),
                     'recovery': read_json(self.store.run_dir(run) / 'supervisor.json', {}),
                     'delivery': self.digest._load()['delivery'].get(run, {'state': 'not_prepared'})}
         if run_id: return project(self.store.get_run(run_id))
-        return {'runs': [project(r) for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')}]}
+        return {'runs': [project(r) for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')} or self.origin_authorized(self._stream(r['config'].get('stream_name', r['stream'])), session_id)]}
 
 
 STR = {'type': 'string'}
@@ -682,6 +806,7 @@ SCHEMAS = {
  'discovery_join': _schema('discovery_join', 'Global barrier: every selected parent accepted, exhausted or explicitly degraded; live attempts never join.', {**RUN, 'degraded': {'type': 'object', 'additionalProperties': STR}}, ['run_id']),
  'discovery_recover': _schema('discovery_recover', 'Recover SAME saved run without blind relaunch/refund. New parent adoption requires out-of-band authorization.', {**RUN, 'owner_restarted': BOOL, 'adopt': BOOL}, ['run_id']),
  'discovery_release_hold': _schema('discovery_release_hold', 'Deliberately release safety hold without refunding unknown attempts.', {**RUN, 'reason': STR}, ['run_id', 'reason']),
+ 'discovery_replay': _schema('discovery_replay', 'Explicit saved_input replay of finalized frozen inputs, or current fresh_validation / targeted_supplement. Distinct lineage/review; no old task mutation.', {**RUN, 'operation': {'type': 'string', 'enum': ['saved_input', 'fresh_validation', 'targeted_supplement']}, 'mode': {'type': 'string', 'enum': ['shadow', 'research_only']}, 'candidate_ids': {'type': 'array', 'items': STR}, 'user_approved': BOOL}, ['run_id', 'operation', 'mode', 'user_approved']),
  'discovery_config': _schema('discovery_config', 'Configure approved existing source reader or confirm account identity, scoped to installing profile. No credentials.', {'action': {'type': 'string', 'enum': ['source', 'identity', 'delivery', 'status']}, 'stream': STR, 'config': OBJ, 'account_key': STR, 'identity': OBJ, 'user_approved': BOOL}, ['action']),
  'discovery_collect': _schema('discovery_collect', 'Collect approved source with actual configured reader, or explicitly partial attested envelope. SAME saved window.', {**RUN, 'source_key': STR, 'envelope': OBJ, 'max_pages': {'type': 'integer', 'minimum': 1}}, ['run_id', 'source_key']),
  'discovery_context': _schema('discovery_context', 'Freeze collected source inventory, ALL-status task bodies, installed full skills, full rubric and approved context before research.', {**RUN, 'context': OBJ}, ['run_id']),
@@ -722,7 +847,7 @@ def register(ctx, *, integration=None):
     handlers = make_tool_handlers(service.runner)
     def config_call(a, session_id='', **_):
         action = a['action']
-        if action in {'source', 'delivery'} and session_id != service._stream(a['stream'])['origin_session']:
+        if action in {'source', 'delivery'} and not service.origin_authorized(service._stream(a['stream']), session_id):
             raise UserError('source/delivery approval must be configured from actual origin session, never scheduled claims')
         if action == 'source':
             return service.configure(a['stream'], a['config'], user_approved=a.get('user_approved', False))
@@ -731,11 +856,11 @@ def register(ctx, *, integration=None):
         if action == 'identity':
             return service.confirm_identity(a['account_key'], a['identity'], user_confirmed=a.get('user_approved', False))
         if action == 'status':
-            return {'sources': ctx.state.get('discovery_sources', default={}), 'identities': ctx.state.get('discovery_identity_accounts', default={})}
+            return {'sources': ctx.state.get('discovery_sources', default={}), 'identities': ctx.state.get('discovery_identity_accounts', default={}), 'streams': ctx.state.get('streams', default={}), 'delivery': ctx.state.get('discovery_delivery', default={})}
         raise UserError('unknown configuration action')
     def digest_call(a, session_id='', **_):
         ledger = service.store.get_run(a['run_id'])
-        if session_id not in {ledger['origin'].get('session_id'), ledger['origin'].get('stream_origin_session')}:
+        if session_id not in {ledger['origin'].get('session_id'), ledger['origin'].get('stream_origin_session')} and not service.origin_authorized(service._stream(ledger['config'].get('stream_name', ledger['stream'])), session_id):
             service.runner._parent(a['run_id'], session_id)
         action = a.get('action', 'prepare')
         if action == 'prepare': return service.finalize(a['run_id'], session_id=session_id)
@@ -754,7 +879,7 @@ def register(ctx, *, integration=None):
         if action != 'resume':
             ledger = service.store.get_run(a['run_id'])
             origin = ledger['origin'].get('stream_origin_session', ledger['origin'].get('session_id'))
-            if session_id != origin or a.get('user_approved') is not True:
+            if (session_id != origin and not service.origin_authorized(service._stream(ledger['config'].get('stream_name', ledger['stream'])), session_id)) or a.get('user_approved') is not True:
                 raise UserError('pending-plan changes require explicit approval from actual origin session')
             params = {k: a[k] for k in ('expected_plan_revision', 'reason')}
             if action == 'revise': return service.conversion.revise(a['run_id'], a['unit_id'], edits=a.get('edits', {}), **params)
@@ -763,6 +888,7 @@ def register(ctx, *, integration=None):
             raise UserError('unknown plan action')
         return service.conversion.deliver_git(a['run_id'], a['unit_id'])
     handlers.update({
+        'discovery_replay': lambda a, session_id='', **_: service.replay(**a, session_id=session_id),
         'discovery_config': config_call,
         'discovery_digest': digest_call,
         'discovery_runs': lambda a, session_id='', **_: service.backend(**a, session_id=session_id),

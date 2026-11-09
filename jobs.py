@@ -133,7 +133,8 @@ def reconcile_discovery_job(rt, stream):
     configs = (rt.ctx.state.get('discovery_sources', default={}) or {}).get(stream['name'], {})
     readers = [t for s in stream['sources'] for t in s.get('toolsets', [])]
     readers += [t for c in configs.values() if any(s['name'] == c.get('name') and s['scope'] == c.get('scope') for s in stream['sources']) for t in c.get('toolsets', [])]
-    desired = discovery_job_config(stream['name'], readers)
+    binding = (rt.ctx.state.get('discovery_delivery', default={}) or {}).get(stream['name'], {})
+    desired = discovery_job_config(stream['name'], readers + binding.get('toolsets', []))
     raw = rt.ctx.dispatch_tool('cronjob_manage', {'action': 'update', 'job_id': stream['job_id'], **desired})
     result = json.loads(raw) if isinstance(raw, str) else raw
     if result.get('error') or result.get('success') is False:
@@ -142,6 +143,41 @@ def reconcile_discovery_job(rt, stream):
     if observed.get('enabled_toolsets') != desired['enabled_toolsets']:
         raise ValueError('discovery reader toolsets readback mismatch')
     return {'state': 'verified', 'job_id': stream['job_id'], 'enabled_toolsets': observed['enabled_toolsets']}
+
+
+def activate_discovery_job(rt, stream, binding):
+    """Called only after approved binding readback; public cron only."""
+    from .discovery import _streams, _save_streams
+    configs = (rt.ctx.state.get('discovery_sources', default={}) or {}).get(stream['name'], {})
+    toolsets = [t for s in stream['sources'] for t in s.get('toolsets', [])]
+    toolsets += [t for c in configs.values() for t in c.get('toolsets', [])]
+    toolsets += binding.get('toolsets', [])
+    desired = discovery_job_config(stream['name'], toolsets)
+    if not stream.get('job_id'):
+        args = {'action': 'create', 'name': f"{PREFIX}: discovery {stream['name']}",
+                'schedule': stream['schedule'], 'timezone': stream['timezone'],
+                'attach_to_session': True, 'skills': ['alchemy-task:discovery'], **desired}
+        raw = rt.ctx.dispatch_tool('cronjob_manage', args)
+        jid = parse_job_id(raw)
+        if not jid: raise ValueError('could not create delivery-ready discovery job')
+        stream = {**stream, 'job_id': jid, 'activation_state': 'ACTIVATING'}
+        streams = _streams(rt); streams[stream['name']] = stream; _save_streams(rt, streams)
+    else:
+        read_discovery_job(rt, stream)
+        rt.ctx.dispatch_tool('cronjob_manage', {'action': 'update', 'job_id': stream['job_id'], **desired})
+    observed = read_discovery_job(rt, stream)
+    if observed.get('deliver') != 'local' or observed.get('enabled_toolsets') != desired['enabled_toolsets']:
+        raise ValueError('delivery-ready job readback mismatch; activation incomplete')
+    if observed.get('paused') is True or observed.get('enabled') is False or observed.get('state') == 'paused':
+        rt.ctx.dispatch_tool('cronjob_manage', {'action': 'resume', 'job_id': stream['job_id']})
+        observed = read_discovery_job(rt, stream)
+        if observed.get('paused') is True or observed.get('enabled') is False or observed.get('state') == 'paused':
+            raise ValueError('job resume readback failed')
+    stream.update(activation_state='ACTIVE', delivery_state='verified', setup_blocked_reason='',
+                  job_binding={'job_id': stream['job_id'], 'origin_session': stream['origin_session'],
+                               'profile': rt.ctx.profile_name, 'verified': True})
+    streams = _streams(rt); streams[stream['name']] = stream; _save_streams(rt, streams)
+    return stream
 
 
 def parse_job_id(result: Any) -> str:

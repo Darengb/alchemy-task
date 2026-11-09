@@ -7,9 +7,18 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import re
 from pathlib import Path
 from .core.discovery_state import DiscoveryStore, atomic_json, read_json
 from .core.discovery_identity import UserError
+
+
+def _failure_status(failure):
+    # Project operational diagnostics only; semantic/user context remains useful.
+    reason = str(failure.get('reason') or 'Research needs attention')
+    if re.search(r'(?:Error:|Exception:|Traceback|fatal:|areas/[^\s]+/tasks/|(?:^|\s)/[^\s]+|[a-f0-9]{8}-[a-f0-9-]{27,})', reason):
+        return 'Operation unavailable; inspect saved review diagnostics and retry the saved operation'
+    return reason[:400]
 
 
 class DiscoveryDigest:
@@ -21,7 +30,7 @@ class DiscoveryDigest:
     def _load(self):
         return read_json(self.path, {'digests': {}, 'proposals': {}, 'numbers': {}, 'seen': {}, 'delivery': {}})
 
-    def prepare(self, run, *, stream, day, origin, items, failures=None, coverage=None, outcomes=None, label=''):
+    def prepare(self, run, *, stream, day, origin, items, failures=None, coverage=None, outcomes=None, label='', review_namespace=''):
         dt.date.fromisoformat(day)
         if not origin.get('session_id'):
             raise UserError('digest requires actual origin session')
@@ -35,6 +44,7 @@ class DiscoveryDigest:
                 if raw['kind'] not in {'new', 'semantic', 'selection'}:
                     raise UserError('only new or update proposals are numbered')
                 binding = [raw['unit_id'], raw['research_revision']]
+                if review_namespace: binding.append(review_namespace)
                 identity = hashlib.sha256(json.dumps(binding).encode()).hexdigest()
                 # Same accepted action/revision is not relisted in another stream.
                 if identity in data['seen']:
@@ -68,16 +78,16 @@ class DiscoveryDigest:
             if not numbered:
                 lines.append('No new proposals.')
             for outcome in outcomes or []:
-                line = f"Existing task: {outcome['title']} [{outcome['task_id']}]: {outcome['status']}"
+                line = f"Existing task: {outcome['title']}: {outcome['status']}"
                 for surface in ('git', 'phone'):
                     detail = outcome.get(surface) or {}
-                    if detail: line += f"; {surface}={detail.get('state', 'unknown')}" + (': ' + detail['reason'] if detail.get('reason') else '')
+                    if detail: line += f"; {surface}={detail.get('state', 'unknown')}"
                 if outcome.get('resume_action'): line += '; resume with discovery_conversion_recover for this saved run/unit'
                 lines.append(line)
             for failure in failures:
-                lines.append('Attention: ' + (str(failure['title']) + ': ' if failure.get('title') else '') + str(failure.get('reason') or failure))
+                lines.append('Attention: ' + (str(failure['title']) + ': ' if failure.get('title') else '') + _failure_status(failure))
             for source in coverage:
-                lines.append('Coverage: ' + str(source.get('source_key', source.get('source', 'source'))) + ': ' + str(source.get('status', 'unknown')) + (': ' + str(source['error']) if source.get('error') else ''))
+                lines.append('Coverage: ' + str(source.get('source_key', source.get('source', 'source'))) + ': ' + str(source.get('status', 'unknown')) + (': source read unavailable; inspect saved review diagnostics' if source.get('error') else ''))
             lines.append('Reply with the numbers you want. Other items remain replyable for seven days.')
             result = {'run_id': run, 'stream': stream, 'day': day, 'origin': origin, 'items': numbered,
                       'failures': failures, 'coverage': coverage, 'outcomes': outcomes or [], 'text': '\n'.join(lines)}

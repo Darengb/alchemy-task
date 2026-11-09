@@ -440,7 +440,7 @@ DISCOVERY_START_SCHEMA = {
     "name": "discovery_start",
     "description": "Discovery runs only: get a stream's approved sources, time window, research budget, already "
                    "proposed source IDs and open tasks, before reading the sources.",
-    "parameters": {"type": "object", "properties": {"stream": {"type": "string"}, "mode": {"type": "string", "enum": ["production", "shadow", "research_only"]}}, "required": ["stream"]},
+    "parameters": {"type": "object", "properties": {"stream": {"type": "string"}, "mode": {"type": "string", "enum": ["production", "shadow", "research_only"]}, "pilot_limit": {"type": "integer", "minimum": 0, "maximum": 200, "description": "Explicit shadow/research_only subset only; retains full frozen index and audits pilot_skipped separately."}}, "required": ["stream"]},
 }
 
 DISCOVERY_SUBMIT_SCHEMA = {
@@ -504,7 +504,7 @@ def discovery_stream(args: dict[str, Any], session_id: str) -> str:
 @_discovery
 def discovery_start(args: dict[str, Any], session_id: str) -> str:
     from . import discovery as dv
-    return _ok(**dv.start(Runtime(), args.get("stream", ""), session_id=session_id, mode=args.get('mode')))
+    return _ok(**dv.start(Runtime(), args.get("stream", ""), session_id=session_id, mode=args.get('mode'), pilot_limit=args.get('pilot_limit')))
 
 
 @_discovery
