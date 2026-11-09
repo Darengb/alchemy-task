@@ -16,7 +16,7 @@ from .core.discovery_state import DiscoveryStore, atomic_json, read_json
 from .core.discovery_identity import UserError, _component, candidate_id
 from .core.discovery_dossiers import content_revision
 from .core import taskfile as tf
-from .core.discovery_research import child_schema
+from .core.discovery_research import child_schema, CANARY, SECRET_VALUE, MAX_TITLE_CHARS, MAX_REASON_CHARS, MAX_STRING_CHARS
 from .discovery_context import DiscoveryContext, resolve_identity
 from .discovery_sources import SourceAdapter, collect_attested, validate_source_config
 from .discovery_runner import DiscoveryRunner, RunnerPolicy, make_tool_handlers, make_hooks, CHECKLIST, BINDING_KEYS
@@ -29,6 +29,33 @@ def _pick(value, path):
     for part in path.split('.') if path else []:
         value = value[int(part)] if isinstance(value, list) else value[part]
     return value
+
+
+WITHHELD_TITLE = 'Follow-up (title withheld; see source)'
+_METADATA_LIMITS = {'title': MAX_TITLE_CHARS, 'prefilter_reason': MAX_REASON_CHARS, 'summary': MAX_STRING_CHARS,
+                    'due': MAX_STRING_CHARS, 'priority': MAX_STRING_CHARS}
+
+
+def _text(value):
+    """Source _text projection: drop control characters and DEL."""
+    return ''.join(ch for ch in str(value) if ch >= ' ' and ch != '\x7f').strip()
+
+
+def _withheld_title(value):
+    title = _text(value or '')[:MAX_TITLE_CHARS]
+    return WITHHELD_TITLE if not title or CANARY.search(title) or SECRET_VALUE.search(title) else title
+
+
+def _project_metadata(item):
+    """COL-043 compact metadata projection; the lossless body resource is unchanged."""
+    item = dict(item)
+    item['title'] = _withheld_title(item.get('title'))
+    for key in ('prefilter_reason', 'summary', 'due', 'priority'):
+        if key not in item: continue
+        value = _text(item[key])[:_METADATA_LIMITS[key]] if isinstance(item[key], str) else ''
+        if not value or CANARY.search(value) or SECRET_VALUE.search(value): item.pop(key)
+        else: item[key] = value
+    return item
 
 
 def _profile_home():
@@ -426,9 +453,24 @@ class DiscoveryIntegration:
         for cid, versions in grouped.items():
             body = self.store.put_resource(run_id, 'source-body-' + cid, versions)
             source_index.append({'candidate_id': cid, 'body': body, 'versions': len(versions)})
-            compact.append({k: v for k, v in versions[-1].items() if k in allowed})
+            compact.append((cid, _project_metadata({k: v for k, v in versions[-1].items() if k in allowed})))
         primary_index = self.store.put_resource(run_id, 'source-material', source_index)
-        self.store.add_candidates(run_id, compact)
+        # One unindexable item must never wedge the stream: withhold it with a
+        # visible reason and block its backlog entry; the body stays saved.
+        withheld = []
+        for cid, item in compact:
+            try:
+                self.store.add_candidates(run_id, [item])
+            except UserError as exc:
+                withheld.append({'candidate_id': cid, 'title': _withheld_title(item.get('title')),
+                                 'reason': 'Source item could not be indexed (%s); full source is saved for review' % str(exc)[:200]})
+        if withheld:
+            gone = {w['candidate_id'] for w in withheld}
+            for entry in [s for s in selection if s['candidate_id'] in gone]:
+                self.store.update_backlog(ledger['stream'], entry['source_key'], entry['backlog_id'], status='blocked',
+                                          lineage={'run_id': run_id, 'candidate_id': entry['candidate_id']})
+            selection = [s for s in selection if s['candidate_id'] not in gone]
+            self.store.put_resource(run_id, 'freeze-withheld', withheld)
         self.store.put_resource(run_id, 'backlog-selection', selection)
         rubric = (Path(__file__).parent / 'skills' / 'discovery' / 'SKILL.md').read_text()
         approved_context = {'parent_supplied': context or {}, 'profile_documents': {}, 'unavailable': []}
@@ -712,6 +754,9 @@ class DiscoveryIntegration:
             info = ledger['resources']['supplement-selection']
             selection = read_json(self.store.run_dir(run_id) / 'resources' / info['sha256'])
             supplement_failures = [{'title': x['title'], 'reason': 'Retained candidate not found in current approved window; original input remains saved'} for x in selection['expected'] if x['candidate_id'] in selection['missing_current']]
+        if 'freeze-withheld' in ledger['resources']:
+            info = ledger['resources']['freeze-withheld']
+            supplement_failures += [{'title': x['title'], 'reason': x['reason']} for x in read_json(self.store.run_dir(run_id) / 'resources' / info['sha256'])]
         stream = self._stream(ledger['config'].get('stream_name', ledger['stream']))
         origin = {**ledger['origin'], 'session_id': ledger['origin'].get('stream_origin_session', ledger['origin']['session_id'])}
         digest = self.digest.prepare(run_id, stream=ledger['config'].get('stream_name', ledger['stream']), day=ledger['business_date'], origin=origin,
