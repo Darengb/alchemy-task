@@ -58,7 +58,10 @@ def register(ctx):
             remote=root/'remote.git';subprocess.run(['git','init','--bare',str(remote)],check=True,capture_output=True)
             def git(*a):return subprocess.run(['git','-C',str(ws),*a],check=True,capture_output=True,text=True).stdout.strip()
             git('init','-b','main');git('config','user.name','Synthetic Canary');git('config','user.email','canary@example.test');git('remote','remove','origin') if 'origin' in git('remote').splitlines() else None;git('remote','add','origin',str(remote))
-            for i in range(36):rt.store().create(title='Archive %02d '%i+('unrelated fixture inventory padding '*4),area='work',undated=True,research=False,notes='Unrelated archived project. '+('padding '*100),plan='Unrelated plan.')
+            existing_titles={d.title for d in rt.store().scan().tasks}
+            for i in range(36):
+                title=('Archive %02d '%i+('unrelated fixture inventory padding '*4)).strip()
+                if title not in existing_titles:rt.store().create(title=title,area='work',undated=True,research=False,confirm_new=True,notes='Unrelated archived project. '+('padding '*100),plan='Unrelated plan.')
             d=rt.store().create(title='ZZZ Order banner',area='work',undated=True,research=False,notes='Original request to buy banner; this was cancelled and completed. source:feed:account:issue:print',plan='ROUTING_FACT_COBALT: Proof approvals must go to the cobalt review queue, NOT the amber purchasing queue. The completed banner must stay completed. New proof approval is a separate action. Follow the installed synthetic-print skill.')
             # Use public store update rather than editing the engine or forging research.
             rt.store().update(d.task_id,{'status':'done'})
