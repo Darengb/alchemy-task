@@ -43,3 +43,54 @@ def test_long_slack_thread_is_partial_and_keeps_sibling_followups(settings, data
     text = integration.finalize(run, session_id='parent')['text']
     assert 'Coverage: feed: partial' in text and 'degraded' in text
     assert 'No new follow-ups found.' not in text
+
+
+def _mail_message(mid, sender, subject, at, text):
+    import base64
+    return {'id': mid, 'internalDate': str(at), 'payload': {'mimeType': 'text/plain',
+            'headers': [{'name': 'From', 'value': sender}, {'name': 'Subject', 'value': subject}],
+            'body': {'data': base64.urlsafe_b64encode(text.encode()).decode()}}}
+
+
+def test_transcript_source_run_first_never_hides_ordinary_mail(tmp_path):
+    """Only the mail source publishes the shared all-thread snapshot; transcript consumes it."""
+    from alchemy_task.core.discovery_state import DiscoveryStore
+    from alchemy_task.discovery_collectors import make_daily_reader
+    from alchemy_task.discovery_sources import SourceAdapter
+    start, end = '2026-01-01T00:00:00+00:00', '2026-01-02T00:00:00+00:00'
+    at = 1767225600000 + 1000
+    scope = {'mailbox': 'work'}  # same human scope label for both sources
+    mail = {'source_key': 'mail', 'account_key': 'acct', 'scope': scope, 'read_method': 'mailer', 'kind': 'mail',
+            'sender_domains': ['example.test']}
+    notes = {**mail, 'source_key': 'notes', 'kind': 'transcript', 'service_sender': 'notes@service.test'}
+    threads = {'tn': [_mail_message('n1', 'notes@service.test', 'Notes', at, 'Suggested next steps\nShip it\nSummary\nx')],
+               'tm': [_mail_message('m1', 'peer@example.test', 'Please approve', at, 'Approve the proof')]}
+    def env(c, s, e, items):
+        return {'account_key': c['account_key'], 'scope': c['scope'], 'start': s, 'end': e, 'items': items,
+                'next_cursor': None, 'pagination_exhausted': True}
+    def thread(c, s, e, tid):
+        return env(c, s, e, [{'id': tid, 'messages': threads[tid], 'complete': True}])
+    store = DiscoveryStore(tmp_path / 'state')
+    # The transcript binding filters by service sender, so it lists only note threads.
+    notes_receipt = SourceAdapter(store, notes, read_page=make_daily_reader(
+        notes, lambda c, s, e, k: env(c, s, e, [{'id': 'n1', 'threadId': 'tn'}]),
+        snapshot_root=tmp_path / 'snap', read_thread=thread)).collect('st', start=start, end=end)
+    assert notes_receipt['status'] == 'complete'
+    assert len(store.source_state('st', 'notes')['backlog']) == 1
+    mail_lists = []
+    def mail_reader(c, s, e, k):
+        mail_lists.append(k)
+        return env(c, s, e, [{'id': 'n1', 'threadId': 'tn'}, {'id': 'm1', 'threadId': 'tm'}])
+    mail_receipt = SourceAdapter(store, mail, read_page=make_daily_reader(
+        mail, mail_reader, snapshot_root=tmp_path / 'snap', read_thread=thread)).collect('st', start=start, end=end)
+    assert mail_receipt['status'] == 'complete'
+    assert mail_lists, 'mail source must list its own mailbox'
+    backlog = store.source_state('st', 'mail')['backlog']
+    assert [b['candidate']['title'] for b in backlog] == ['Please approve']
+    # A transcript source run after mail reuses the mail snapshot with zero list reads.
+    later = {**notes, 'source_key': 'notes2'}
+    def no_list(c, s, e, k):
+        raise AssertionError('transcript should consume the published mail snapshot')
+    receipt = SourceAdapter(store, later, read_page=make_daily_reader(
+        later, no_list, snapshot_root=tmp_path / 'snap', read_thread=thread)).collect('st', start=start, end=end)
+    assert receipt['status'] == 'complete' and len(store.source_state('st', 'notes2')['backlog']) == 1

@@ -179,9 +179,13 @@ def make_daily_reader(config, read_page, *, snapshot_root, read_thread=None, rea
         threads = list(state['threads'].values())
         if direct_messages:
             threads += [{'id':tid,'messages':messages} for tid,messages in direct_messages.items()]
-        else:
+        # Source design: the mail source publishes the all-thread snapshot and
+        # transcript consumes it. A transcript listing is sender-filtered, so it
+        # is never published as whole-mailbox evidence.
+        published = kind == 'mail' and not direct_messages
+        if published:
             publish_snapshot(snapshot, account=frozen['account_key'], start=start, end=end, threads=threads, complete=True)
-        return project(threads, start, end, raw_pages=state['pages'], shared_snapshot_published=not bool(direct_messages))
+        return project(threads, start, end, raw_pages=state['pages'], shared_snapshot_published=published)
 
     def project(threads, start, end, **metadata):
         normalized = normalize_mail_threads(threads, {**frozen, 'window_start': start, 'window_end': end})
