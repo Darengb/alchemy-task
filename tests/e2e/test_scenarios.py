@@ -288,7 +288,6 @@ def test_e2_deferred_item_survives_when_source_no_longer_lists_it(world, host_fa
     assert 'No new follow-ups found.' not in day2['digest']['text']
 
 
-@pytest.mark.xfail(strict=True, reason='ORC-F3 / E2E-2, fixed on the Phase 3 branch')
 def test_e3_cap_deferral_is_a_distinct_state_not_a_failure(world, host_factory):
     """adaptation-plan: deferred is a distinct state, never success or a fabricated failure."""
     host = started_host(host_factory, research_cap=2)
@@ -318,7 +317,7 @@ def test_f1_semantic_update_refused_after_concurrent_user_edit(world, host_facto
     tid, path = semantic_world(world, host)
     day = P.run_day(host)
     item = day['digest']['items'][0]
-    assert item['kind'] == 'semantic' and '[update or create]' in day['digest']['text']
+    assert item['kind'] == 'semantic' and 'Task type: Potential existing task update' in day['digest']['text']
     target = item['targets'][0]
     # The user edits the task in their editor after the digest arrives.
     edited = path.read_text() + '\nUser added a line after the digest.\n'
@@ -445,7 +444,6 @@ def test_i_seven_day_reply_window(world, host_factory, offset, allowed):
 
 
 # --------------------------------------------------------------------------- j / k: existing-task-only days
-@pytest.mark.xfail(strict=True, reason='semantics F1 (noop-only completed check), fixed on the Phase 4 branch')
 def test_j_noop_only_completed_check_says_no_new_followups(world, host_factory):
     host = started_host(host_factory)
     tid, existing = seed_normal(world, host)
@@ -459,7 +457,6 @@ def test_j_noop_only_completed_check_says_no_new_followups(world, host_factory):
     assert 'degraded' not in text and 'Reply with the numbers' not in text
 
 
-@pytest.mark.xfail(strict=True, reason='semantics F2 (multiple-exact conflict counted as failure), fixed on the Phase 4 branch')
 def test_k_multiple_exact_destinations_are_blocked_not_failures(world, host_factory):
     host = started_host(host_factory)
     for slug in ('fix-login-timeout', 'fix-login-timeout-copy'):

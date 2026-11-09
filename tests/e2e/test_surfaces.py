@@ -104,7 +104,6 @@ def test_reply_from_another_chat_is_refused_and_writes_nothing(world, host_facto
     assert proposal_states(host, day['run_id']) == {1: 'pending'}
 
 
-@pytest.mark.xfail(strict=True, reason='semantics F6 (reply in the native delivery thread), fixed on the Phase 4 branch')
 def test_reply_in_native_delivery_thread_resolves_the_digest(world, host_factory):
     """The native job attaches to the session; for an origin without a topic the host opens a delivery
     thread in the same chat. A numbered reply typed there answers the digest shown in that thread."""
