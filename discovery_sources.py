@@ -267,7 +267,7 @@ class SourceAdapter:
         receipts = copy.deepcopy(prior.get('pages', []))
         pass_start = len(receipts)
         seen, ids = {p['cursor'] for p in receipts if p.get('cursor') is not None}, list(prior.get('backlog_ids', []))
-        status, error, exhausted = 'partial', '', False
+        status, error, exhausted, primary_partial = 'partial', '', False, []
         while True:
             try:
                 read_started = datetime.now(timezone.utc).isoformat()
@@ -295,12 +295,17 @@ class SourceAdapter:
                     break
                 next_cursor = page['next_cursor']
                 if page['pagination_exhausted'] is True and next_cursor is None:
+                    exhausted = True
                     partial = (page.get('collection') or {}).get('partial')
                     if partial:
-                        # Items are kept, but a truncated primary earns no coverage.
-                        error = ('partial primary coverage: ' + '; '.join(map(str, partial)))[:500]
+                        # Every seed page was exhausted; only per-thread primary
+                        # context was truncated or skipped. The source reads one
+                        # page per thread and moves on, so the receipt stays
+                        # partial for this run but the window is acquired.
+                        primary_partial = [str(x) for x in partial]
+                        error = ('partial primary coverage: ' + '; '.join(primary_partial))[:500]
                         break
-                    exhausted, status = True, 'complete'
+                    status = 'complete'
                     break
                 if not isinstance(next_cursor, str) or not next_cursor or next_cursor in seen:
                     error = 'missing or repeated continuation'
@@ -311,10 +316,11 @@ class SourceAdapter:
                     error = 'bounded read pass; continuation retained'
                     break
             except Exception as exc:
-                error = str(exc)[:500]
+                error, exhausted, primary_partial = str(exc)[:500], False, []
                 status = 'partial' if receipts else 'failed'
                 break
         receipt = {'config_revision': hashlib.sha256(json.dumps(self.config, sort_keys=True).encode()).hexdigest(), 'covered_intervals': [[start, end]] if exhausted else [], 'status': status, 'verification': 'adapter_verified', 'account_key': self.config['account_key'], 'scope': self.config['scope'], 'start': start, 'end': end, 'pagination_exhausted': exhausted, 'continuation': cursor, 'pages': receipts, 'backlog_ids': ids, 'error': error}
+        if primary_partial: receipt['primary_partial'] = primary_partial
         self.store.record_coverage(stream, self.config['source_key'], receipt)
         return receipt
 

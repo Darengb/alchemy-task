@@ -985,7 +985,11 @@ class DiscoveryStore:
             state = self.source_state(stream, source)
             state['coverage'].append(copy.deepcopy(receipt))
             # Adapter validates account/window/contiguity. Never promote attestation.
-            if receipt['status'] == 'complete' and receipt['verification'] == 'adapter_verified' and receipt.get('pagination_exhausted') is True:
+            # A partial receipt whose seed pages were all exhausted and whose only
+            # gap is per-thread primary context still advances (source reads one
+            # page per thread per window); an unexhausted list page never does.
+            seeds_acquired = receipt['status'] == 'complete' or (receipt['status'] == 'partial' and bool(receipt.get('primary_partial')))
+            if seeds_acquired and receipt['verification'] == 'adapter_verified' and receipt.get('pagination_exhausted') is True:
                 ids = {x['backlog_id'] for x in state['backlog']}
                 if not isinstance(receipt.get('backlog_ids'), list) or not set(receipt['backlog_ids']) <= ids or not isinstance(receipt.get('end'), str):
                     raise UserError('coverage requires durable backlog identity receipt')

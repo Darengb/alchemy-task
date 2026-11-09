@@ -29,12 +29,13 @@ def test_long_slack_thread_is_partial_and_keeps_sibling_followups(settings, data
     run = integration.start('work', session_id='parent')['run_id']
     receipt = integration.collect(run, 'feed', session_id='parent')
     assert receipt['status'] == 'partial', receipt
-    assert receipt['covered_intervals'] == []
     backlog = {b['source_ids'][0].split(':')[2]: b for b in integration.store.source_state('work', 'feed')['backlog']}
     assert set(backlog) == {'C1', 'C2'}
     assert backlog['C1']['candidate'].get('partial') is True
     assert 'partial' not in backlog['C2']['candidate']
-    assert integration.store.source_state('work', 'feed').get('watermark') is None
+    # Seed pages were exhausted; only thread context was truncated, so the
+    # window is acquired (N1) while the receipt and digest stay partial.
+    assert integration.store.source_state('work', 'feed').get('watermark') == receipt['end']
     integration.freeze(run, session_id='parent')
     candidates = integration.store.get_run(run)['candidates']
     assert len(candidates) == 2
@@ -203,3 +204,122 @@ def test_changed_identity_makes_dependent_source_need_reconfigure(settings, data
     started = integration.start('work', session_id='parent')
     assert [s['identity']['name'] for s in started['sources']] == ['Second Person']
     assert started['sources'][0]['seed_queries'] == ['"Second Person"', '"SP"']
+
+
+
+def _busy_thread_dispatch(day1, *, replies_calls=None):
+    """Seeds on day 1 only: one reply in a thread longer than one provider page, one quiet ask."""
+    import datetime as dt
+    seed_ts = '%.6f' % (day1 - dt.timedelta(hours=2)).timestamp()
+    root_ts = '%.6f' % (day1 - dt.timedelta(hours=20)).timestamp()
+    sib_ts = '%.6f' % (day1 - dt.timedelta(hours=3)).timestamp()
+    def dispatch(tool, args):
+        if tool == 'reader':
+            low, high = dt.datetime.fromisoformat(args['start']).timestamp(), dt.datetime.fromisoformat(args['end']).timestamp()
+            seeds = [{'channel_id': 'C1', 'ts': seed_ts, 'thread_ts': root_ts, 'text': 'reply in busy thread'},
+                     {'channel_id': 'C2', 'ts': sib_ts, 'text': 'Separate ask in quiet channel'}]
+            return envelope(args, [s for s in seeds if low <= float(s['ts']) <= high])
+        request = args['request']
+        if request['operation'] == 'replies':
+            root = {'ts': request['ts'], 'text': 'root of busy thread'}
+            replies = [{'ts': '%s%03d' % (request['ts'][:-3], i), 'text': 'r'} for i in range(1, 200)]
+            return envelope(args, [root] + replies, next_cursor='more', pagination_exhausted=False)
+        return envelope(args, [{'ts': sib_ts, 'channel_id': 'C2', 'text': 'Separate ask in quiet channel'}])
+    return dispatch
+
+
+def test_busy_slack_thread_is_partial_once_then_the_window_moves_on(settings, data_dir, tmp_path):
+    """Seed pages exhausted and only one thread truncated: partial that day, watermark advances (source reads one page)."""
+    import datetime as dt
+    integration, rt, ctx = slack_service(settings, data_dir, tmp_path)
+    day1 = dt.datetime(2030, 1, 2, 23, 0, tzinfo=dt.timezone.utc)
+    ctx.dispatch_tool = _busy_thread_dispatch(day1)
+    integration.utcnow = lambda: day1
+    first = integration.start('work', session_id='parent')
+    receipt = integration.collect(first['run_id'], 'feed', session_id='parent')
+    assert receipt['status'] == 'partial' and 'not exhausted' in receipt['error']
+    backlog = {b['source_ids'][0].split(':')[2]: b for b in integration.store.source_state('work', 'feed')['backlog']}
+    assert backlog['C1']['candidate'].get('partial') is True and 'partial' not in backlog['C2']['candidate']
+    assert integration.store.source_state('work', 'feed')['watermark'] == day1.isoformat()
+    text1 = _close_run(integration, first['run_id'])['text']
+    assert 'Coverage: feed: partial' in text1 and 'degraded' in text1
+    day2 = day1 + dt.timedelta(days=1)
+    integration.utcnow = lambda: day2
+    second = integration.start('work', session_id='parent')
+    assert second['windows']['feed'] == {'start': day1.isoformat(), 'end': day2.isoformat()}
+    for b in integration.store.source_state('work', 'feed')['backlog']:
+        # Stand-in for day 1 research having settled both follow-ups, so day 2 has nothing new.
+        integration.store.update_backlog('work', 'feed', b['backlog_id'], status='accepted', lineage={'run_id': first['run_id'], 'test': 'settled'})
+    receipt2 = integration.collect(second['run_id'], 'feed', session_id='parent')
+    assert receipt2['status'] == 'complete'
+    text2 = _close_run(integration, second['run_id'])['text']
+    assert 'Coverage: feed: complete' in text2 and 'degraded' not in text2
+    assert 'No new follow-ups found.' in text2
+
+
+def test_unexhausted_slack_search_page_still_never_advances(settings, data_dir, tmp_path):
+    integration, rt, ctx = slack_service(settings, data_dir, tmp_path)
+    def dispatch(tool, args):
+        if tool == 'reader':
+            return envelope(args, [{'channel_id': 'C2', 'ts': ts_in(args, 3600), 'text': 'Ask'}],
+                            next_cursor=None, pagination_exhausted=False)
+        return envelope(args, [{'ts': ts_in(args, 3600), 'channel_id': 'C2', 'text': 'Ask'}])
+    ctx.dispatch_tool = dispatch
+    run = integration.start('work', session_id='parent')['run_id']
+    receipt = integration.collect(run, 'feed', session_id='parent')
+    assert receipt['status'] != 'complete'
+    assert integration.store.source_state('work', 'feed').get('watermark') is None
+
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize('defect', ['missing_root', 'channel_mismatch', 'contradictory'])
+def test_one_bad_slack_thread_is_skipped_with_an_error_and_siblings_survive(settings, data_dir, tmp_path, defect):
+    """Source slack_daily_followups: a per-thread failure is logged and the other threads continue."""
+    integration, rt, ctx = slack_service(settings, data_dir, tmp_path)
+    def dispatch(tool, args):
+        if tool == 'reader':
+            return envelope(args, [
+                {'channel_id': 'C1', 'ts': ts_in(args, 100), 'thread_ts': ts_in(args, 90000), 'text': 'reply in a broken thread'},
+                {'channel_id': 'C2', 'ts': ts_in(args, 3600), 'text': 'Separate ask in quiet channel'}])
+        request = args['request']
+        if request['operation'] == 'replies':
+            root = {'ts': request['ts'], 'text': 'root'}
+            reply = {'ts': ts_in(args, 100), 'text': 'reply in a broken thread'}
+            if defect == 'missing_root':
+                return envelope(args, [reply])
+            if defect == 'channel_mismatch':
+                return envelope(args, [{**root, 'channel_id': 'C9'}, reply])
+            return envelope(args, [root, {**reply, 'text': 'entirely different words'}])
+        return envelope(args, [{'ts': ts_in(args, 3600), 'channel_id': 'C2', 'text': 'Separate ask in quiet channel'}])
+    ctx.dispatch_tool = dispatch
+    run = integration.start('work', session_id='parent')['run_id']
+    receipt = integration.collect(run, 'feed', session_id='parent')
+    assert receipt['status'] == 'partial', receipt
+    assert 'skipped' in receipt['error'] and 'C1' in receipt['error']
+    backlog = integration.store.source_state('work', 'feed')['backlog']
+    assert [b['source_ids'][0].split(':')[2] for b in backlog] == ['C2']
+    assert backlog[0]['candidate']['title'] == 'Separate ask in quiet channel'
+    text = _close_run(integration, run)['text']
+    assert 'Coverage: feed: partial' in text and 'degraded' in text
+    assert 'No new follow-ups found.' not in text
+
+
+def test_legacy_mail_source_without_admission_needs_input_at_start(settings, data_dir, tmp_path):
+    import pytest
+    from alchemy_task.core.discovery_identity import UserError
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    configure(integration)
+    sources = ctx.state.get('discovery_sources')
+    sources['work']['feed']['kind'] = 'mail'
+    sources['work']['feed'].pop('sender_domains', None)
+    ctx.state.set('discovery_sources', sources)
+    runs = integration.store.state_root / 'runs'
+    before = sorted(runs.glob('*')) if runs.exists() else []
+    with pytest.raises(UserError, match='needs_input.*sender_domains'):
+        integration.start('work', session_id='parent')
+    assert (sorted(runs.glob('*')) if runs.exists() else []) == before
+    sources['work']['feed']['admit_all'] = True
+    ctx.state.set('discovery_sources', sources)
+    assert integration.start('work', session_id='parent')['run_id']
