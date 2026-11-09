@@ -112,7 +112,7 @@ mine = '?profile=' + serving
 other = '?profile=beta'
 
 # Settings use the real mounted host, canonical auth and profile-local state.
-settings_url = base + '/settings'
+settings_url = base + '/settings/approvals'
 assert client.get(settings_url + mine).status_code == 401
 initial = client.get(settings_url + mine, headers=owner)
 assert initial.status_code == 200 and initial.json()['approvals']['owner_only'] is False, initial.text

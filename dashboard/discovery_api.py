@@ -111,7 +111,7 @@ def _production(ledger):
         raise APIError('not_production', 'Only production runs permit mutation', 409)
 
 
-@router.get('/settings')
+@router.get('/settings/approvals')
 async def settings(request: Request):
     try:
         _admit(request)
@@ -121,7 +121,7 @@ async def settings(request: Request):
         return _error(exc)
 
 
-@router.post('/settings')
+@router.post('/settings/approvals')
 async def update_settings(request: Request):
     try:
         _admit(request)
