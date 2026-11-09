@@ -15,6 +15,7 @@ from .runtime import Runtime
 from .core.discovery_state import DiscoveryStore, atomic_json, read_json
 from .core.discovery_identity import UserError, _component, candidate_id
 from .core.discovery_dossiers import content_revision
+from .core import taskfile as tf
 from .core.discovery_research import child_schema
 from .discovery_context import DiscoveryContext, resolve_identity
 from .discovery_sources import SourceAdapter, collect_attested, validate_source_config
@@ -730,13 +731,17 @@ class DiscoveryIntegration:
             if len(zones) > 1 and not args.get('stream'):
                 raise UserError('streams have different frozen local days; specify stream for reply')
             today = self.utcnow().astimezone(ZoneInfo(next(iter(zones), self.rt.settings.timezone))).date().isoformat()
+        return self._decide_resolved(args, resolve=lambda ref: self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=args.get('stream', '')))
+
+    def _decide_resolved(self, args, *, resolve):
+        """Shared immutable prepare/batch-preflight/apply path after caller resolution."""
         results, dismissed, prepared = [], [], []
         for ref in args.get('dismiss') or []:
-            proposal = self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=args.get('stream', ''))
+            proposal = resolve(ref)
             self.digest.decide(proposal['proposal_id'], 'dismissed')
             dismissed.append(proposal['proposal_id'])
         for ref in dict.fromkeys(args.get('approve') or []):
-            proposal = self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=args.get('stream', ''))
+            proposal = resolve(ref)
             run_id, unit_id = proposal['run_id'], proposal['unit_id']
             proposal_state = self.digest._load()['proposals'][proposal['proposal_id']]['state']
             if proposal_state == 'dismissed':
@@ -768,7 +773,7 @@ class DiscoveryIntegration:
             if not isinstance(group, list) or len(group) < 2: raise UserError('merge requires groups of at least two approved references')
             selected = []
             for ref in group:
-                proposal = self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=args.get('stream', ''))
+                proposal = resolve(ref)
                 hits = [(r, w) for p, r, w, complete in prepared if p['proposal_id'] == proposal['proposal_id'] and not complete]
                 if len(hits) != 1: raise UserError('every merge member must be explicitly approved in this batch')
                 selected += hits
@@ -783,10 +788,18 @@ class DiscoveryIntegration:
 
     def backend(self, run_id='', *, session_id):
         def project(ledger):
-            # UI sees full records; child capability tokens/launch capabilities remain internal.
             run = ledger['run_id']
             if session_id not in {ledger['origin'].get('session_id'), ledger['origin'].get('stream_origin_session')} and not self.origin_authorized(self._stream(ledger['config'].get('stream_name', ledger['stream'])), session_id):
                 self.runner._parent(run, session_id)
+            return self.project_run(ledger)
+        if run_id: return project(self.store.get_run(run_id))
+        return {'runs': [project(r) for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')} or self.origin_authorized(self._stream(r['config'].get('stream_name', r['stream'])), session_id)]}
+
+    def project_run(self, ledger):
+        """Project durable state after the entrypoint has checked its caller."""
+        def project(ledger):
+            # UI sees full records; child capability tokens/launch capabilities remain internal.
+            run = ledger['run_id']
             if ledger.get('review'):
                 self.reconcile_endstate(run)
                 ledger = self.store.get_run(run)
@@ -806,8 +819,46 @@ class DiscoveryIntegration:
                     'conflicts': (ledger.get('review') or {}).get('conflicts', []), 'failures': ledger['errors'] + join.get('failures', []),
                     'recovery': read_json(self.store.run_dir(run) / 'supervisor.json', {}),
                     'delivery': self.delivery_status(run) if digest else {'state': 'not_prepared'}}
-        if run_id: return project(self.store.get_run(run_id))
-        return {'runs': [project(r) for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')} or self.origin_authorized(self._stream(r['config'].get('stream_name', r['stream'])), session_id)]}
+        result = project(ledger)
+        data = self.digest._load()
+        for failure in data['digests'].get(result['run_id'], {}).get('failures', []):
+            # Finalization adds a display title to join failures. Count that
+            # same failure once while preserving its original diagnostic fields.
+            key = {k: v for k, v in failure.items() if k != 'title'}
+            prior = next((f for f in result['failures'] if {k: v for k, v in f.items() if k != 'title'} == key), None)
+            if prior is None:
+                result['failures'].append(copy.deepcopy(failure))
+            elif 'title' not in prior and 'title' in failure:
+                prior['title'] = failure['title']
+        receipts = {r['unit_id']: r for r in result['conversions']}
+        proposals = []
+        today = self.utcnow().astimezone(ZoneInfo(result['timezone'] or self.rt.settings.timezone)).date().isoformat()
+        for frozen in result['proposals']:
+            state = data['proposals'][frozen['proposal_id']]['state']
+            item = {**copy.deepcopy(frozen), 'state': state, 'expired': frozen['expires'] < today}
+            if state in {'approved', 'complete'}:
+                plan_path, _ = self.conversion._paths(result['run_id'], frozen['unit_id'])
+                plan = read_json(plan_path, {})
+                receipt = receipts.get(frozen['unit_id'], {})
+                fm = tf.split_text(plan['postimage'], rt=True)[0] if plan else {}
+                item['result'] = {'task_id': receipt.get('task_id', plan.get('task_id')),
+                                  'title': fm.get('title', frozen['title']),
+                                  'operation': 'created' if plan.get('request', {}).get('choice') == 'create' else 'updated',
+                                  'state': receipt.get('state', 'prepared'), 'receipt': receipt}
+            proposals.append(item)
+        result['proposals'] = proposals
+        result['outcomes'] = copy.deepcopy(data['digests'].get(result['run_id'], {}).get('outcomes', []))
+        for outcome in result['outcomes']:
+            receipt = receipts.get(outcome['unit_id'], {})
+            if receipt:
+                outcome.update(status=receipt['state'], task_id=receipt['task_id'], git=receipt.get('git'), phone=receipt.get('phone'))
+                if receipt['state'] == 'complete': outcome['resume_action'] = None
+                if receipt.get('applied_at'): outcome['applied_at'] = receipt['applied_at']
+        result['summary'] = {state: sum(p['state'] == state for p in proposals) for state in ('pending', 'approved', 'complete', 'dismissed')}
+        result['summary'].update(auto_updated=sum(o['status'] in {'local_verified', 'git_pending', 'phone_pending', 'complete'} for o in result['outcomes']),
+                                 conflicts=len(result['conflicts']), failures=len(result['failures']))
+        result['degraded'] = bool(result['failures'] or any(c.get('status') != 'complete' for c in result['coverage']))
+        return result
 
 
 STR = {'type': 'string'}

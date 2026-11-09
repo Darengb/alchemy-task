@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-This is an implemented, tested integration under final acceptance, not a deployment or full-parity claim. The parent independently ran all 399 tests at code revision `d8d72f70e4d18b4dfbd55c49c08416741c143c07`. Registered local and Cloud full-pipeline synthetic canaries passed at `4261525` and `d8d72f7` respectively, and registered raw collector transport passed at d8. Actual scheduled recovery, native host-delivery qualifications and remaining source-obligation evidence still require resolution. UI is separate.
+This is an implemented, tested integration under final acceptance, not a deployment or full-parity claim. The parent independently ran all 399 tests at code revision `d8d72f70e4d18b4dfbd55c49c08416741c143c07`. Registered local and Cloud full-pipeline synthetic canaries passed at `4261525` and `d8d72f7` respectively, and registered raw collector transport passed at d8. A corrected actual native one-shot scheduled adoption also passed at d8 after supported profile-scoped plugin activation refreshed the canonical gateway registry. Native origin-post delivery and remaining source-obligation evidence still need separate qualification. UI is separate.
 
 The installing profile owns all mutable discovery state under its plugin data directory. No bundled credentials, private collectors, cross-profile lookup, source mutation or new runtime dependency is introduced. Broad inherited source tools are procedurally read-only, not a mechanical sandbox. Registered task/integration entrypoints additionally refuse verified discovery-child writes.
 
@@ -85,7 +85,57 @@ Optional `verified_sender` requires approval from the original/proven same origi
 
 ## UI/backend record
 
-`discovery_runs` returns time, day, public stream name, status, frozen source inventory, checked coverage, research attempt/evidence records, candidate/workstream records, immutable proposals, decisions, conversions, conflicts, failures, recovery and delivery. Proposal targets include task_id, exact path, status and read revision. `unit_id` and `proposal_id`, not titles, are action keys. Raw child capability tokens/launch handles are excluded from the projection. UI work is intentionally absent.
+`discovery_runs` returns time, day, public stream name, status, frozen source inventory, checked coverage, research attempt/evidence records, candidate/workstream records, immutable proposal content, decisions, conversions, conflicts, failures, recovery and delivery. Proposal targets include task_id, exact path, status and read revision. `unit_id` and `proposal_id`, not titles, are action keys. Raw child capability tokens/launch handles are excluded from the projection. The shared projector also supplies the current-state additions below; frozen digest text/items are never rewritten.
+
+### Dashboard and desktop HTTP extension
+
+`dashboard/plugin_api.py` mounts an isolated discovery router under `/api/plugins/alchemy-task`. It owns only these routes, so task UI routes can include `discovery_router` additively. The minimal `dashboard/manifest.json` declares the backend; merge its `api`/name fields with an existing UI manifest rather than replacing UI fields. No frontend is included.
+
+| Method and full route | Input | Success body |
+| --- | --- | --- |
+| `GET /api/plugins/alchemy-task/runs` | Optional `stream`, inclusive ISO `day_from`, `day_to` query filters | `{ok:true,runs:[Run,...]}`, newest `time` first, run ID breaks ties |
+| `GET /api/plugins/alchemy-task/runs/{run_id}` | Exact run ID | `{ok:true,...Run}` |
+| `POST /api/plugins/alchemy-task/proposals/{proposal_id}/approve` | Object with explicit `choice:"create"|"update"`; optional `target_task_id`, `expected_revision`, `title`, `due`, `undated`, `area`, `priority`, `scheduled`, `allow_expired` | `{ok:true,receipt:ConversionReceipt}` |
+| `POST /api/plugins/alchemy-task/proposals/{proposal_id}/dismiss` | Empty object or empty body | `{ok:true,proposal_id,state:"dismissed"}` |
+| `POST /api/plugins/alchemy-task/runs/{run_id}/units/{unit_id}/resume` | Empty object or empty body | `{ok:true,receipt:ConversionReceipt}` |
+
+No HTTP call needs a chat `session_id`. Authentication comes from the actual host's canonical sensitive-route guard, including its verified browser session, loopback session token, native profile-owner ticket or private plugin-host IPC admission. No new model tool or model-claimable owner flag exists. All handlers check admission before looking up state. Unknown query/body fields, including profile/origin/authority assertions, are refused; they never create authority. The host can route an independently authorized served profile to its own plugin host before the plugin handler runs. A native ticket cannot select another profile. A global dashboard owner token retains the host's global-owner semantics; it is not a profile-specific credential.
+
+Each request constructs a fresh `Runtime`/`DiscoveryIntegration` from the public `PluginContext` settings/state facade and the host-bound `get_hermes_home()`. The API does not use model runtime `_ctx`, import-cached data roots, client-supplied homes or a made-up worker identity. The actual host's mount dependency binds the request profile, and private IPC binds secondary profiles in their own plugin host. This installed-host bridge uses `hermes_cli.web_deps.late("_require_token")` and `PluginManifest` alongside the public context facade. The catalog validator currently warns about those two imports; they are tested installed-host seams, not a claim of a separately documented stable auth SDK. A missing host guard fails closed, without a local substitute.
+
+Approval resolves only an exact persisted `proposal_id`, never a number/day/title. It then uses the same `_decide_resolved` prepare, full-batch preflight, apply and Git path as chat `discovery_decide`. Production, joined research, exact destination, CAS and whole-postimage guards remain intact. Saved plans retain their task UUID/path and original requests. An existing conversion receipt is returned unchanged on duplicate approval, including `git_pending`/`phone_pending`, without new tasks or implicit delivery retry. Use the resume route for pending delivery. Resume requires an existing plan and calls the same conversion recovery path; it cannot create a replacement plan. Dismissed proposals cannot be approved. An approval affects only the selected proposal.
+
+### Current-state shapes
+
+`Run` preserves the existing fields: `run_id`, `time`, `day`, `stream`, `status`, `mode`, `timezone`, `sources_checked`, `coverage`, `research`, `candidates`, `lineage`, `pilot_skipped`, `legacy_proposals`, `proposals`, `decisions`, `conversions`, `conflicts`, `failures`, `recovery`, `delivery`. It adds:
+
+```json
+{
+  "summary": {"pending": 0, "approved": 0, "complete": 0, "dismissed": 0,
+              "auto_updated": 0, "conflicts": 0, "failures": 0},
+  "degraded": false,
+  "outcomes": []
+}
+```
+
+The four proposal counts read the current digest ledger. `auto_updated` counts locally applied existing-task outcomes (`local_verified`, `git_pending`, `phone_pending`, `complete`), excluding noops; pending remote delivery does not hide a completed local update. Conflicts/failures count the corresponding run arrays, with frozen digest failures included and title-enriched copies of the same failure counted once. `degraded` is true when failures exist or any checked source coverage status differs from `complete`. Every list record includes these fields without another detail request.
+
+Every proposal preserves all frozen content, including `proposal_id`, `unit_id`, `run_id`, `ref`, `number`, `day`, `expires`, `kind`, `title`, `current_understanding`, `substantive_next_action`, `new_information`, `source_links`, `related_context_links`, `sources_unavailable`, `research_disposition`, `uncertainty`, and `targets`. Targets retain `task_id`, `title`, `path`, `status`, `revision` and any additional existing fields. Proposals add `state:"pending"|"approved"|"dismissed"|"complete"`, `expired:boolean`, and, for approved/complete items:
+
+```json
+{"result":{"task_id":"saved-task-id","title":"Saved resulting title",
+           "operation":"created","state":"git_pending","receipt":{}}}
+```
+
+`operation` is `created` or `updated`, from the saved plan; `state` is the conversion receipt state, or `prepared` before a receipt exists. `receipt` is the existing conversion receipt, including independent local/Git/phone/Google evidence when available. `outcomes` retains each frozen existing-task outcome's `task_id`, `title`, `status`, `resume_action`, and all extra fields, then overlays the current conversion status/Git/phone receipt. Completed outcomes clear `resume_action`. `applied_at` is copied only when a saved receipt actually contains it; projection never invents a timestamp.
+
+### Expiry and errors
+
+Expiry compares the proposal's `expires` ISO date to the current date in the run's frozen stream timezone. The expiry date itself remains valid, as in chat. The dashboard may approve an expired exact proposal only with literal boolean `allow_expired:true`; this changes no production/CAS/destination/choice/plan guard. Duplicate approvals return their existing receipts even after expiry. Chat's original seven-day numbered/exact `resolve()` behavior is unchanged and does not gain an override.
+
+Plugin-handled errors use `{ok:false,error:{code,message}}`. Stable codes are `needs_due`, `needs_area`, `stale_revision`, `already_resolved`, `expired`, `not_production`, `invalid_choice`, `target_required`; additional codes are `invalid_request`, `not_found`, `unauthorized`, and `forbidden`. Malformed JSON, non-object bodies, wrong field types and unsupported fields return structured `invalid_request` errors. HTTP status is 400 for input errors, 409 for stale/resolved/expiry/mode conflicts, 404 for an unknown exact proposal, and 401/403 for plugin-handled auth refusal. Outer host middleware may reject a request earlier with its own canonical auth/profile/consent envelope; the plugin does not rewrite host responses.
+
+Synthetic verification includes actual discovery/import/mount through `_mount_plugin_api_routes`, real canonical HTTP auth, real host-issued native tickets for two synthetic profiles, secondary-profile plugin-host IPC, unauthorized/spoofed admission denial, profile mismatch denial, current CAS before/after preparation, exact approval/dismissal, saved-plan delivery resume and unchanged chat regressions. This is installed-host ASGI evidence, not a deployment, browser login, real provider send or Cloud dashboard canary. Parent auth-focused independent review remains required before readiness.
 
 ## Source correspondence and verification boundary
 
@@ -95,12 +145,12 @@ Synthetic tests cover registered collection/context/research callbacks/parent ac
 
 ## Recovery and remaining acceptance
 
-The d8 Cloud canary used one child, full source/task-body/skill/action-contract reads, semantic parent acceptance, global join, explicit create approval, accepted dossier promotion and exact bare-remote verification for all 38 resulting task files. Its explicit verified-sender fixture wrote one new synthetic message; repeats created no extra task or message. Parent REST-history and fresh target readback verification confirmed these facts. This does not establish a real provider post or native-origin delivery. The actual scheduled local test fired, but its fresh cron agent could not see the fixture tool, so it established no adoption/fencing pass.
+The d8 Cloud canary used one child, full source/task-body/skill/action-contract reads, semantic parent acceptance, global join, explicit create approval, accepted dossier promotion and exact bare-remote verification for all 38 resulting task files. Its explicit verified-sender fixture wrote one new synthetic message; repeats created no extra task or message. Parent REST-history and fresh target readback verification confirmed these facts. This does not establish a real provider post or native-origin delivery. The first actual scheduled local test fired but exposed no fixture tool because manual disk configuration had not refreshed the already-running canonical gateway registry. After supported public install/enable and profile-scoped plugin reload, a corrected actual native one-shot occurrence passed at d8: parent readback verified the native execution and fresh SessionDB tool call, same run/windows/config, adoption record, old `launch_unknown` fencing and retained budget charge without refund. All 86 engine blobs matched the d8 pin, and cleanup was verified. This proves one synthetic local scheduled-adoption case, not native origin posting or real SaaS acquisition.
 
 A later empty-result correction reports `No new follow-ups found.` after a completed check with no new proposals or existing-task outcomes. Incomplete checks and failures stay explicit, and empty digests omit numbered-reply instructions. This correction does not retroactively change immutable saved digests.
 
-Scheduled adoption uses the public host `current_cron_execution` identity, verified job/profile/origin binding and saved run authority. A model-supplied job/session identifier does not grant it. Unknown old attempts remain fenced/reserved; accepted siblings and original windows survive. Supervisor process-death reclamation checks the recorded process incarnation and preserves live-supervisor exclusion. The registered local host-crash continuation passed at the `4261525` pin; this is separate from proof of actual scheduled adoption under a new host session. Expired leases of unknown incarnation retain the documented TTL takeover behavior.
+Scheduled adoption uses the public host `current_cron_execution` identity, verified job/profile/origin binding and saved run authority. A model-supplied job/session identifier does not grant it. Unknown old attempts remain fenced/reserved; accepted siblings and original windows survive. Supervisor process-death reclamation checks the recorded process incarnation and preserves live-supervisor exclusion. The registered local host-crash continuation passed at the `4261525` pin; the corrected actual native one-shot at d8 separately proves scheduled adoption under a new host session. Expired leases of unknown incarnation retain the documented TTL takeover behavior.
 
 End-state reconciliation projects review/backlog/conversion/delivery facts while retaining unresolved and replyable work. Old freeform proposals remain explicitly legacy/unresearched; they are not invented accepted dossiers. Conservative retention is not proof of cleanup timing.
 
-Remaining work includes supported scheduled recovery/origin-delivery evidence, the specifically unproved and partial source-obligation assertions, optional-surface qualifications and release cleanup/handoff. The 283-row evidence reconciliation distinguishes direct assertions, partial evidence, documentary facts and five unproved behaviors; aggregate test counts are not full-parity proof. Earlier primitive/transport canaries and unit tests are reused only for their exact scope. No production cutover, real-device test or universal live-provider access is claimed.
+Remaining work includes native origin-delivery evidence, the specifically unproved and partial source-obligation assertions, optional-surface qualifications and release cleanup/handoff. The 283-row evidence reconciliation distinguishes direct assertions, partial evidence, documentary facts and five unproved behaviors; aggregate test counts are not full-parity proof. Earlier primitive/transport canaries and unit tests are reused only for their exact scope. No production cutover, real-device test or universal live-provider access is claimed.
