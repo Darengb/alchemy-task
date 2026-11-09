@@ -205,8 +205,12 @@ function SummaryField({ value, onSave }) {
 }
 
 function BodyView({ task, onEdit, onToggle }) {
-  const { sections, managed } = React.useMemo(() => splitSections(task.body || ''), [task.body])
-  const state = sections.find((s) => /^current state$/i.test(s.title))
+  const { sections, managed: allManaged } = React.useMemo(() => splitSections(task.body || ''), [task.body])
+  // The plugin keeps "Current state" in a managed block; older or hand-made tasks use a heading.
+  const stateBlock = allManaged.find((m) => /current-state/.test(m.name))
+  const managed = allManaged.filter((m) => m !== stateBlock)
+  const state = stateBlock ? { title: 'Current state', text: stateBlock.text, start: 0, managed: true }
+    : sections.find((s) => /^current state$/i.test(s.title))
   const rest = sections.filter((s) => s !== state)
   const renderSection = (s) => renderBlocks(parseBlocks(s.text), { onToggle: (line, checked) => onToggle(s.start + line, checked) })
   const hasContent = sections.some((s) => s.text.trim())
@@ -220,7 +224,7 @@ function BodyView({ task, onEdit, onToggle }) {
       {state && state.text.trim() ? (
         <div className="at-state">
           <div className="at-state-label">Current state</div>
-          <div className="at-md">{renderSection(state)}</div>
+          <div className="at-md">{state.managed ? renderBlocks(parseBlocks(state.text)) : renderSection(state)}</div>
         </div>
       ) : null}
       {!hasContent && !managed.length ? <button type="button" className="at-empty-notes" onClick={onEdit}>Add notes</button> : null}

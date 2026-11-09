@@ -31,7 +31,7 @@ const common = {
   legalComments: 'none',
   logLevel: 'info',
   loader: { '.css': 'text' },
-  minify: !args.has('--dev'),
+  minify: true,
   sourcemap: false,
 }
 
@@ -66,6 +66,7 @@ if (args.has('--dev')) {
     outfile: path.join(here, 'dev/out/harness.js'),
     format: 'iife',
     nodePaths: [nm],
+    minify: false,
     define: { 'process.env.NODE_ENV': '"development"' },
   })
 }

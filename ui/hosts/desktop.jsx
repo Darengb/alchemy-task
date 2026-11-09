@@ -27,13 +27,16 @@ export default {
     ctx.registerMany([
       { id: 'page', area: ROUTES_AREA, data: { path: '/alchemy-task' }, render: () => <Page /> },
       { id: 'nav', area: SIDEBAR_NAV_AREA, data: { path: '/alchemy-task', label: 'Tasks', codicon: 'checklist' } },
-      { id: 'open-tasks', area: PALETTE_AREA, data: { title: 'Alchemy Task: Open tasks', run: () => openWith('tasks') } },
-      { id: 'open-discovery', area: PALETTE_AREA, data: { title: 'Alchemy Task: Review discovery', run: () => openWith('discovery') } },
+      { id: 'open-tasks', area: PALETTE_AREA,
+        data: { id: 'alchemy-task-open', label: 'Open tasks', keywords: ['tasks', 'today', 'calendar', 'alchemy'], run: () => openWith('tasks') } },
+      { id: 'open-discovery', area: PALETTE_AREA,
+        data: { id: 'alchemy-task-discovery', label: 'Review discovery proposals', keywords: ['discovery', 'digest', 'proposals', 'alchemy'], run: () => openWith('discovery') } },
     ])
     if (typeof ctx.registerSettingsPage === 'function') {
       ctx.registerSettingsPage({
         id: 'settings',
         title: 'Alchemy Task',
+        icon: 'checklist',
         render: () => <App transport={transport} host="desktop" settingsOnly />,
       })
     }

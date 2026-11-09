@@ -51,9 +51,9 @@ export function TaskRow({ task, from, compact, showDate, selected }) {
   }
   return (
     <div className={cx('at-row', compact && 'is-compact', done && 'is-done', selected && 'is-selected')}
-         {...bind(task, from)} onClick={() => actions.open(task.task_id)}
+         {...bind(task, from)} onClick={() => { overlay.close(); actions.open(task.task_id) }}
          onKeyDown={(e) => {
-           if (e.key === 'Enter') actions.open(task.task_id)
+           if (e.key === 'Enter') { overlay.close(); actions.open(task.task_id) }
            if (e.key === ' ' && e.target === e.currentTarget) { e.preventDefault(); actions.toggle(task) }
          }}
          tabIndex={0} role="button" aria-label={task.title} data-task={task.task_id}>
