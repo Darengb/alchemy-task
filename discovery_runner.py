@@ -530,6 +530,10 @@ class DiscoveryRunner:
                 with self._state(run_id) as state:
                     state['holds'] = list(set(state['holds'] + ['interrupted']))
             self.store.release_lease(run_id, owner=invocation)
+        if deferred:
+            # Durable so join can tell a cap deferral from unfinished work.
+            with self._state(run_id) as state:
+                state['budget_deferred'] = list(dict.fromkeys(state.get('budget_deferred', []) + deferred))
         ledger = self.store.get_run(run_id)
         unknowns = [a['candidate_id'] for a in ledger['attempts'].values() if a['fenced'] and not a['terminal']]
         return {'run_id': run_id, 'status': 'pending' if unknowns or interrupted else 'needs_parent', 'max_logical_slots': maximum,
@@ -593,7 +597,8 @@ class DiscoveryRunner:
         degraded = degraded or {}
         with self._state(run_id) as state:
             reconciliations = state['reconciliations']
-        pending, failures, accepted = [], [], []
+            budget_deferred = set(state.get('budget_deferred', []))
+        pending, failures, accepted, deferred = [], [], [], []
         for c in ledger['candidates']:
             cid = c['candidate_id']
             if c.get('parent_candidate_id') or (c['prefilter_disposition'] == 'excluded' or c.get('research_selection') == 'pilot_skipped'): continue
@@ -609,6 +614,11 @@ class DiscoveryRunner:
                 else: accepted.append(cid)
             elif attempts and attempts[-1]['state'] == 'exhausted':
                 failures.append({'candidate_id': cid, 'title': c['title'], 'reason': attempts[-1].get('rejection', {}).get('reason', 'exhausted')})
+            elif not attempts and cid in budget_deferred:
+                # Never started because the daily cap was reached: a distinct
+                # state, not success or failure (adaptation-plan 1.7). The
+                # backlog keeps it for the next run.
+                deferred.append({'candidate_id': cid, 'title': c['title'], 'reason': 'Daily research cap reached; queued for the next run'})
             elif cid in degraded and isinstance(degraded[cid], str) and degraded[cid].strip():
                 # Explicit degraded acknowledgment cannot finish a LIVE attempt.
                 if attempts and not attempts[-1]['terminal'] and not attempts[-1]['fenced']:
@@ -616,7 +626,7 @@ class DiscoveryRunner:
                 else: failures.append({'candidate_id': cid, 'title': c['title'], 'reason': degraded[cid]})
             else:
                 pending.append({'candidate_id': cid, 'reason': attempts[-1]['state'] if attempts else 'unstarted_or_budget_deferred'})
-        result = {'pilot_skipped': [c['candidate_id'] for c in ledger['candidates'] if c.get('research_selection') == 'pilot_skipped'], 'run_id': run_id, 'joined': not pending, 'degraded': bool(failures), 'accepted': accepted, 'failures': failures, 'pending': pending, 'index_revision': ledger['index_revision']}
+        result = {'pilot_skipped': [c['candidate_id'] for c in ledger['candidates'] if c.get('research_selection') == 'pilot_skipped'], 'run_id': run_id, 'joined': not pending, 'degraded': bool(failures), 'accepted': accepted, 'failures': failures, 'deferred': deferred, 'pending': pending, 'index_revision': ledger['index_revision']}
         if result['joined']:
             self.store.put_resource(run_id, 'join-record', result)
             if self.proposal_hook:

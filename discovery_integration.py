@@ -791,7 +791,7 @@ class DiscoveryIntegration:
         stream = self._stream(ledger['config'].get('stream_name', ledger['stream']))
         origin = {**ledger['origin'], 'session_id': ledger['origin'].get('stream_origin_session', ledger['origin']['session_id'])}
         digest = self.digest.prepare(run_id, stream=ledger['config'].get('stream_name', ledger['stream']), day=ledger['business_date'], origin=origin,
-                                     items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + conflicts + supplement_failures], coverage=coverage, outcomes=outcomes, label=stream.get('label', ''), review_namespace=run_id if ledger.get('lineage', {}).get('operation') else '')
+                                     items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + conflicts + supplement_failures], coverage=coverage, outcomes=outcomes, label=stream.get('label', ''), review_namespace=run_id if ledger.get('lineage', {}).get('operation') else '', deferred=join.get('deferred', []))
         with self.store._lock(self.store._run_lock_name(run_id)):
             pending = self.store.get_run(run_id); pending['pending_operations'] = ['finalization_projection']; self.store._save(run_id, pending)
         self.store.save_review(run_id, {'digest': digest, 'conflicts': conflicts, 'joined': join})
@@ -905,7 +905,7 @@ class DiscoveryIntegration:
                     'lineage': ledger.get('lineage', {}), 'pilot_skipped': join.get('pilot_skipped', []),
                     'legacy_proposals': list((self.rt.ctx.state.get('discovery_legacy:' + ledger['config'].get('stream_name', ledger['stream']), default={}) or {}).values()),
                     'proposals': digest['items'] if digest else [], 'decisions': decisions, 'conversions': conversions,
-                    'conflicts': (ledger.get('review') or {}).get('conflicts', []), 'failures': ledger['errors'] + join.get('failures', []),
+                    'conflicts': (ledger.get('review') or {}).get('conflicts', []), 'failures': ledger['errors'] + join.get('failures', []), 'deferred': join.get('deferred', []),
                     'recovery': read_json(self.store.run_dir(run) / 'supervisor.json', {}),
                     'delivery': self.delivery_status(run) if digest else {'state': 'not_prepared'}}
         result = project(ledger)

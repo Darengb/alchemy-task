@@ -276,3 +276,95 @@ def test_repair_child_receives_the_exact_rejection_and_the_old_payload(tmp_path)
     assert store._has_pages(store.get_run(run), second['token'], old)
     # Successful siblings were not rerun.
     assert [len(attempts_for(store, run, c)) for c in ids] == [1, 2, 1]
+
+
+# ---------------------------------------------------------------- ORC-F3 / E2E-2 (digest and backlog)
+
+def test_cap_deferral_is_a_separate_digest_line_and_stays_queued_for_the_next_run(settings, data_dir, tmp_path):
+    from alchemy_task.discovery_integration import register
+    from alchemy_task.discovery_runner import CHECKLIST
+    from test_discovery_integration import configure, service
+    from test_discovery_schema import bundle
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    streams = ctx.state.get('streams'); streams['work']['research_cap'] = 1; ctx.state.set('streams', streams)
+    configure(integration)
+    integration.runner.transport_receipt = {'sequential_call': 2040, 'concurrent_batch': 2040}
+    items = [{'title': 'Review release notes', 'source_ids': ['source:feed:account:issue:one'], 'source_revision': 'v1'},
+             {'title': 'Plan vendor renewal', 'source_ids': ['source:feed:account:issue:two'], 'source_revision': 'v1'}]
+    feed = {'items': items}
+    ctx.dispatch_tool = lambda tool, args: json.dumps({'account_key': 'account', 'scope': args['scope'], 'start': args['start'], 'end': args['end'],
+                                                     'items': feed['items'], 'next_cursor': None, 'pagination_exhausted': True})
+    clock = __import__('test_discovery_runner').Clock()
+    pool = Pool(clock); ctx.subagent_lifecycle = pool; pool.runner = integration.runner; integration.runner.clock = clock
+    tools = {}
+    ctx.register_tool = lambda **kw: tools.update({kw['name']: kw['handler']})
+    ctx.register_hook = lambda name, fn: None
+    register(ctx, integration=integration)
+
+    def call(name, args, session='parent'):
+        result = json.loads(tools[name](args, session_id=session))
+        assert result['ok'], result
+        return result['result']
+    original = pool.status
+    done = set()
+
+    def status(handle):
+        boot = pool.records[handle['subagent_id']]['bootstrap']
+        if handle['subagent_id'] not in done:
+            child = 'child-' + handle['subagent_id'].split('-')[-1]
+            for name, info in boot['resources'].items():
+                cursor = None
+                while True:
+                    page = call('discovery_research_fetch', {'run_id': boot['run_id'], 'resource': name, 'revision': info['sha256'], 'token': boot['token'],
+                                                             'binding': boot['binding'], **({'cursor': cursor} if cursor else {})}, child)
+                    if not page['has_more']: break
+                    cursor = page['next_cursor']
+            source = integration.store.get_candidate(boot['run_id'], boot['candidate_id'])['source_ids'][0]
+            payload = bundle(); payload['candidate_id'] = boot['candidate_id']
+            payload['workstreams'][0]['exact_source_ids'] = [{'type': 'source', 'source_key': 'feed', 'account_key': 'account', 'object_kind': 'issue', 'object_id': source.split(':')[-1]}]
+            call('discovery_research_submit', {'run_id': boot['run_id'], 'token': boot['token'], 'binding': boot['binding'], 'payload': payload}, child)
+            done.add(handle['subagent_id'])
+        return original(handle)
+    pool.status = status
+
+    def day():
+        run = integration.start('work', session_id='parent')['run_id']
+        assert call('discovery_collect', {'run_id': run, 'source_key': 'feed'})['status'] == 'complete'
+        revision = call('discovery_context', {'run_id': run})['index_revision']
+        report = call('discovery_research_run', {'run_id': run, 'expected_revision': revision})
+        for token in report['awaiting_parent']:
+            info = integration.store.get_attempt(run, token)['payload']; cursor = None
+            while True:
+                page = call('discovery_research_fetch', {'run_id': run, 'resource': info['resource'], 'revision': info['payload_sha256'], **({'cursor': cursor} if cursor else {})})
+                if not page['has_more']: break
+                cursor = page['next_cursor']
+            call('discovery_research_accept', {'run_id': run, 'token': token, 'payload_sha256': info['payload_sha256'],
+                 'assessment': {'accepted': True, 'reason': 'Full primary and all plausible tasks show an independent user action.',
+                                'checklist': {k: 'Reviewed all supplied full evidence.' for k in CHECKLIST}}})
+        joined = call('discovery_join', {'run_id': run})
+        assert joined['joined'], joined
+        for unit in [c['candidate_id'] for c in integration.store.get_run(run)['candidates'] if c.get('parent_candidate_id')]:
+            assert call('discovery_match', {'run_id': run, 'unit_id': unit})['kind'] == 'new'
+            call('discovery_decision', {'run_id': run, 'unit_id': unit, 'decision': 'propose', 'reason': 'Independent untracked action.'})
+        return run, report, call('discovery_digest', {'run_id': run})
+
+    run, report, digest = day()
+    lines = digest['text'].splitlines()
+    assert lines[1].endswith(': 1 new proposals; 0 existing-task outcomes; 0 failures; 1 deferred')
+    assert 'degraded' not in digest['text'] and not [l for l in lines if l.startswith('Attention:')]
+    assert 'Deferred: Plan vendor renewal: Daily research cap reached; queued for the next run' in lines
+    assert 'Coverage: feed: complete' in lines
+    backlog = {e['candidate']['title']: e['status'] for e in integration.store.source_state('work', 'feed')['backlog']}
+    assert backlog == {'Review release notes': 'accepted', 'Plan vendor renewal': 'deferred'}
+    record = call('discovery_runs', {'run_id': run})
+    assert record['summary']['failures'] == 0 and not record['degraded']
+    assert [d['title'] for d in record['deferred']] == ['Plan vendor renewal']
+
+    # Same day, nothing new at the source: the deferred item is carried, researched
+    # only when budget allows, and a deferred-only day is not "nothing new".
+    feed['items'] = []
+    run2, report2, digest2 = day()
+    assert run2 != run and [integration.store.get_candidate(run2, c)['title'] for c in report2['budget_deferred']] == ['Plan vendor renewal']
+    assert 'No new follow-ups found.' not in digest2['text'] and 'degraded' not in digest2['text']
+    assert 'Deferred: Plan vendor renewal: Daily research cap reached; queued for the next run' in digest2['text'].splitlines()
+    assert {e['candidate']['title']: e['status'] for e in integration.store.source_state('work', 'feed')['backlog']}['Plan vendor renewal'] == 'deferred'

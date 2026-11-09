@@ -86,7 +86,7 @@ Optional `verified_sender` requires approval from the original/proven same origi
 
 ## UI/backend record
 
-`discovery_runs` returns time, day, public stream name, status, frozen source inventory, checked coverage, research attempt/evidence records, candidate/workstream records, immutable proposal content, decisions, conversions, conflicts, failures, recovery and delivery. Proposal targets include task_id, exact path, status and read revision. `unit_id` and `proposal_id`, not titles, are action keys. Raw child capability tokens/launch handles are excluded from the projection. The shared projector also supplies the current-state additions below; frozen digest text/items are never rewritten.
+`discovery_runs` returns time, day, public stream name, status, frozen source inventory, checked coverage, research attempt/evidence records, candidate/workstream records, immutable proposal content, decisions, conversions, conflicts, failures, cap-deferred candidates (`deferred`, never counted as failures), recovery and delivery. Proposal targets include task_id, exact path, status and read revision. `unit_id` and `proposal_id`, not titles, are action keys. Raw child capability tokens/launch handles are excluded from the projection. The shared projector also supplies the current-state additions below; frozen digest text/items are never rewritten.
 
 ### Dashboard and desktop HTTP extension
 

@@ -30,7 +30,7 @@ class DiscoveryDigest:
     def _load(self):
         return read_json(self.path, {'digests': {}, 'proposals': {}, 'numbers': {}, 'seen': {}, 'delivery': {}})
 
-    def prepare(self, run, *, stream, day, origin, items, failures=None, coverage=None, outcomes=None, label='', review_namespace=''):
+    def prepare(self, run, *, stream, day, origin, items, failures=None, coverage=None, outcomes=None, label='', review_namespace='', deferred=None):
         dt.date.fromisoformat(day)
         if not origin.get('session_id'):
             raise UserError('digest requires actual origin session')
@@ -58,10 +58,12 @@ class DiscoveryDigest:
                 numbered.append(item)
                 data['proposals'][pid] = {'binding': item, 'state': 'pending'}
                 data['seen'][identity] = pid
-            failures, coverage = failures or [], coverage or []
+            failures, coverage, deferred = failures or [], coverage or [], deferred or []
             lines = [f'Discovery: {stream} ({day})']
             degraded = bool(failures or any(s.get('status') != 'complete' for s in coverage))
-            lines.append(f"{dt.date.fromisoformat(day).strftime('%A')}: {len(numbered)} new proposals; {len(outcomes or [])} existing-task outcomes; {len(failures)} failures" + ('; degraded' if degraded else ''))
+            # Cap deferrals are a separate count: neither failures nor degraded.
+            lines.append(f"{dt.date.fromisoformat(day).strftime('%A')}: {len(numbered)} new proposals; {len(outcomes or [])} existing-task outcomes; {len(failures)} failures"
+                         + (f'; {len(deferred)} deferred' if deferred else '') + ('; degraded' if degraded else ''))
             lines.append('Review: ' + hashlib.sha256(run.encode()).hexdigest()[:12])
             for item in numbered:
                 qualifier = ' [update or create]' if item['kind'] in {'semantic', 'selection'} else ''
@@ -76,7 +78,9 @@ class DiscoveryDigest:
                 if item.get('sources_unavailable'): lines.append('Unavailable context: ' + '; '.join(item['sources_unavailable']))
                 lines.append('---')
             if not numbered:
-                lines.append('No new follow-ups found.' if not degraded and not outcomes else 'No new proposals to review.')
+                # Deferred work is not "nothing new": only a complete check with
+                # nothing left says no follow-ups were found.
+                lines.append('No new follow-ups found.' if not degraded and not outcomes and not deferred else 'No new proposals to review.')
             for outcome in outcomes or []:
                 line = f"Existing task: {outcome['title']}: {outcome['status']}"
                 for surface in ('git', 'phone'):
@@ -86,12 +90,14 @@ class DiscoveryDigest:
                 lines.append(line)
             for failure in failures:
                 lines.append('Attention: ' + (str(failure['title']) + ': ' if failure.get('title') else '') + _failure_status(failure))
+            for item in deferred:
+                lines.append('Deferred: ' + (str(item['title']) + ': ' if item.get('title') else '') + str(item.get('reason') or 'Deferred to the next run')[:400])
             for source in coverage:
                 lines.append('Coverage: ' + str(source.get('source_key', source.get('source', 'source'))) + ': ' + str(source.get('status', 'unknown')) + (': source read unavailable; inspect saved review diagnostics' if source.get('error') else ''))
             if numbered:
                 lines.append('Reply with the numbers you want. Other items remain replyable for seven days.')
             result = {'run_id': run, 'stream': stream, 'day': day, 'origin': origin, 'items': numbered,
-                      'failures': failures, 'coverage': coverage, 'outcomes': outcomes or [], 'text': '\n'.join(lines)}
+                      'failures': failures, 'deferred': deferred, 'coverage': coverage, 'outcomes': outcomes or [], 'text': '\n'.join(lines)}
             result['sha256'] = hashlib.sha256(result['text'].encode()).hexdigest()
             data['digests'][run] = result
             data['delivery'][run] = {'state': 'prepared', 'digest_sha256': result['sha256'], 'origin': origin}

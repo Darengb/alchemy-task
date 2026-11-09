@@ -307,7 +307,10 @@ def test_zero_budget_retains_entire_fifo_across_cohorts(tmp_path, count):
     assert len(report['budget_deferred']) == count
     assert len(report['queued']) == count
     assert len(store.get_run(run)['candidates']) == count
-    assert not runner.join(run, session_id='parent')['joined']
+    # Cap 0 defers research: a joined deferred audit, never failures or proposals.
+    joined = runner.join(run, session_id='parent')
+    assert joined['joined'] and not joined['failures'] and not joined['degraded'] and not joined['accepted']
+    assert len(joined['deferred']) == count
 
 
 def test_later_cohort_requires_outcome_bound_unambiguous_reconciliation(tmp_path):
