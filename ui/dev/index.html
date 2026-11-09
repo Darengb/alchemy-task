@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Alchemy Task · preview</title>
+  <style>
+    /* Stand-ins for the host theme tokens (the real dashboard and desktop app supply their own). */
+    :root {
+      --color-background: #fbfbfa; --color-foreground: #1d1d1f; --color-popover: #ffffff; --color-card: #ffffff;
+      --color-border: rgba(20, 20, 30, .1); --color-muted-foreground: #6e6e76; --color-primary: #3f63f5;
+      --color-primary-foreground: #ffffff; --color-warning: #c9741c; --color-success: #2f9e5b; --color-destructive: #e03e3e;
+      color-scheme: light;
+    }
+    :root[data-theme=dark] {
+      --color-background: #121315; --color-foreground: #ececee; --color-popover: #1b1c1f; --color-card: #1b1c1f;
+      --color-border: rgba(255, 255, 255, .1); --color-muted-foreground: #9a9aa3; --color-primary: #6d8bff;
+      --color-primary-foreground: #0b0d14; --color-warning: #e5994a; --color-success: #4cc27e; --color-destructive: #ff6b6b;
+      color-scheme: dark;
+    }
+    html, body { margin: 0; height: 100%; background: #06072a; color: var(--color-foreground);
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif; }
+    #root { height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    window.__errs = [];
+    window.addEventListener('error', (e) => window.__errs.push(String(e.message) + ' @' + (e.filename || '') + ':' + e.lineno));
+    const ce = console.error; console.error = (...a) => { window.__errs.push(a.map(String).join(' ').slice(0, 600)); ce(...a) };
+  </script>
+  <script src="out/harness.js"></script>
+</body>
+</html>

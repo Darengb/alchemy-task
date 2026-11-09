@@ -49,6 +49,7 @@ provides_hooks:
   - post_llm_call
   - on_session_finalize
   - post_compaction
+  - post_tool_call
 config_schema:
   discovery_transport_receipt:
     type: str

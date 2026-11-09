@@ -527,6 +527,32 @@ class TaskStore:
                 notes.append(f"moved to {self.rel(new_path)}")
         return tf.parse_file(new_path), changed, notes
 
+    def replace_body(self, ref: str, body: str, *, expect_revision: str | None,
+                     log: str = "Edited notes in the Tasks view.") -> tuple[tf.TaskDoc, list[str]]:
+        """Replace the Markdown body of a task (everything after the frontmatter), keeping the frontmatter
+        bytes as they are. ``expect_revision`` is the ``tf.content_hash`` the editor started from; a newer
+        file raises ``tf.ConcurrentEditError`` and nothing is written. One log line per day is enough for
+        repeated saves from the same editing session."""
+        doc = self.resolve(ref)
+        ok, why = tf.writable(doc.fm)
+        if not ok:
+            raise NeedsInput("unsupported", f"This task cannot be edited by Alchemy Task: {why}. Edit it by hand.")
+        text = str(body or "").replace("\r\n", "\n").replace("\r", "\n").lstrip("\n")
+        if len(text) > 400_000:
+            raise NeedsInput("fix_call", "The notes are too long to save from the editor.")
+        with task_lock(self.data_dir, doc.task_id, doc.path):
+            doc = tf.parse_file(doc.path)
+            if expect_revision and tf.content_hash(doc.raw) != expect_revision:
+                raise tf.ConcurrentEditError(f"{doc.path.name} changed since it was read")
+            if text.rstrip() == doc.body.rstrip():
+                return doc, []
+            today = self.s.today()
+            if log and f"- {today}: {' '.join(log.split())}" not in text:
+                text = tf.append_log(text, log, today)
+            data = tf.render(doc.fm, text, seq_offset=doc.seq_offset, keep_blank=doc.blank_keys).encode("utf-8")
+            tf.atomic_write(doc.path, data, expect=doc.raw)
+        return tf.parse_file(doc.path), [self.rel(doc.path)]
+
     def write_body_block(self, ref: str, start: str, end: str, block: str, log: str, *, top: bool = False,
                          fm_updates: dict[str, Any] | None = None) -> tuple[tf.TaskDoc, list[str]]:
         """Upsert a plugin-owned managed block (e.g. Current state) and append a log line."""
