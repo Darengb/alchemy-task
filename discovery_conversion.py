@@ -14,6 +14,9 @@ from .core.locks import task_lock
 from .core import taskfile as tf
 from .core.discovery_identity import UserError, canonical_source_id, extract_identities, source_identity_covers, is_message_refinement
 
+# Core Git outcomes that are final for a workspace without a remote or without Git.
+LOCAL_GIT_TERMINAL = frozenset({'local_only', 'no_git'})
+
 
 class DiscoveryConversion:
     def __init__(self, rt, store):
@@ -475,31 +478,38 @@ class DiscoveryConversion:
         _, receipt_path = self._paths(run, wid)
         with self.store._lock('conversion:' + run + ':' + wid):
             receipt = read_json(receipt_path)
-            if receipt['git']['state'] == 'verified':
+            if receipt['git']['state'] in LOCAL_GIT_TERMINAL | {'verified'}:
                 pass
             elif self.rt.settings.git_transport == 'none':
                 receipt['git'] = {'state': 'deferred', 'reason': 'Git delivery disabled by task settings'}
             else:
-                delivery = self.rt.git()
                 try:
-                    raw = delivery.deliver([receipt['path']], 'task: promote accepted discovery dossier')
-                    head = delivery.git('rev-parse', 'HEAD').stdout.strip()
-                    branch = self.rt.settings.git_branch or delivery.git('branch', '--show-current').stdout.strip()
-                    committed = delivery.git('show', head + ':' + receipt['path']).stdout.encode('utf-8')
-                    remote_result = delivery.git('ls-remote', self.rt.settings.git_remote, 'refs/heads/' + branch)
-                    lines = remote_result.stdout.splitlines()
-                    remote = lines[0].split()[0] if len(lines) == 1 else ''
-                    if tf.content_hash(committed) != receipt['local']['sha256']:
-                        raise UserError('committed tree does not contain exact prepared task bytes')
-                    if not remote or remote != head:
-                        raise UserError('remote branch does not equal verified committed tree')
-                    receipt['git'] = {'state': 'verified', 'commit': head, 'remote_commit': remote,
-                                      'branch': branch, 'sha256': tf.content_hash(committed)}
+                    receipt['git'] = self._deliver_git(receipt)
                 except Exception as exc:
                     receipt['git'] = {'state': 'pending', 'reason': str(exc)[:500]}
             from .ios_sync import discovery_mirror_status
             receipt['phone'] = discovery_mirror_status(self.rt, receipt['task_id'])
-            receipt['state'] = ('git_pending' if receipt['git']['state'] not in {'verified', 'deferred'} else
+            receipt['state'] = ('git_pending' if receipt['git']['state'] not in LOCAL_GIT_TERMINAL | {'verified', 'deferred'} else
                                 'phone_pending' if receipt['phone']['state'] not in {'verified', 'deferred'} else 'complete')
             atomic_json(receipt_path, receipt)
             return receipt
+
+    def _deliver_git(self, receipt):
+        """Commit and verify; local_only/no_git are terminal exactly as core task_create reports them."""
+        delivery = self.rt.git()
+        raw = delivery.deliver([receipt['path']], 'task: promote accepted discovery dossier')
+        if raw.get('state') == 'no_git':
+            return {'state': 'no_git', 'reason': raw.get('error') or 'workspace is not a Git repository; changes are saved but not versioned'}
+        head = delivery.git('rev-parse', 'HEAD').stdout.strip()
+        branch = self.rt.settings.git_branch or delivery.git('branch', '--show-current').stdout.strip()
+        committed = delivery.git('show', head + ':' + receipt['path']).stdout.encode('utf-8')
+        if tf.content_hash(committed) != receipt['local']['sha256']:
+            raise UserError('committed tree does not contain exact prepared task bytes')
+        if raw.get('state') == 'local_only':
+            return {'state': 'local_only', 'commit': head, 'branch': branch, 'sha256': tf.content_hash(committed),
+                    'reason': raw.get('note') or 'no remote configured: history is local to this machine'}
+        lines = delivery.git('ls-remote', self.rt.settings.git_remote, 'refs/heads/' + branch).stdout.splitlines()
+        remote = lines[0].split()[0] if len(lines) == 1 else ''
+        if not remote or remote != head:
+            raise UserError('remote branch does not equal verified committed tree')
+        return {'state': 'verified', 'commit': head, 'remote_commit': remote, 'branch': branch, 'sha256': tf.content_hash(committed)}

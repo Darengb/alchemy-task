@@ -113,6 +113,33 @@ def _register_tools(integration, ctx):
     return tools
 
 
+# ---------------------------------------------------------------- F1 local_only / no_git
+@pytest.mark.parametrize('git_repo,expected', [(True, 'local_only'), (False, 'no_git')], ids=['repo_without_remote', 'not_a_git_repo'])
+def test_conversion_in_workspace_without_remote_or_git_completes_honestly(tmp_path, workspace, data_dir, git_repo, expected):
+    ws, settings = _plain_workspace(tmp_path, git_repo=git_repo)
+    core_task = TaskStore(settings, data_dir).create(title='Core task', area='work', undated=True, research=False)
+    core = GitDelivery(settings, data_dir).deliver([TaskStore(settings, data_dir).rel(core_task.path)], 'task: create')
+    assert core['state'] == expected
+    integration, rt, ctx, store, run = _integration(settings, data_dir / 'discovery', tmp_path, count=1)
+    _propose_all(integration, store, run)
+    out = integration.decide({'approve': ['1'], 'day': '2030-01-01', 'edits': {'1': {'area': 'work', 'undated': True}}},
+                             session_id='parent', today='2030-01-02')
+    receipt = out['results'][0]
+    path = ws / receipt['path']
+    assert path.is_file() and tf.content_hash(path.read_bytes()) == receipt['local']['sha256']
+    assert receipt['state'] == 'complete' and receipt['git']['state'] == expected, receipt
+    assert 'ls-remote' not in json.dumps(receipt) and 'rev-parse failed' not in json.dumps(receipt)
+    assert _proposal_states(integration, run) == {'1': 'complete'}
+    if git_repo:  # committed locally, exact bytes at HEAD
+        head = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ws, capture_output=True, text=True, check=True).stdout.strip()
+        blob = subprocess.run(['git', 'show', 'HEAD:' + receipt['path']], cwd=ws, capture_output=True, check=True).stdout
+        assert receipt['git']['commit'] == head and blob == path.read_bytes()
+    # Resume is idempotent and stays terminal.
+    again = integration.conversion.deliver_git(receipt['run_id'], receipt['unit_id'])
+    assert again['state'] == 'complete' and again['git']['state'] == expected
+    assert len(list((ws / 'areas' / 'work' / 'tasks').glob('*.md'))) == 2
+
+
 # ---------------------------------------------------------------- M6 visible Log line
 def test_enrichment_adds_one_dated_log_line_naming_the_revision(settings, data_dir, tmp_path):
     tasks = TaskStore(settings, data_dir)
