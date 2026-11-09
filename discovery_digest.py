@@ -108,7 +108,9 @@ class DiscoveryDigest:
             for item in deferred:
                 lines.append('Deferred: ' + (str(item['title']) + ': ' if item.get('title') else '') + str(item.get('reason') or 'Deferred to the next run')[:400])
             for source in coverage:
-                lines.append('Coverage: ' + str(source.get('source_key', source.get('source', 'source'))) + ': ' + str(source.get('status', 'unknown')) + (': source read unavailable; inspect saved review diagnostics' if source.get('error') else ''))
+                skipped = list(dict.fromkeys(str(x).split(' skipped: ', 1)[1] for x in source.get('primary_partial') or [] if ' skipped: ' in str(x)))
+                detail = (': skipped thread: ' + '; '.join(skipped))[:400] if skipped else ': source read unavailable; inspect saved review diagnostics' if source.get('error') else ''
+                lines.append('Coverage: ' + str(source.get('source_key', source.get('source', 'source'))) + ': ' + str(source.get('status', 'unknown')) + detail)
             if numbered:
                 lines.append('Reply with the numbers you want. Other items remain replyable for seven days.')
             result = {'run_id': run, 'stream': stream, 'day': day, 'origin': origin, 'items': numbered,

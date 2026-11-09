@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+import re
 import hashlib
 import sqlite3
 from zoneinfo import ZoneInfo
@@ -415,8 +416,14 @@ class DiscoveryIntegration:
             content = fields.get('content')
             failure.content = json.dumps(content).encode() if isinstance(content, dict) else content
             raise failure
-        if not isinstance(raw, dict) or raw.get('error') or raw.get('ok') is False or raw.get('success') is False:
+        if not isinstance(raw, dict):
             raise UserError('approved reader returned failure/nonstructured response')
+        if raw.get('error') or raw.get('ok') is False or raw.get('success') is False:
+            # A structured provider-reported failure (for example Slack's
+            # thread_not_found). Callers that skip one thread can name it.
+            code = raw.get('error') if isinstance(raw.get('error'), str) else 'failure'
+            raise UserError('approved reader returned failure/nonstructured response',
+                            details={'provider_error': re.sub(r'[^A-Za-z0-9_.-]', '', code)[:60] or 'failure'})
         # Missing fields remain missing. Never echo request account/window into a
         # provider receipt or invent pagination_exhausted from a short page.
         result = {name: _pick(raw, path) for name, path in binding['response_fields'].items()}

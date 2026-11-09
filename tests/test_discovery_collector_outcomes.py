@@ -271,10 +271,35 @@ def test_unexhausted_slack_search_page_still_never_advances(settings, data_dir, 
     assert integration.store.source_state('work', 'feed').get('watermark') is None
 
 
+def test_slack_search_with_more_pages_and_a_truncated_thread_never_advances(settings, data_dir, tmp_path):
+    """A real next search cursor (the pass stops at max_pages=1) plus a busy thread: the window is not acquired."""
+    integration, rt, ctx = slack_service(settings, data_dir, tmp_path)
+    def dispatch(tool, args):
+        if tool == 'reader':
+            if args.get('cursor'):
+                return envelope(args, [{'channel_id': 'C3', 'ts': ts_in(args, 7200), 'text': 'Second page ask'}])
+            return envelope(args, [{'channel_id': 'C1', 'ts': ts_in(args, 100), 'thread_ts': ts_in(args, 90000), 'text': 'reply in busy thread'}],
+                            next_cursor='page2', pagination_exhausted=False)
+        request = args['request']
+        if request['operation'] == 'replies':
+            return envelope(args, [{'ts': request['ts'], 'text': 'root'}, {'ts': ts_in(args, 100), 'text': 'reply in busy thread'}],
+                            next_cursor='more', pagination_exhausted=False)
+        return envelope(args, [{'ts': request.get('oldest') or request.get('latest'), 'channel_id': request['channel'], 'text': 'ctx'}])
+    ctx.dispatch_tool = dispatch
+    run = integration.start('work', session_id='parent')['run_id']
+    receipt = integration.collect(run, 'feed', session_id='parent', max_pages=1)
+    assert receipt['status'] != 'complete'
+    assert integration.store.source_state('work', 'feed').get('watermark') is None
+
+
 import pytest as _pytest
 
 
-@_pytest.mark.parametrize('defect', ['missing_root', 'channel_mismatch', 'contradictory'])
+_SKIP_REASON = {'missing_root': 'primary thread root missing', 'channel_mismatch': 'primary channel mismatch',
+                'contradictory': 'contradictory primary message content', 'provider_error': 'provider error thread_not_found'}
+
+
+@_pytest.mark.parametrize('defect', ['missing_root', 'channel_mismatch', 'contradictory', 'provider_error'])
 def test_one_bad_slack_thread_is_skipped_with_an_error_and_siblings_survive(settings, data_dir, tmp_path, defect):
     """Source slack_daily_followups: a per-thread failure is logged and the other threads continue."""
     integration, rt, ctx = slack_service(settings, data_dir, tmp_path)
@@ -287,6 +312,9 @@ def test_one_bad_slack_thread_is_skipped_with_an_error_and_siblings_survive(sett
         if request['operation'] == 'replies':
             root = {'ts': request['ts'], 'text': 'root'}
             reply = {'ts': ts_in(args, 100), 'text': 'reply in a broken thread'}
+            if defect == 'provider_error':
+                # Slack's answer for a thread that no longer exists (source :364-367 skips it).
+                return json.dumps({'ok': False, 'error': 'thread_not_found'})
             if defect == 'missing_root':
                 return envelope(args, [reply])
             if defect == 'channel_mismatch':
@@ -301,9 +329,60 @@ def test_one_bad_slack_thread_is_skipped_with_an_error_and_siblings_survive(sett
     backlog = integration.store.source_state('work', 'feed')['backlog']
     assert [b['source_ids'][0].split(':')[2] for b in backlog] == ['C2']
     assert backlog[0]['candidate']['title'] == 'Separate ask in quiet channel'
+    assert integration.store.source_state('work', 'feed').get('watermark') == receipt['end']
     text = _close_run(integration, run)['text']
     assert 'Coverage: feed: partial' in text and 'degraded' in text
     assert 'No new follow-ups found.' not in text
+    # The digest names the actual skip reason, not a generic read failure.
+    coverage = [l for l in text.splitlines() if l.startswith('Coverage: feed:')]
+    assert coverage == ['Coverage: feed: partial: skipped thread: ' + _SKIP_REASON[defect]]
+
+
+@_pytest.mark.parametrize('violation', ['account_mismatch', 'nonstructured'])
+def test_reader_contract_violation_in_one_thread_still_fails_the_source(settings, data_dir, tmp_path, violation):
+    integration, rt, ctx = slack_service(settings, data_dir, tmp_path)
+    def dispatch(tool, args):
+        if tool == 'reader':
+            return envelope(args, [
+                {'channel_id': 'C1', 'ts': ts_in(args, 100), 'thread_ts': ts_in(args, 90000), 'text': 'reply in thread'},
+                {'channel_id': 'C2', 'ts': ts_in(args, 3600), 'text': 'Separate ask in quiet channel'}])
+        request = args['request']
+        if request['operation'] == 'replies':
+            if violation == 'nonstructured':
+                return json.dumps(['not', 'an', 'envelope'])
+            return {**envelope(args, [{'ts': request['ts'], 'text': 'root'}]), 'account_key': 'another-account'}
+        return envelope(args, [{'ts': ts_in(args, 3600), 'channel_id': 'C2', 'text': 'Separate ask in quiet channel'}])
+    ctx.dispatch_tool = dispatch
+    run = integration.start('work', session_id='parent')['run_id']
+    receipt = integration.collect(run, 'feed', session_id='parent')
+    assert receipt['status'] == 'failed' and 'skipped' not in receipt['error']
+    state = integration.store.source_state('work', 'feed')
+    assert state.get('watermark') is None and state['backlog'] == []
+
+
+def test_overlapping_block_conflict_skips_only_that_group_and_leaves_the_sibling_block_unchanged(settings, data_dir, tmp_path):
+    integration, rt, ctx = slack_service(settings, data_dir, tmp_path)
+    def dispatch(tool, args):
+        root = ts_in(args, 7200)
+        if tool == 'reader':
+            return envelope(args, [
+                {'channel_id': 'C1', 'ts': ts_in(args, 100), 'thread_ts': root, 'text': 'reply asking for the budget'},
+                {'channel_id': 'C1', 'ts': root, 'text': 'edited root words'}])
+        request = args['request']
+        if request['operation'] == 'replies':
+            return envelope(args, [{'ts': root, 'text': 'original root words'}, {'ts': ts_in(args, 100), 'text': 'reply asking for the budget'}])
+        if request['operation'] == 'before':
+            return envelope(args, [{'ts': root, 'channel_id': 'C1', 'text': 'edited root words'}])
+        return envelope(args, [])
+    ctx.dispatch_tool = dispatch
+    run = integration.start('work', session_id='parent')['run_id']
+    receipt = integration.collect(run, 'feed', session_id='parent')
+    assert receipt['status'] == 'partial' and 'skipped: contradictory overlapping block content' in receipt['error']
+    backlog = integration.store.source_state('work', 'feed')['backlog']
+    assert len(backlog) == 1
+    # The skipped group's seed never half-merges into the retained thread block.
+    assert backlog[0]['source_ids'] == [backlog[0]['candidate']['source_ids'][0]] and len(backlog[0]['candidate']['source_ids']) == 1
+    assert backlog[0]['candidate']['title'] == 'reply asking for the budget'
 
 
 def test_legacy_mail_source_without_admission_needs_input_at_start(settings, data_dir, tmp_path):
