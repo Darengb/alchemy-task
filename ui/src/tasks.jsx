@@ -455,7 +455,102 @@ export function TasksView({ narrow }) {
         {view === 'day' && narrow ? <DayScroll anchor={a} length={scrollLen} onReachEnd={growScroll} /> : null}
         {view === 'day' && !narrow ? <DayView anchor={a} /> : null}
       </div>
-      {narrow ? <button type="button" className="at-fab" aria-label="Add a task" onClick={addMenu}><Icon name="plus" size={22} /></button> : null}
+      {narrow ? <PhoneComposer date={view === 'day' ? a : today} /> : null}
     </div>
+  )
+}
+
+// ------------------------------------------------------------------ phone composer
+
+/**
+ * The phone's add button and the composer it opens. The composer sits above the keyboard. Its input is
+ * always in the page, so the button can focus it during the tap itself: iOS only opens the keyboard for
+ * focus that happens inside the user's gesture.
+ */
+function PhoneComposer({ date: initialDate }) {
+  const { actions, meta, prefs, today } = useApp()
+  const overlay = useOverlay()
+  const [open, setOpen] = React.useState(false)
+  const [title, setTitle] = React.useState('')
+  const [date, setDate] = React.useState(initialDate)
+  const [area, setArea] = React.useState('')
+  const [busy, setBusy] = React.useState(false)
+  const [lift, setLift] = React.useState(0)
+  const input = React.useRef(null)
+
+  // Keep the composer above the on-screen keyboard.
+  React.useEffect(() => {
+    const vv = window.visualViewport
+    if (!open || !vv) { setLift(0); return undefined }
+    const place = () => setLift(Math.max(0, Math.round(window.innerHeight - (vv.offsetTop + vv.height))))
+    place()
+    vv.addEventListener('resize', place)
+    vv.addEventListener('scroll', place)
+    return () => { vv.removeEventListener('resize', place); vv.removeEventListener('scroll', place) }
+  }, [open])
+
+  const start = () => {
+    if (input.current) input.current.focus() // synchronously, inside the tap
+    setDate(initialDate)
+    setArea(prefs.area || meta.default_area || '')
+    setOpen(true)
+  }
+  const close = () => {
+    overlay.close()
+    setOpen(false)
+    setTitle('')
+    if (input.current) input.current.blur()
+  }
+  const submit = async () => {
+    const t = title.trim()
+    if (!t || busy) return
+    setBusy(true)
+    const ok = await actions.create({ title: t, date, area: area || undefined })
+    setBusy(false)
+    if (ok) { setTitle(''); if (input.current) input.current.focus() }
+  }
+  const refocus = () => { if (input.current) input.current.focus() }
+  const pickDate = (e) => overlay.open(e.currentTarget, (closePop) => (
+    <DatePicker value={date} today={today} close={closePop} onPick={(d) => { setDate(d); refocus() }} />
+  ), { width: 300 })
+  const pickArea = (e) => overlay.open(e.currentTarget, (closePop) => (
+    <Menu close={closePop} items={(meta.areas || []).map((ar) => ({
+      label: ar, icon: ar === area ? 'check' : undefined, run: () => { setArea(ar); refocus() },
+    }))} />
+  ), { width: 220 })
+
+  return (
+    <>
+      <button type="button" className={cx('at-fab', open && 'is-hidden')} aria-label="Add a task" onClick={start}>
+        <Icon name="plus" size={24} />
+      </button>
+      {open ? <div className="at-composer-scrim" onClick={close} /> : null}
+      <form className={cx('at-composer', open && 'is-open')} style={{ bottom: lift }} aria-hidden={!open} data-no-drag=""
+            onSubmit={(e) => { e.preventDefault(); submit() }}>
+        <div className="at-composer-row">
+          <span className="at-check is-ghost" aria-hidden="true" />
+          <input ref={input} className="at-composer-input" value={title} placeholder="New task" enterKeyHint="done"
+                 tabIndex={open ? 0 : -1} readOnly={busy} aria-label="New task title"
+                 onChange={(e) => setTitle(e.target.value)}
+                 onKeyDown={(e) => { if (e.key === 'Escape') close() }} />
+          {busy ? <Spinner /> : null}
+        </div>
+        <div className="at-composer-bar">
+          <button type="button" className="at-field" onClick={pickDate} tabIndex={open ? 0 : -1}>
+            <Icon name="cal" size={15} /><span>{D.relativeDay(date, today)}</span>
+          </button>
+          {(meta.areas || []).length ? (
+            <button type="button" className="at-field" onClick={pickArea} tabIndex={open ? 0 : -1}>
+              <AreaDot area={area} /><span>{area || 'No area'}</span>
+            </button>
+          ) : null}
+          <span className="at-flex" />
+          <Button variant="ghost" size="sm" onClick={close} tabIndex={open ? 0 : -1}>Done</Button>
+          <button type="submit" className="at-composer-send" aria-label="Add task" disabled={!title.trim() || busy} tabIndex={open ? 0 : -1}>
+            <Icon name="arrowR" size={18} strokeWidth={2.2} />
+          </button>
+        </div>
+      </form>
+    </>
   )
 }
