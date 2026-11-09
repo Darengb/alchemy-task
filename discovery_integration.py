@@ -725,6 +725,8 @@ class DiscoveryIntegration:
         data = self.digest._load()
         delivery = data['delivery'].get(run_id, {})
         pending = [] if delivery.get('state') == 'delivered' and delivery.get('verified_sha256') == data['digests'][run_id]['sha256'] and delivery.get('readback') else ['digest_delivery']
+        if pending and self._native_delivery_closed(run_id, ledger, data, delivery):
+            pending = []
         decisions = {}
         for candidate in ledger['candidates']:
             if not candidate.get('parent_candidate_id'): continue
@@ -742,11 +744,26 @@ class DiscoveryIntegration:
             decisions[wid] = 'complete' if complete else 'proposed'
         with self.store._lock(self.store._run_lock_name(run_id)):
             current = self.store.get_run(run_id)
+            changed = current.get('pending_operations') != pending
             for candidate in current['candidates']:
-                if candidate['candidate_id'] in decisions: candidate['state'] = decisions[candidate['candidate_id']]
+                if candidate['candidate_id'] in decisions and candidate.get('state') != decisions[candidate['candidate_id']]:
+                    candidate['state'] = decisions[candidate['candidate_id']]; changed = True
             current['pending_operations'] = pending
-            self.store._save(run_id, current)
+            # An unchanged ledger is not rewritten: its mtime is the retention age.
+            if changed: self.store._save(run_id, current)
         return {'state': 'pending' if pending else 'resolved', 'pending_operations': pending}
+
+    def _native_delivery_closed(self, run_id, ledger, data, delivery):
+        """Native host delivery holds no plugin receipt to verify. Once the
+        seven-day reply window is over, an untouched native digest is no longer
+        a pending operation (an attempted explicit send still is)."""
+        digest = data['digests'][run_id]
+        if delivery.get('state') != 'prepared' or not digest.get('day'): return False
+        stream = self._stream_or_frozen(digest['stream'], digest['origin']['session_id'])
+        if stream.get('delivery_owner', 'native_origin') != 'native_origin': return False
+        zone = ZoneInfo(ledger['config'].get('timezone') or self.rt.settings.timezone)
+        expires = (dt.date.fromisoformat(digest['day']) + dt.timedelta(days=7)).isoformat()
+        return expires < self.utcnow().astimezone(zone).date().isoformat()
 
     def _retain_legacy(self, stream):
         legacy = self.rt.ctx.state.get('proposals:' + stream, default={}) or {}

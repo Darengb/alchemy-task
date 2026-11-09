@@ -415,3 +415,60 @@ def test_start_prunes_old_closed_runs_but_keeps_replyable_and_resumable_ones(set
     assert not store.run_dir(old).exists() and store.get_run(old)['pruned_at']  # readable tombstone
     assert store.run_dir(recent).exists() and store.run_dir(unfinished).exists()
     assert store.source_state('archive', 'feed')['backlog'][0]['status'] == 'blocked'
+
+
+def _closed_work_run(integration, *, day, delivery, proposal_state=None):
+    """A finalized run of the SAME stream start() runs, with its digest record."""
+    from alchemy_task.core.discovery_state import atomic_json
+    store = integration.store
+    run = store.init_run(stream='work', business_date=day, origin={'session_id': 'parent'})
+    store.save_review(run, {'joined': {'accepted': [], 'failures': []}})
+    data = integration.digest._load()
+    data['digests'][run] = {'sha256': 'digest-sha', 'run_id': run, 'stream': 'work', 'day': day, 'origin': {'session_id': 'parent'}}
+    data['delivery'][run] = {'digest_sha256': 'digest-sha', 'origin': {'session_id': 'parent'}, **delivery}
+    if proposal_state:
+        # One proposed unit whose plan was approved but not yet written.
+        with store._lock(store._run_lock_name(run)):
+            ledger = store.get_run(run)
+            ledger['candidates'].append({'candidate_id': 'unit-1', 'parent_candidate_id': 'parent-1', 'state': 'proposed', 'title': 'Unit'})
+            store._save(run, ledger)
+        (store.run_dir(run) / 'decisions').mkdir(exist_ok=True)
+        atomic_json(store.run_dir(run) / 'decisions' / 'unit-1.json', {'request': {'decision': 'propose'}})
+        data['proposals']['p_unit'] = {'binding': {'run_id': run, 'unit_id': 'unit-1'}, 'state': proposal_state}
+    atomic_json(integration.digest.path, data)
+    # An earlier start already reconciled it; it has been untouched since.
+    integration.reconcile_endstate(run)
+    old = time.time() - 40 * 86400
+    import os
+    os.utime(store.run_dir(run) / 'ledger.json', (old, old))
+    return run
+
+
+def test_start_prunes_an_old_settled_run_of_the_stream_it_starts(settings, data_dir, tmp_path):
+    from test_discovery_integration import configure, service
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    configure(integration)
+    store = integration.store
+    verified = _closed_work_run(integration, day='2026-01-01', delivery={'state': 'delivered', 'verified_sha256': 'digest-sha', 'readback': {'message_id': 'm', 'target': 't'}})
+    integration.start('work', session_id='parent')
+    assert not store.run_dir(verified).exists() and store.get_run(verified)['pruned_at']
+
+
+def test_native_origin_runs_are_pruned_only_after_their_reply_window(settings, data_dir, tmp_path):
+    import datetime as dt
+    from test_discovery_integration import configure, service
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    configure(integration)
+    store = integration.store
+    today = dt.date.today().isoformat()
+    # The stream's default owner is native_origin: the host posts and retries,
+    # so the plugin never holds a verified receipt for these digests.
+    expired = _closed_work_run(integration, day='2026-01-01', delivery={'state': 'prepared'})
+    replyable = _closed_work_run(integration, day=today, delivery={'state': 'prepared'})
+    approved = _closed_work_run(integration, day='2026-01-01', delivery={'state': 'prepared'}, proposal_state='approved')
+    send_unknown = _closed_work_run(integration, day='2026-01-01', delivery={'state': 'unknown'})
+    integration.start('work', session_id='parent')
+    assert not store.run_dir(expired).exists() and store.get_run(expired)['pruned_at']
+    assert store.run_dir(replyable).exists()  # still inside the seven-day reply window
+    assert store.run_dir(approved).exists() and store.get_run(approved)['pending_operations'] == ['candidate:unit-1']
+    assert store.run_dir(send_unknown).exists()  # an explicit send without proof is never forgotten
