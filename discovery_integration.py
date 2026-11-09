@@ -173,6 +173,13 @@ class DiscoveryIntegration:
             account = (self.rt.ctx.state.get('discovery_identity_accounts', default={}) or {}).get(configured['account_key'])
             if account: configured['identity'] = account
         validate_source_config(configured)
+        if configured.get('kind') == 'mail':
+            # Source admission is internal-sender mail minus service senders.
+            # An empty domain list admits every sender, so it must be explicit.
+            domains = configured.get('sender_domains')
+            has_domains = isinstance(domains, list) and domains and all(isinstance(d, str) and d.strip() for d in domains)
+            if not has_domains and configured.get('admit_all') is not True:
+                raise UserError('mail source needs approved sender_domains (internal sender domains) or explicit admit_all: true')
         binding = configured.get('binding')
         if binding:
             if not isinstance(binding, dict) or not binding.get('tool') or not isinstance(binding.get('response_fields'), dict):

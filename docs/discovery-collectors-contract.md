@@ -48,7 +48,7 @@ The listing is exhausted across all raw pages before any thread is admitted. Uni
 
 Configurable admission inputs:
 
-- `sender_domains`: normalized internal FROM domains, not recipient domains. No private default domain exists.
+- `sender_domains`: normalized internal FROM domains, not recipient domains. No private default domain exists. `discovery_config action=source` refuses a `kind: mail` source without nonempty `sender_domains` unless the user explicitly approved `admit_all: true`.
 - `excluded_senders`: configured exact shared/support FROM addresses. Excluded-only threads do not qualify. One other internal sender suffices, including the owner. Case/whitespace are normalized.
 - `owner_email` and `owner_report_pattern`: only one real owner message with a case-insensitive matching subject is excluded. The configured regex expresses the deployment's exact word boundaries. Replies, including another owner message, prevent this special exclusion. No private report words are baked in.
 - `service_sender` for `kind=transcript`: exact normalized FROM comparison per message, inclusive per-message window, nonempty Suggested next steps, and one genuine message identity per candidate (`gmail:account:thread:message`). Multiple qualifying messages in one thread remain separate. Neighbor/non-service messages cannot borrow service admission.

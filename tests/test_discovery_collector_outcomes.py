@@ -94,3 +94,21 @@ def test_transcript_source_run_first_never_hides_ordinary_mail(tmp_path):
     receipt = SourceAdapter(store, later, read_page=make_daily_reader(
         later, no_list, snapshot_root=tmp_path / 'snap', read_thread=thread)).collect('st', start=start, end=end)
     assert receipt['status'] == 'complete' and len(store.source_state('st', 'notes2')['backlog']) == 1
+
+
+def test_mail_source_setup_requires_sender_domains_or_explicit_admit_all(settings, data_dir, tmp_path):
+    import pytest
+    from alchemy_task.core.discovery_identity import UserError
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    config = configure(integration)
+    saved_before = json.dumps(ctx.state.get('discovery_sources'), sort_keys=True)
+    mail = {**config, 'kind': 'mail'}
+    mail.pop('approved', None)
+    for missing in ({}, {'sender_domains': []}, {'sender_domains': ['  ']}, {'admit_all': 'yes'}):
+        with pytest.raises(UserError, match='sender_domains'):
+            integration.configure('work', {**mail, **missing}, user_approved=True)
+        assert json.dumps(ctx.state.get('discovery_sources'), sort_keys=True) == saved_before
+    saved = integration.configure('work', {**mail, 'sender_domains': ['example.test'], 'excluded_senders': ['support@example.test']}, user_approved=True)
+    assert ctx.state.get('discovery_sources')['work']['feed']['sender_domains'] == ['example.test'] == saved['sender_domains']
+    saved = integration.configure('work', {**mail, 'admit_all': True}, user_approved=True)
+    assert ctx.state.get('discovery_sources')['work']['feed']['admit_all'] is True
