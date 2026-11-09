@@ -79,7 +79,7 @@ def test_a_normal_day_two_proposals_one_enrichment_then_approve_one(world, host_
     assert day['send']['state'] == 'host_pending' and day['send']['delivered'] is False
     assert day['send']['final_text'] == text
     assert day['record']['summary'] == {'pending': 2, 'approved': 0, 'complete': 0, 'dismissed': 0,
-                                        'auto_updated': 1, 'conflicts': 0, 'failures': 0}
+                                        'auto_updated': 1, 'conflicts': 0, 'failures': 0, 'deferred': 0}
     # Approve #1 in chat.
     first_title = proposal_titles(day['digest'])[1]
     before = snapshot(world)
