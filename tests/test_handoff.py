@@ -192,3 +192,16 @@ def test_an_app_chat_that_is_not_open_reports_it_quickly(client, ctx, sessions, 
     ho.relay_once(rt, now + ho.APP_GIVE_UP_SECONDS + 1)
     st = client.get(f"/handoffs/{h['id']}").json()["handoff"]
     assert st["state"] == "failed" and "Open it" in st["error"]
+
+
+def test_the_relay_thread_uses_the_folder_captured_at_load(client, ctx, sessions, monkeypatch):
+    # A thread does not inherit the profile Hermes selected when the plugin loaded, so the relay is handed
+    # its profile's folder and only needs the plugin context.
+    t = make_task(client, "Renew the lease")
+    h = client.post(f"/tasks/{t['task_id']}/handoff", json={}).json()["handoff"]
+    inject = Injector()
+    ctx.inject_message = inject
+    monkeypatch.setattr(ho, "in_gateway_process", lambda: True)
+    data_dir = runtime.Runtime(ctx).data_dir
+    assert ho.relay_once(ho._RelayRuntime(ctx), data_dir=data_dir) == [h["id"]]
+    assert ho.relay_once(ho._RelayRuntime(ctx), data_dir=data_dir / "elsewhere") == []

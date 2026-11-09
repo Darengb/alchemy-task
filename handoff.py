@@ -35,8 +35,6 @@ KEEP_SECONDS = 24 * 3600
 APP_SOURCES = {"gui", "desktop", "tui"}
 NOT_CHATS = {"cli", "acp", "cron", "subagent", "api", "webhook", "batch", "oneshot", "local", ""}
 _lock = threading.Lock()
-_relay: threading.Thread | None = None
-_stop = threading.Event()
 _skip_until: dict[str, float] = {}  # request id -> time this process may retry it
 
 
@@ -256,12 +254,17 @@ def in_gateway_process() -> bool:
         return False
 
 
-def relay_once(rt: Runtime, now: float | None = None) -> list[str]:
+def relay_once(rt: Any, now: float | None = None, *, data_dir: Path | None = None) -> list[str]:
+    """Deliver pending handoffs this process can deliver. ``rt`` only needs ``ctx`` (and ``data_dir`` when
+    none is passed): the relay thread passes its profile's folder explicitly."""
     now = now or time.time()
     kinds = {k for k, here in (("chat", in_gateway_process()), ("app", in_dashboard_process())) if here}
     if not kinds:
         return []
-    d = _queue_dir(rt)
+    d = Path(data_dir) / "handoffs" if data_dir is not None else _queue_dir(rt)
+    if not d.is_dir():
+        return []
+    ctx = rt.ctx
     sent = []
     for p in sorted(d.glob("*.json")):
         if p.name.endswith(".done.json"):
@@ -296,7 +299,7 @@ def relay_once(rt: Runtime, now: float | None = None) -> list[str]:
             claimed.unlink(missing_ok=True)
             continue
         try:
-            ok = bool(rt.ctx.inject_message(rec["text"], role="user", session_key=rec["target"]["session_key"]))
+            ok = bool(ctx.inject_message(rec["text"], role="user", session_key=rec["target"]["session_key"]))
         except Exception:  # noqa: BLE001 - treat like a refusal and let another process try
             ok = False
         if ok:
@@ -310,33 +313,54 @@ def relay_once(rt: Runtime, now: float | None = None) -> list[str]:
     return sent
 
 
-def _loop() -> None:
+
+
+class _RelayRuntime:
+    """What the relay needs: the plugin context. Building a full Runtime here would read the launch
+    profile's config, because a thread does not inherit the profile the plugin was loaded for."""
+    def __init__(self, ctx: Any) -> None:
+        self.ctx = ctx
+
+
+def _loop(ctx: Any, data_dir: Path, stop: threading.Event) -> None:
     wait = POLL_SECONDS
-    while not _stop.wait(wait):
+    rt = _RelayRuntime(ctx)
+    while not stop.wait(wait):
         try:
-            # Outside the gateway's process there is nothing to do; check again now and then, in case this
-            # process becomes the gateway.
+            # Outside the gateway's and dashboard's processes there is nothing to do; check again now and
+            # then, in case this process becomes one of them.
             wait = POLL_SECONDS if (in_gateway_process() or in_dashboard_process()) else 30.0
             if wait == POLL_SECONDS:
-                relay_once(Runtime())
+                relay_once(rt, data_dir=data_dir)
         except Exception:  # noqa: BLE001 - keep relaying
             pass
 
 
-def ensure_relay(rt: Runtime | None = None) -> None:
-    global _relay
+_relays: dict[str, tuple[threading.Thread, threading.Event]] = {}
+
+
+def ensure_relay(ctx: Any, data_dir: Path) -> None:
+    """One relay thread per profile folder. ``data_dir`` is captured when the plugin loads, while Hermes has
+    the plugin's profile selected; a thread started later would otherwise see the launch profile's home."""
+    if os.environ.get("ALCHEMY_TASK_NO_RELAY"):
+        return
+    key = str(Path(data_dir).resolve())
     with _lock:
-        if _relay is not None and _relay.is_alive():
+        cur = _relays.get(key)
+        if cur and cur[0].is_alive():
             return
-        if os.environ.get("ALCHEMY_TASK_NO_RELAY"):
-            return
-        _stop.clear()
-        _relay = threading.Thread(target=_loop, name="alchemy-task-handoff-relay", daemon=True)
-        _relay.start()
+        stop = threading.Event()
+        t = threading.Thread(target=_loop, args=(ctx, Path(data_dir), stop), name="alchemy-task-handoff-relay",
+                             daemon=True)
+        _relays[key] = (t, stop)
+        t.start()
 
 
 def stop_relay() -> None:
-    _stop.set()
+    with _lock:
+        for _t, stop in _relays.values():
+            stop.set()
+        _relays.clear()
 
 
 # ------------------------------------------------------------------ hooks
@@ -364,7 +388,12 @@ def post_tool_call(tool_name: str = "", args: Any = None, result: Any = None, se
 
 def register(ctx: Any) -> None:
     ctx.register_hook("post_tool_call", post_tool_call)
-    ensure_relay()
+    try:
+        data_dir = Path(ctx.state.data_dir)
+        (data_dir / "handoffs").mkdir(parents=True, exist_ok=True)
+        ensure_relay(ctx, data_dir)
+    except Exception:  # noqa: BLE001 - Send to chat reports the missing relay as not picked up
+        pass
     try:
         ctx.on_unload(stop_relay)
     except Exception:  # noqa: BLE001
