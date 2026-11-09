@@ -133,6 +133,24 @@ def test_cap_reached_still_runs_an_already_charged_repair(tmp_path):
     assert sorted(joined['accepted']) == sorted(ids[:2])
 
 
+def test_timeout_retry_runs_even_when_cap_is_exhausted(tmp_path):
+    # The retry becomes eligible only on the parent's SECOND research call,
+    # after the cap is already exhausted and a never-started candidate is
+    # refused first: that refusal must not drop the charged retry.
+    runner, store, pool, run = make(tmp_path, 3, {0: ['hang', 'valid']}, daily_limit=2)
+    ids = parents(store, run)
+    runner.run(run, session_id='parent')
+    accept_all(runner, store, run)
+    runner.run(run, session_id='parent')
+    accept_all(runner, store, run)
+    assert [a['ordinal'] for a in attempts_for(store, run, ids[0])] == [1, 2]
+    assert charged_units(store) == 2
+    joined = runner.join(run, session_id='parent')
+    assert joined['joined'] and not joined['failures']
+    assert sorted(joined['accepted']) == sorted(ids[:2])
+    assert [d['candidate_id'] for d in joined['deferred']] == [ids[2]]
+
+
 def test_budget_deferred_lists_each_candidate_once(tmp_path):
     runner, store, pool, run = make(tmp_path, 5, {}, daily_limit=2)
     ids = parents(store, run)
