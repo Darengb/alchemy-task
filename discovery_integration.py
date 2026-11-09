@@ -83,6 +83,18 @@ def host_origin(home, session_id, profile):
         return None
 
 
+def _mail_admission_declared(config):
+    """Source admission is internal-sender mail minus service senders.
+
+    An empty domain list admits every sender, so it must be explicit.
+    """
+    if config.get('kind') != 'mail':
+        return True
+    domains = config.get('sender_domains')
+    has_domains = isinstance(domains, list) and domains and all(isinstance(d, str) and d.strip() for d in domains)
+    return bool(has_domains) or config.get('admit_all') is True
+
+
 class DiscoveryIntegration:
     def __init__(self, rt, *, profile_home=None):
         self.rt = rt
@@ -212,13 +224,8 @@ class DiscoveryIntegration:
             account = (self.rt.ctx.state.get('discovery_identity_accounts', default={}) or {}).get(configured['account_key'])
             if account: configured['identity'] = account
         validate_source_config(configured)
-        if configured.get('kind') == 'mail':
-            # Source admission is internal-sender mail minus service senders.
-            # An empty domain list admits every sender, so it must be explicit.
-            domains = configured.get('sender_domains')
-            has_domains = isinstance(domains, list) and domains and all(isinstance(d, str) and d.strip() for d in domains)
-            if not has_domains and configured.get('admit_all') is not True:
-                raise UserError('mail source needs approved sender_domains (internal sender domains) or explicit admit_all: true')
+        if not _mail_admission_declared(configured):
+            raise UserError('mail source needs approved sender_domains (internal sender domains) or explicit admit_all: true')
         binding = configured.get('binding')
         if binding:
             if not isinstance(binding, dict) or not binding.get('tool') or not isinstance(binding.get('response_fields'), dict):
@@ -278,6 +285,10 @@ class DiscoveryIntegration:
             stale = sorted(key for key, c in configs.items() if c.get('needs_reconfigure'))
             if stale:
                 raise UserError('needs_input: reconfigure source(s) %s: %s' % (', '.join(stale), configs[stale[0]]['needs_reconfigure']['reason']))
+            undeclared = sorted(key for key, c in configs.items() if not _mail_admission_declared(c))
+            if undeclared:
+                # A mail source saved before the setup gate never runs with implicit admit-all.
+                raise UserError('needs_input: reconfigure mail source(s) %s with approved sender_domains or explicit admit_all: true' % ', '.join(undeclared))
             approved = [(s['name'], s['scope']) for s in current['sources']]
             configured = [(s.get('name'), s.get('scope')) for s in configs.values()]
             if any(configured.count(pair) != 1 for pair in approved) or any(pair not in approved for pair in configured):
