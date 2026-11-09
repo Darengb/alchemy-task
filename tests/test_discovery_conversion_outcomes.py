@@ -333,3 +333,56 @@ def test_hook_rewritten_commit_is_not_reported_verified(settings, data_dir, tmp_
     assert 'committed tree' in receipt['git'].get('reason', '')
 
 
+# ---------------------------------------------------------------- HLP-061 read-only link audit
+def test_link_audit_reports_tampered_revision_and_never_writes(settings, data_dir, tmp_path):
+    rt, store, run, wid, conv = _one_unit(settings, data_dir)
+    conv.prepare(run, wid, choice='create', user_approved=True, area='work', undated=True, reason='Approved.')
+    receipt = conv.apply(run, wid)
+    path = rt.store().resolve(receipt['task_id']).path
+    snapshot = path.read_bytes()
+    assert conv.audit_links() == {'dry_run': True, 'repairs': []}
+    assert path.read_bytes() == snapshot
+    path.write_bytes(re.sub(rb'Content revision:\*\* `sha256:[0-9a-f]{8}', b'Content revision:** `sha256:00000000', snapshot, count=1))
+    tampered = path.read_bytes()
+    out = conv.audit_links()
+    assert out['dry_run'] is True
+    assert [(r['task_id'], r['reason']) for r in out['repairs']] == [(receipt['task_id'], 'inline dossier mismatch')]
+    assert path.read_bytes() == tampered
+
+
+def test_link_audit_uses_latest_occurrence_and_lists_legacy_artifacts(settings, data_dir, tmp_path):
+    tasks = TaskStore(settings, data_dir)
+    task = tasks.create(title='Launch work', area='work', undated=True, research=False, notes='slack:T1:C1:171.1:171.2')
+    rt, store, run1, wid, conv = _one_unit(settings, data_dir, new_information=['Day one finding.'])
+    plan1 = conv.prepare(run1, wid, choice='auto', useful_delta=True, reason='Useful delta.', target_task_id=task.task_id,
+                         expected_revision=tf.content_hash(tf.parse_file(task.path).raw))
+    conv.apply(run1, wid)
+    run2 = _next_day_same_unit(store, wid, ['Day two finding.'], 'Changed on day two.')
+    plan2 = conv.prepare(run2, wid, choice='auto', useful_delta=True, reason='New delta.', target_task_id=task.task_id,
+                         expected_revision=conv.match(run2, wid)['targets'][0]['revision'])
+    conv.apply(run2, wid)
+    assert plan1['dossier_revision'] != plan2['dossier_revision']
+    legacy = settings.root() / 'legacy-task-context'; legacy.mkdir(); (legacy / 'old.md').write_text('# old external dossier\n')
+    snapshot, legacy_bytes = task.path.read_bytes(), (legacy / 'old.md').read_bytes()
+    out = conv.audit_links(legacy_roots=['legacy-task-context'])
+    assert [(r.get('path'), r['reason']) for r in out['repairs']] == [('legacy-task-context/old.md', 'legacy external dossier remains')]
+    with pytest.raises(UserError, match='inside the task workspace'):
+        conv.audit_links(legacy_roots=['../outside'])
+    assert task.path.read_bytes() == snapshot and (legacy / 'old.md').read_bytes() == legacy_bytes
+
+
+def test_registered_link_audit_tool_is_read_only(settings, data_dir, tmp_path):
+    integration, rt, ctx, store, run = _integration(settings, data_dir, tmp_path, count=1)
+    _propose_all(integration, store, run)
+    out = integration.decide({'approve': ['1'], 'day': '2030-01-01', 'edits': {'1': {'area': 'work', 'undated': True}}},
+                             session_id='parent', today='2030-01-02')
+    path = rt.store().resolve(out['results'][0]['task_id']).path
+    path.write_bytes(path.read_bytes().replace(b'<!-- discovery-dossier:end ', b'<!-- removed-end ', 1))
+    tampered = path.read_bytes()
+    tools = _register_tools(integration, ctx)
+    result = json.loads(tools['discovery_link_audit']({}, session_id='parent'))
+    assert result['ok'] is True and result['result']['dry_run'] is True
+    assert [r['task_id'] for r in result['result']['repairs']] == [out['results'][0]['task_id']]
+    assert path.read_bytes() == tampered
+    outsider = json.loads(tools['discovery_link_audit']({}, session_id='outsider'))
+    assert outsider['ok'] is True and outsider['result']['repairs'] == []

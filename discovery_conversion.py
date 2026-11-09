@@ -289,6 +289,48 @@ class DiscoveryConversion:
             atomic_json(plan_path, plan)  # UUID, path and FULL postimage persisted BEFORE any task write
             return plan
 
+    def audit_links(self, *, run_ids=None, legacy_roots=()):
+        """Read-only selected-link audit (source repair_links dry run); never writes.
+
+        The latest occurrence per (task, dossier) wins, ordered by business date,
+        creation and run ID, so a legitimate later refresh is never reported against
+        an older run. Each latest occurrence needs exactly one dossier marker pair
+        and its plan's content revision line in the current task. Any Markdown under
+        the given legacy roots is listed as a leftover external dossier.
+        """
+        latest = {}
+        for ledger_path in sorted((self.store.state_root / 'runs').glob('*/ledger.json')):
+            ledger = read_json(ledger_path)
+            if run_ids is not None and ledger['run_id'] not in run_ids: continue
+            for receipt_path in sorted((ledger_path.parent / 'conversions').glob('*.receipt.json')):
+                receipt = read_json(receipt_path)
+                plan = read_json(receipt_path.with_name(receipt['unit_id'] + '.plan.json'))
+                if not plan: continue
+                key = (receipt['task_id'], plan['dossier_id'])
+                order = (ledger.get('business_date') or '', ledger.get('created') or '', ledger['run_id'])
+                if key not in latest or order > latest[key][0]:
+                    latest[key] = (order, receipt, plan)
+        tasks, repairs = self.rt.store(), []
+        for (task_id, dossier_id), (_, receipt, plan) in sorted(latest.items()):
+            base = {'run_id': receipt['run_id'], 'unit_id': receipt['unit_id'], 'task_id': task_id, 'dossier_id': dossier_id}
+            try:
+                body = tasks.resolve(task_id).body
+            except Exception as exc:  # noqa: BLE001 - report, never repair
+                repairs.append({**base, 'reason': 'task missing: ' + type(exc).__name__}); continue
+            start, end = f'<!-- discovery-dossier:start {dossier_id} -->', f'<!-- discovery-dossier:end {dossier_id} -->'
+            if body.count(start) != 1 or body.count(end) != 1 or body.index(end) < body.index(start):
+                repairs.append({**base, 'reason': 'inline dossier mismatch'}); continue
+            block = body[body.index(start):body.index(end)]
+            if f"**Content revision:** `{plan['dossier_revision']}`" not in block:
+                repairs.append({**base, 'reason': 'inline dossier mismatch'})
+        root = tasks.root.resolve()
+        for legacy in legacy_roots:
+            folder = (root / legacy).resolve()
+            if not folder.is_relative_to(root): raise UserError('legacy roots must stay inside the task workspace')
+            if folder.is_dir():
+                repairs += [{'path': str(p.relative_to(root)), 'reason': 'legacy external dossier remains'} for p in sorted(folder.rglob('*.md'))]
+        return {'dry_run': True, 'repairs': repairs}
+
     def _unwritten(self, plan, run, wid, expected, *, target_may_change=False):
         """Refuse unless the plan provably never reached the task.
 

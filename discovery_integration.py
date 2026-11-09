@@ -867,6 +867,14 @@ class DiscoveryIntegration:
             results.append(receipt)
         return {'results': results, 'dismissed': dismissed}
 
+    def link_audit(self, *, session_id, legacy_roots=()):
+        """Read-only HLP-061 audit over the runs this caller may see."""
+        if not isinstance(legacy_roots, (list, tuple)) or any(not isinstance(x, str) or not x.strip() for x in legacy_roots):
+            raise UserError('legacy_roots must be workspace-relative folder names')
+        visible = {r['run_id'] for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')}
+                   or self.origin_authorized(self._stream(r['config'].get('stream_name', r['stream'])), session_id)}
+        return self.conversion.audit_links(run_ids=visible, legacy_roots=legacy_roots)
+
     def backend(self, run_id='', *, session_id):
         def project(ledger):
             run = ledger['run_id']
@@ -971,6 +979,7 @@ SCHEMAS = {
  'discovery_digest': _schema('discovery_digest', 'Prepare/read immutable review digest after all match decisions. Preparation is not delivery proof.', {**RUN, 'action': {'type': 'string', 'enum': ['prepare', 'get', 'delivery', 'send']}}, ['run_id']),
  'discovery_decision': _schema('discovery_decision', 'Parent post-join disposition. Unique exact requires useful delta auto or byte-preserving noop; semantic/new remains proposal; multiple exact conflict.', {**RUN, 'unit_id': STR, 'decision': {'type': 'string', 'enum': ['propose', 'auto', 'noop', 'conflict']}, 'reason': STR, 'target_task_id': STR, 'expected_revision': STR, 'useful_delta': BOOL}, ['run_id', 'unit_id', 'decision', 'reason']),
  'discovery_conversion_recover': _schema('discovery_conversion_recover', 'Inspect/resume exact conversion, or explicitly revise/cancel/bind_manual an unwritten plan with CAS and origin approval.', {**RUN, 'unit_id': STR, 'action': {'type': 'string', 'enum': ['resume', 'inspect', 'revise', 'cancel', 'bind_manual']}, 'expected_plan_revision': STR, 'target_task_id': STR, 'expected_revision': STR, 'edits': OBJ, 'reason': STR, 'user_approved': BOOL}, ['run_id', 'unit_id']),
+ 'discovery_link_audit': _schema('discovery_link_audit', 'Read-only dry-run audit of task links written by discovery conversions visible to this chat: latest occurrence per task/dossier, one marker pair and the expected revision line; optional workspace-relative legacy dossier folders are listed. Never writes or repairs.', {'legacy_roots': {'type': 'array', 'items': STR}}),
  'discovery_runs': _schema('discovery_runs', 'Backend API: list full run records or get exact run including research, proposals, conflicts, recovery and delivery.', {'run_id': STR}),
 }
 
@@ -1060,6 +1069,7 @@ def register(ctx, *, integration=None):
         'discovery_config': config_call,
         'discovery_digest': digest_call,
         'discovery_runs': lambda a, session_id='', **_: service.backend(**a, session_id=session_id),
+        'discovery_link_audit': lambda a, session_id='', **_: service.link_audit(**a, session_id=session_id),
         'discovery_decision': lambda a, session_id='', **_: service.record_decision(**a, session_id=session_id),
         'discovery_conversion_recover': conversion_recover,
         'discovery_collect': lambda a, session_id='', **_: service.collect(**a, session_id=session_id),
