@@ -278,17 +278,13 @@ function DayPopover({ date, close }) {
 
 // ------------------------------------------------------------------ week
 
-export function WeekView({ anchor, narrow }) {
+export function WeekView({ anchor, narrow, onStep }) {
   const { today } = useApp()
   const { days, overdue } = useTaskIndex()
   const start = D.startOfWeek(anchor)
   const dates = D.range(start, D.addDays(start, 6))
   if (narrow) {
-    return (
-      <div className="at-scroll at-days">
-        {dates.map((d) => <DaySection key={d} date={d} tasks={days[d] || []} overdue={d === today ? overdue : []} />)}
-      </div>
-    )
+    return <PhoneWeek dates={dates} days={days} overdue={overdue} today={today} onStep={onStep} />
   }
   return (
     <div className="at-week">
@@ -303,6 +299,46 @@ export function WeekView({ anchor, narrow }) {
           </div>
         </div>
       ))}
+    </div>
+  )
+}
+
+// Phone week: a strip of 7 day tiles (the phone month's tiles), the picked day's tasks below. Swipe the
+// strip sideways, or use the toolbar arrows, to change the week.
+function PhoneWeek({ dates, days, overdue, today, onStep }) {
+  const { drag } = useDrag()
+  const [picked, setPicked] = React.useState(null)
+  const sel = picked && dates.includes(picked) ? picked : (dates.includes(today) ? today : dates[0])
+  const swipe = React.useRef(null)
+  return (
+    <div className="at-scroll at-mmonth at-mweek">
+      <div className="at-mmonth-dows">{dates.map((d) => <span key={d}>{D.dayName(d).slice(0, 1)}</span>)}</div>
+      <div className="at-mmonth-grid"
+           onTouchStart={(e) => { const t = e.touches[0]; swipe.current = { x: t.clientX, y: t.clientY } }}
+           onTouchEnd={(e) => {
+             const s0 = swipe.current; swipe.current = null
+             if (!s0 || !onStep) return
+             const t = e.changedTouches[0]
+             const dx = t.clientX - s0.x
+             if (Math.abs(dx) > 50 && Math.abs(dx) > 1.5 * Math.abs(t.clientY - s0.y)) onStep(dx < 0 ? 1 : -1)
+           }}>
+        {dates.map((d) => {
+          const list = days[d] || []
+          const open = list.filter((t) => !isDone(t)).length
+          return (
+            <button key={d} type="button" data-at-drop={d} onClick={() => setPicked(d)}
+                    className={cx('at-mcell', d === today && 'is-today', d === sel && 'is-on', drag && drag.over === d && 'is-over')}>
+              <span className="at-mcell-num">{D.dayNum(d)}</span>
+              <span className="at-mcell-dots">
+                {list.slice(0, 3).map((t) => <i key={t.task_id} className={isDone(t) ? 'is-done' : ''} />)}
+                {d === today && overdue.length ? <i className="is-late" /> : null}
+              </span>
+              {open > 3 ? <span className="at-mcell-more">+{open - 3}</span> : null}
+            </button>
+          )
+        })}
+      </div>
+      <DaySection date={sel} tasks={days[sel] || []} overdue={sel === today ? overdue : []} />
     </div>
   )
 }
@@ -451,7 +487,7 @@ export function TasksView({ narrow }) {
       </div>
       <div className="at-viewport">
         {view === 'month' ? <MonthView anchor={a} narrow={narrow} /> : null}
-        {view === 'week' ? <WeekView anchor={a} narrow={narrow} /> : null}
+        {view === 'week' ? <WeekView anchor={a} narrow={narrow} onStep={step} /> : null}
         {view === 'day' && narrow ? <DayScroll anchor={a} length={scrollLen} onReachEnd={growScroll} /> : null}
         {view === 'day' && !narrow ? <DayView anchor={a} /> : null}
       </div>
