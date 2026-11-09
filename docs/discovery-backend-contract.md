@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-This is an implemented, tested integration under final acceptance, not a deployment or full-parity claim. The parent independently ran all 359 tests at code revision `4261525a19f41bd85520c6d0ee12a50b6f87deaf`. It registers collection/context/lifecycle/matching/review/conversion/delivery backends and preserves the stream setup surface. UI is separate. Actual complete-pipeline local/Cloud canaries, focused remediation review and final source-obligation reconciliation remain release gates.
+This is an implemented, tested integration under final acceptance, not a deployment or full-parity claim. The parent independently ran all 399 tests at code revision `d8d72f70e4d18b4dfbd55c49c08416741c143c07`. It registers collection/context/lifecycle/matching/review/conversion/delivery backends and preserves the stream setup surface. UI is separate. A registered local full-pipeline canary passed at the earlier `4261525` pin. Final Cloud semantic acceptance, actual scheduled recovery/collector evidence and source-obligation reconciliation remain release gates.
 
 The installing profile owns all mutable discovery state under its plugin data directory. No bundled credentials, private collectors, cross-profile lookup, source mutation or new runtime dependency is introduced. Broad inherited source tools are procedurally read-only, not a mechanical sandbox. Registered task/integration entrypoints additionally refuse verified discovery-child writes.
 
@@ -19,7 +19,7 @@ All handlers consume host `session_id`/`task_id` kwargs, never model-provided ca
 | `discovery_context` | run_id, optional approved context; freezes collected candidates, full all-status task bodies, complete installed-skill inventory/content, installing-profile SOUL/memory files, full discovery rubric and source/config context. |
 | `discovery_research_run` | run_id, optional expected_revision; bounded public lifecycle FIFO. Requires operator-installed supported timeout evidence, not a fabricated native delegation field. |
 | `discovery_research_fetch` | run_id, resource, revision, optional cursor/limit; child adds token/binding, parent omits both. Full lossless pages and durable page receipts. Use default 8192 or a content limit from 4 through 16384 bytes. |
-| `discovery_research_submit` | run_id, token, binding, payload OR multipart upload action begin/part/commit. Intermediate parts explicitly continue; full commit says stop. |
+| `discovery_research_submit` | run_id, token, binding, payload OR multipart upload action begin/part/commit. The registered payload exposes the full child schema with references resolving at the parameters root. Intermediate parts explicitly continue; full commit says stop. |
 | `discovery_research_accept` | run_id, token, payload_sha256, assessment with boolean accepted, nonempty reason (maximum 500 characters), and textual observations for all exported CHECKLIST fields. Full parent payload reads required. |
 | `discovery_actions` | run_id, cid, verified locator/outcome anchors for independent asks sharing source identities. |
 | `discovery_reconcile` | run_id, cid, current accepted-outcome-bound decision/reason/accepted_unit_ids. |
@@ -28,7 +28,7 @@ All handlers consume host `session_id`/`task_id` kwargs, never model-provided ca
 | `discovery_release_hold` | run_id, explicit reason; deliberate release, not uncertain-attempt refund. |
 | `discovery_match` | run_id, unit_id; post-join exact matching over all-status current full task files; complete target-body resources and ALL nominated semantic options. |
 | `discovery_decision` | run_id, unit_id, decision=propose/auto/noop/conflict, substantive reason; auto/noop use exact target_task_id and expected_revision. Auto additionally requires parent useful_delta=true. |
-| `discovery_digest` | run_id, action=prepare/get/delivery/send. Preparation freezes numbering/review. send requires approved origin sender plus exact-message readback mapping. |
+| `discovery_digest` | run_id, action=prepare/get/delivery/send. Preparation freezes numbering/review. Native send returns exact final text and pending host metadata; verified-sender mode requires an approved sender plus exact-message readback mapping. |
 | `discovery_submit` | Compatibility alias requiring saved run_id and completed research/join/decisions. Freeform candidates/research_notes are rejected, not silently imported. |
 | `discovery_decide` | approve/dismiss references, optional day/stream and per-reference edits. Semantic items require choice=update/create; multiple options require target_task_id. No title resolution. |
 | `discovery_conversion_recover` | run_id, unit_id; inspect/resume an exact conversion, or explicitly revise/cancel/bind_manual an unwritten plan with expected_plan_revision, reason and origin approval. No blind re-creation. |
@@ -56,6 +56,8 @@ Response paths select ACTUAL returned values. They do not echo requested account
 Missing/unsupported mappings, prose returns, account/scope/window mismatch, missing pagination and truncation remain failed/partial. Agent attestation never advances a watermark. Every valid page enters durable backlog before coverage. Partial passes resume the original window and actual continuation; immutable pass receipts retain history rather than memoizing a failed pass forever. New scans revalidate exact approved source membership/scopes; resumed scans retain their frozen approved configuration. Source configuration reconciles the existing job's approved reader toolsets in place, preserving its binding.
 
 Full primary bodies remain lossless `source-body-<candidate ID>` resources, indexed by `source-material`; the shared helper index stays compact. A child must fetch its entire assigned primary body and required inventory/config/skill resources before submission. Page receipts establish retrieval, not understanding. Selected/accepted/excluded/deferred/blocked lineage is separate from coverage and daily research budget. An exhausted/unknown research failure remains blocked, not silently given a third attempt by a new scan.
+
+Each reserved attempt also freezes its own parent-issued action registry when present and generic typed-source templates as immutable required paged resources. The bootstrap names those resources without inlining large registries into the bounded context. Register verified action anchors before reserving the child that needs them. The child copies exact action IDs, locators, outcomes and assigned provider/scope mechanics, while obtaining decisive message IDs and all research facts from actual source evidence. Later attempts receive their own frozen contract; no launched attempt's contract is retroactively rewritten. Payload validation, semantic review and the two-attempt limit remain unchanged.
 
 Installed profile SOUL.md and memories/MEMORY.md/USER.md are snapshotted only when present and contained within that profile. Broader approved document/capability context is supplied by the parent from its available tools. This is not a claim of complete hosted connector discovery or a credential inventory.
 
@@ -93,7 +95,7 @@ Synthetic tests cover registered collection/context/research callbacks/parent ac
 
 ## Recovery and remaining acceptance
 
-Scheduled adoption uses the public host `current_cron_execution` identity, verified job/profile/origin binding and saved run authority. A model-supplied job/session identifier does not grant it. Unknown old attempts remain fenced/reserved; accepted siblings and original windows survive. Supervisor process-death reclamation checks the recorded process incarnation and preserves live-supervisor exclusion. The real host-crash rerun must verify the new lease behavior, not only the earlier reconnection primitive.
+Scheduled adoption uses the public host `current_cron_execution` identity, verified job/profile/origin binding and saved run authority. A model-supplied job/session identifier does not grant it. Unknown old attempts remain fenced/reserved; accepted siblings and original windows survive. Supervisor process-death reclamation checks the recorded process incarnation and preserves live-supervisor exclusion. The registered local host-crash continuation passed at the `4261525` pin; this is separate from proof of actual scheduled adoption under a new host session. Expired leases of unknown incarnation retain the documented TTL takeover behavior.
 
 End-state reconciliation projects review/backlog/conversion/delivery facts while retaining unresolved and replyable work. Old freeform proposals remain explicitly legacy/unresearched; they are not invented accepted dossiers. Conservative retention is not proof of cleanup timing.
 
