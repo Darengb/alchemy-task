@@ -391,6 +391,7 @@ class DiscoveryRunner:
         maximum = 0
         interrupted = False
         deferred = []
+        cancelling = {}
         lifecycle = self.ctx.subagent_lifecycle
 
         def launch_worker(token, request, context):
@@ -404,6 +405,17 @@ class DiscoveryRunner:
             self.store.recover_bundles(run_id)
             for a in self.store.get_run(run_id)['attempts'].values():
                 if a['terminal']:
+                    continue
+                if a['fenced'] and a.get('fence_reason') in {'execution_timeout', 'admission_timeout'} and a['handle'] and a['owner_session'] == session_id:
+                    # A timed-out child whose cancellation has since landed is a
+                    # proven terminal attempt: observe it so its one fresh retry
+                    # becomes eligible (source retries timeouts once).
+                    try:
+                        connected = normalize(lifecycle.reconnect(a['handle']))
+                        if connected.get('connected') and connected.get('state') in TERMINAL:
+                            self._terminal(run_id, a['token'], a['handle'])
+                    except Exception:
+                        pass
                     continue
                 if a['fenced'] or a['state'] in {'exhausted', 'rejected_retryable', 'accepted_bundle'}:
                     continue
@@ -458,12 +470,23 @@ class DiscoveryRunner:
                             self.store.mark_running(run_id, token, started_at=_utc(epoch), deadline_utc=_utc(deadline))
                         timer = self._deadlines.get((run_id, token))
                         if timer is not None and self.clock.monotonic() >= timer:
-                            self._cancel(run_id, token, handle, 'execution_timeout'); active.pop(token); continue
+                            self._cancel(run_id, token, handle, 'execution_timeout'); active.pop(token)
+                            cancelling[token] = handle; continue
                         if timer is None and self.clock.monotonic() - slot['pending_start'] >= self.policy.pending_seconds:
-                            self._cancel(run_id, token, handle, 'admission_timeout'); active.pop(token); continue
+                            self._cancel(run_id, token, handle, 'admission_timeout'); active.pop(token)
+                            cancelling[token] = handle; continue
                     except Exception as exc:
                         self._cancel(run_id, token, handle, 'execution_unknown')
                         active.pop(token)
+                # The slot is reused logically, but a cancel-pending handle is
+                # kept until its terminal observation (revision 3.5).
+                for token, handle in list(cancelling.items()):
+                    try:
+                        if normalize(lifecycle.status(handle)).get('state') in TERMINAL:
+                            cancelling.pop(token)
+                            self._terminal(run_id, token, handle)
+                    except Exception:
+                        cancelling.pop(token, None)
                 eligible = self._eligible(run_id)
                 while self.clock.monotonic() < admit_until and len(active) < self.policy.slots and eligible:
                     cid = eligible.pop(0)

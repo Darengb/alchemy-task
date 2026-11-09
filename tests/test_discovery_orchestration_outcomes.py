@@ -1,0 +1,278 @@
+"""Outcome tests for research orchestration, the daily cap and hook cost.
+
+Children are scripted per candidate and per ordinal through a public-shaped
+lifecycle pool. Assertions read what the parent and user get: attempts and
+launches, budget units, join records, guard verdicts and timings.
+"""
+import json
+import shutil
+import time
+from types import SimpleNamespace
+
+from test_discovery_runner import Pool, Status, accept_all, callback_all, setup_runner
+from alchemy_task.core.discovery_state import DiscoveryStore
+
+
+class ScriptedPool(Pool):
+    """behaviours: {candidate index: [ordinal 1, ordinal 2]} of valid | invalid | hang.
+
+    A hanging child stays RUNNING until a cancellation is accepted and
+    `cancel_effective` is true; then it reports CANCELLED.
+    """
+
+    def __init__(self, clock, store, run, behaviours):
+        super().__init__(clock)
+        self.store, self.run, self.behaviours = store, run, behaviours
+        self.submitted, self.cancel_accepted = set(), set()
+        self.cancel_effective = True
+
+    def _behaviour(self, sid):
+        boot = self.records[sid]['bootstrap']
+        index = parents(self.store, self.run).index(boot['candidate_id'])
+        seq = self.behaviours.get(index, ['valid', 'valid'])
+        return seq[min(boot['ordinal'], len(seq)) - 1]
+
+    def status(self, handle):
+        sid = handle['subagent_id']
+        record = self.records[sid]
+        behaviour = self._behaviour(sid)
+        if behaviour == 'hang':
+            if sid in self.cancel_accepted and self.cancel_effective:
+                record['ready'] = True
+                return Status('CANCELLED', self.clock.time())
+            return Status('RUNNING', record['started'])
+        if sid not in self.submitted:
+            self.submitted.add(sid)
+            callback_all(self.runner, self.store, self, self.run, handle, invalid=behaviour == 'invalid')
+        if self.clock.time() - record['started'] > 2:
+            record['ready'] = True
+            return Status('SUCCEEDED', self.clock.time())
+        return Status('RUNNING', record['started'])
+
+    def result(self, handle):
+        sid = handle['subagent_id']
+        record = self.records[sid]
+        return {'ready': record['ready'], 'terminal_state': 'CANCELLED' if sid in self.cancel_accepted else 'SUCCEEDED',
+                'started_at': record['started'], 'completed_at': self.clock.time(), 'summary': 'x', 'structured_payload': None}
+
+    def reconnect(self, handle):
+        return {'connected': True, 'state': self.status(handle).state}
+
+    def cancel(self, handle, *, reason):
+        self.cancelled.append((handle, reason))
+        self.cancel_accepted.add(handle['subagent_id'])
+        return {'accepted': True, 'state': 'CANCEL_REQUESTED'}
+
+
+def make(tmp_path, count, behaviours, **policy):
+    runner, store, _, run = setup_runner(tmp_path, count=count, **policy)
+    pool = ScriptedPool(runner.clock, store, run, behaviours)
+    pool.runner = runner
+    runner.ctx.subagent_lifecycle = pool
+    return runner, store, pool, run
+
+
+def parents(store, run):
+    return [c['candidate_id'] for c in store.get_run(run)['candidates'] if not c.get('parent_candidate_id')]
+
+
+def attempts_for(store, run, cid):
+    return sorted((a for a in store.get_run(run)['attempts'].values() if a['candidate_id'] == cid), key=lambda a: a['ordinal'])
+
+
+def charged_units(store):
+    return sum(len(json.loads(p.read_text())['charged']) for p in (store.state_root / 'budgets').glob('*.json'))
+
+
+# ---------------------------------------------------------------- ORC-F1
+
+def test_timed_out_researcher_gets_its_one_fresh_retry_in_the_normal_flow(tmp_path):
+    runner, store, pool, run = make(tmp_path, 2, {0: ['hang', 'valid'], 1: ['valid']})
+    ids = parents(store, run)
+    first = runner.run(run, session_id='parent')
+    # The cancelled child's terminal state is observed: not left as an unknown.
+    assert first['unknown_candidates'] == []
+    assert ids[0] in first['queued']
+    accept_all(runner, store, run)
+    runner.run(run, session_id='parent')  # the skill's resume of the SAME run
+    accept_all(runner, store, run)
+    attempts = attempts_for(store, run, ids[0])
+    assert [a['ordinal'] for a in attempts] == [1, 2]
+    retry = json.loads(pool.requests[-1]['context'])
+    assert retry['candidate_id'] == ids[0] and retry['repair']['reason']['reason'] == 'execution_timeout'
+    joined = runner.join(run, session_id='parent')
+    assert joined['joined'] and not joined['degraded'] and sorted(joined['accepted']) == sorted(ids)
+    assert len(pool.requests) == 3 and charged_units(store) == 2  # the retry reuses its budget unit
+
+
+def test_timeout_whose_cancellation_lands_later_is_retried_on_resume(tmp_path):
+    runner, store, pool, run = make(tmp_path, 1, {0: ['hang', 'valid']})
+    cid = parents(store, run)[0]
+    pool.cancel_effective = False  # cancel accepted, child still unwinding when the slice ends
+    first = runner.run(run, session_id='parent')
+    assert first['status'] == 'pending' and first['unknown_candidates'] == [cid]
+    pool.cancel_effective = True
+    runner.run(run, session_id='parent')
+    accept_all(runner, store, run)
+    assert [a['ordinal'] for a in attempts_for(store, run, cid)] == [1, 2]
+    joined = runner.join(run, session_id='parent')
+    assert joined['joined'] and joined['accepted'] == [cid] and not joined['failures']
+
+
+# ---------------------------------------------------------------- ORC-F2 / ORC-F7
+
+def test_cap_reached_still_runs_an_already_charged_repair(tmp_path):
+    runner, store, pool, run = make(tmp_path, 4, {0: ['invalid', 'valid'], 1: ['valid']}, daily_limit=2)
+    ids = parents(store, run)
+    report = runner.run(run, session_id='parent')
+    accept_all(runner, store, run)
+    assert [a['ordinal'] for a in attempts_for(store, run, ids[0])] == [1, 2]
+    assert charged_units(store) == 2
+    assert report['budget_deferred'] == ids[2:]  # never the charged repair
+    joined = runner.join(run, session_id='parent')
+    assert sorted(joined['accepted']) == sorted(ids[:2])
+
+
+def test_budget_deferred_lists_each_candidate_once(tmp_path):
+    runner, store, pool, run = make(tmp_path, 5, {}, daily_limit=2)
+    ids = parents(store, run)
+    report = runner.run(run, session_id='parent')
+    assert report['budget_deferred'] == ids[2:]
+
+
+# ---------------------------------------------------------------- ORC-F3 (runner)
+
+def test_cap_deferred_work_joins_as_deferred_not_failed(tmp_path):
+    runner, store, pool, run = make(tmp_path, 4, {}, daily_limit=2)
+    ids = parents(store, run)
+    runner.run(run, session_id='parent')
+    accept_all(runner, store, run)
+    joined = runner.join(run, session_id='parent')
+    assert joined['joined'] and not joined['degraded'] and joined['failures'] == []
+    assert sorted(joined['accepted']) == sorted(ids[:2])
+    assert [d['candidate_id'] for d in joined['deferred']] == ids[2:]
+    assert all('cap' in d['reason'] for d in joined['deferred'])
+
+
+def test_degraded_acknowledgement_does_not_relabel_a_cap_deferral_as_failure(tmp_path):
+    runner, store, pool, run = make(tmp_path, 2, {}, daily_limit=1)
+    ids = parents(store, run)
+    runner.run(run, session_id='parent')
+    accept_all(runner, store, run)
+    joined = runner.join(run, session_id='parent', degraded={ids[1]: 'Daily research cap reached'})
+    assert joined['joined'] and not joined['failures'] and [d['candidate_id'] for d in joined['deferred']] == [ids[1]]
+
+
+# ---------------------------------------------------------------- ORC-F4
+
+def test_ordinary_task_research_from_the_same_chat_is_not_a_discovery_child(tmp_path):
+    runner, store, pool, run = make(tmp_path, 2, {})
+    report = runner.run(run, session_id='parent')
+    assert report['status'] == 'needs_parent' and len(report['awaiting_parent']) == 2  # run stays open
+    runner.subagent_start(parent_session_id='parent', child_session_id='ordinary-child', child_subagent_id='sa-ordinary')
+    for tool in ('research_submit', 'task_update', 'write_file', 'patch'):
+        assert runner.pre_tool_call(tool_name=tool, session_id='ordinary-child', task_id='sa-ordinary') is None
+    # Real discovery children of the run stay read-only.
+    assert runner.pre_tool_call(tool_name='task_create', session_id='child-1', task_id='sa-1')['action'] == 'block'
+
+
+def test_child_started_during_a_discovery_launch_is_released_once_the_launch_binds(tmp_path):
+    runner, store, pool, run = make(tmp_path, 1, {})
+    original = pool.launch
+    seen = {}
+
+    def launch(request):
+        # The user's ordinary research child starts while discovery's own launch is in flight.
+        runner.subagent_start(parent_session_id='parent', child_session_id='ordinary-child', child_subagent_id='sa-ordinary')
+        seen['during'] = runner.pre_tool_call(tool_name='research_submit', session_id='ordinary-child', task_id='sa-ordinary')
+        return original(request)
+    pool.launch = launch
+    report = runner.run(run, session_id='parent')
+    assert len(report['awaiting_parent']) == 1  # discovery child bound exactly and submitted
+    assert seen['during']['action'] == 'block'  # conservative while the launch is unresolved
+    assert runner.pre_tool_call(tool_name='research_submit', session_id='ordinary-child', task_id='sa-ordinary') is None
+    assert runner.pre_tool_call(tool_name='task_create', session_id='child-1', task_id='sa-1')['action'] == 'block'
+
+
+def test_child_of_an_unknown_discovery_launch_stays_blocked(tmp_path):
+    runner, store, pool, run = make(tmp_path, 1, {})
+
+    def lost(request):
+        runner.subagent_start(parent_session_id='parent', child_session_id='lost-child', child_subagent_id='sa-lost')
+        raise OSError('transport lost after the host accepted the launch')
+    pool.launch = lost
+    runner.run(run, session_id='parent')
+    assert runner.pre_tool_call(tool_name='task_create', session_id='lost-child', task_id='sa-lost')['action'] == 'block'
+
+
+# ---------------------------------------------------------------- ORC-F5
+
+def _month_of_runs(tmp_path, runs=30, attempts=50):
+    """A template run with bound children, cloned into a profile's existing state."""
+    template = DiscoveryStore(tmp_path / 'template')
+    run = template.init_run(origin={'session_id': 'cron-0'}, business_date='2026-01-01', stream='s')
+    template.add_candidates(run, [{'title': f'Work {i}', 'source_ids': [f'source:source:account:thread:t{i}']} for i in range(attempts)])
+    template.freeze_index(run, rubric='x' * 20000)
+    for i, c in enumerate(template.get_run(run)['candidates'][:attempts]):
+        a = template.reserve_attempt(run, c['candidate_id'], owner_session='cron-0', daily_limit=10000)
+        template.record_start(run, parent_session='cron-0', child_session=f'child-{i}', subagent_id=f'sa-{i}')
+        template.bind_attempt(run, a['token'], {'subagent_id': f'sa-{i}'}, owner_session='cron-0')
+    text = (template.run_dir(run) / 'ledger.json').read_text()
+    root = tmp_path / 'profile' / 'discovery'
+    for r in range(runs):
+        new = f'run{r:02d}' + 'a' * 26
+        target = root / 'runs' / new
+        shutil.copytree(template.run_dir(run), target)
+        (target / 'ledger.json').write_text(text.replace(run, new).replace('cron-0', f'cron-{r}')
+                                            .replace('"child-', f'"r{r}-child-').replace('"sa-', f'"sa-r{r}-'))
+    return root
+
+
+def test_hooks_stay_fast_and_write_nothing_with_a_month_of_retained_runs(tmp_path):
+    from alchemy_task.discovery_runner import DiscoveryRunner
+    root = _month_of_runs(tmp_path)
+    store = DiscoveryStore(root)  # existing profile state from before any index existed
+    runner = DiscoveryRunner(SimpleNamespace(subagent_lifecycle=None), SimpleNamespace(data_dir=tmp_path), store=store)
+    before = {p: p.read_bytes() for p in root.rglob('*') if p.is_file() and 'locks' not in p.parts}
+    started = time.perf_counter()
+    for _ in range(100):
+        assert runner.pre_tool_call(tool_name='terminal', session_id='unrelated', task_id='') is None
+    tool_ms = (time.perf_counter() - started) * 10
+    started = time.perf_counter()
+    for _ in range(100):
+        assert runner.pre_llm_call(session_id='unrelated') is None
+    llm_ms = (time.perf_counter() - started) * 10
+    assert tool_ms < 5 and llm_ms < 5, (tool_ms, llm_ms)
+    after = {p: p.read_bytes() for p in root.rglob('*') if p.is_file() and 'locks' not in p.parts}
+    assert {p: b for p, b in after.items() if p in before} == before
+    assert not [p for p in after if p not in before and p.name == 'supervisor.json']
+    # The fast path keeps exact answers for real owners and children.
+    assert 'run17' in runner.pre_llm_call(session_id='cron-17')['context']
+    assert runner.pre_tool_call(tool_name='task_create', session_id='r17-child-3', task_id='sa-r17-3')['action'] == 'block'
+    assert runner.pre_tool_call(tool_name='task_create', session_id='r17-child-3', task_id='')['action'] == 'block'
+
+
+# ---------------------------------------------------------------- ORC-T1
+
+def test_repair_child_receives_the_exact_rejection_and_the_old_payload(tmp_path):
+    runner, store, pool, run = make(tmp_path, 3, {1: ['invalid', 'valid']})
+    ids = parents(store, run)
+    runner.run(run, session_id='parent')
+    accept_all(runner, store, run)
+    runner.run(run, session_id='parent')
+    accept_all(runner, store, run)
+    joined = runner.join(run, session_id='parent')
+    assert len(pool.requests) == 4 and joined['joined'] and not joined['degraded'] and sorted(joined['accepted']) == sorted(ids)
+    assert charged_units(store) == 3
+    first, second = attempts_for(store, run, ids[1])
+    repair = json.loads(pool.requests[-1]['context'])
+    assert repair['candidate_id'] == ids[1] and repair['ordinal'] == 2 and repair['token'] == second['token']
+    assert first['rejection']['reason'] == first['validation_error']
+    assert repair['repair']['reason'] == first['rejection']
+    assert repair['repair']['payload'] == first['payload']
+    old = first['payload']['resource']
+    assert repair['resources'][old] == store.resource_info(run, old)
+    # The repair child actually read every page of the rejected payload with its own capability.
+    assert store._has_pages(store.get_run(run), second['token'], old)
+    # Successful siblings were not rerun.
+    assert [len(attempts_for(store, run, c)) for c in ids] == [1, 2, 1]
