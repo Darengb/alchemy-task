@@ -53,15 +53,10 @@ function AppInner({ transport, host, initialView, settingsOnly }) {
   React.useEffect(() => { loadMeta(); loadRuns() }, [loadMeta, loadRuns])
 
   React.useEffect(() => {
-    const tick = () => {
-      if (document.visibilityState !== 'visible') return
-      loadMeta()
-      store.refresh()
-      loadRuns()
-    }
-    const id = setInterval(tick, POLL_MS)
-    window.addEventListener('focus', tick)
-    return () => { clearInterval(id); window.removeEventListener('focus', tick) }
+    const refresh = () => { loadMeta(); store.refresh(); loadRuns() }
+    const id = setInterval(() => { if (document.visibilityState === 'visible') refresh() }, POLL_MS)
+    window.addEventListener('focus', refresh)
+    return () => { clearInterval(id); window.removeEventListener('focus', refresh) }
   }, [loadMeta, loadRuns, store])
 
   React.useEffect(() => {

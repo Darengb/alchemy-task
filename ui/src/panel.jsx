@@ -28,6 +28,18 @@ export function TaskPanel({ id, narrow, onClose }) {
     return store.loadTask(id).catch((err) => setLoadError(err))
   }, [id, store])
   React.useEffect(() => { setEditing(false); load() }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
+  // A refresh after an outside change replaces the row without its body; fetch the body again.
+  const bodyMissing = !!task && task.body === undefined
+  React.useEffect(() => { if (bodyMissing && !loadError) load() }, [bodyMissing]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep the open task current (it may sit outside every loaded date range), except while editing notes.
+  React.useEffect(() => {
+    if (editing) return undefined
+    const load = () => store.loadTask(id).catch(() => {})
+    const t = setInterval(() => { if (document.visibilityState === 'visible') load() }, 30000)
+    window.addEventListener('focus', load)
+    return () => { clearInterval(t); window.removeEventListener('focus', load) }
+  }, [id, editing, store])
 
   React.useEffect(() => {
     const key = (e) => { if (e.key === 'Escape' && !e.defaultPrevented && !editing) onClose() }
@@ -35,7 +47,17 @@ export function TaskPanel({ id, narrow, onClose }) {
     return () => window.removeEventListener('keydown', key)
   }, [onClose, editing])
 
+  // Field changes made while the notes editor is open: save the notes first and close the editor, so the
+  // editor never holds text built from an older version of the file.
+  const flushRef = React.useRef(null)
+  const settle = async () => {
+    if (!editing || !flushRef.current) return true
+    const ok = await flushRef.current()
+    if (ok) setEditing(false)
+    return ok
+  }
   const patch = async (changes, local) => {
+    if (!(await settle())) return
     try {
       await store.mutate(id, local || changes, () => api.patch(id, { ...changes, expected_revision: task && task.revision }))
     } catch (err) {
@@ -44,10 +66,22 @@ export function TaskPanel({ id, narrow, onClose }) {
     }
   }
 
-  const saveBody = async (body) => {
-    const res = await api.putBody(id, body, task.revision)
+  // Body writes always name the revision they were built from (never the store's latest), and run one at a time.
+  const saveBody = async (body, baseRevision) => {
+    const res = await api.putBody(id, body, baseRevision)
     store.put(res.task)
     return res.task
+  }
+  const toggleQueue = React.useRef(Promise.resolve())
+  const toggle = (line, checked) => {
+    toggleQueue.current = toggleQueue.current.then(async () => {
+      const cur = store.getState().byId[id]
+      if (!cur || cur.body === undefined) return
+      try { await saveBody(toggleLine(cur.body, line, checked), cur.revision) } catch (err) {
+        if (err.code === 'stale_revision') setStale(true)
+        toast(describeError(err), { tone: 'error' })
+      }
+    })
   }
 
   if (!task && loadError) {
@@ -63,7 +97,7 @@ export function TaskPanel({ id, narrow, onClose }) {
   const date = D.taskDate(task)
   const separateDue = task.due && task.scheduled && task.due !== task.scheduled
   const pickDate = (e) => overlay.open(e.currentTarget, (close) => (
-    <DatePicker value={date} today={today} close={close} onPick={(d) => actions.move(task, d)} />
+    <DatePicker value={date} today={today} close={close} onPick={async (d) => { if (await settle()) actions.move(store.getState().byId[id] || task, d) }} />
   ), { width: 300 })
   const pickDue = (e) => overlay.open(e.currentTarget, (close) => (
     <DatePicker value={task.due} today={today} close={close}
@@ -99,7 +133,7 @@ export function TaskPanel({ id, narrow, onClose }) {
         </div>
       ) : null}
       <div className="at-panel-titlerow">
-        <Check checked={isDone(task)} onChange={() => actions.toggle(task)} label={isDone(task) ? 'Mark not done' : 'Mark done'} size="lg" />
+        <Check checked={isDone(task)} onChange={async () => { if (await settle()) actions.toggle(store.getState().byId[id] || task) }} label={isDone(task) ? 'Mark not done' : 'Mark done'} size="lg" />
         <TitleField value={task.title} done={isDone(task)} onSave={(title) => patch({ title })} />
       </div>
       <div className="at-fields">
@@ -125,16 +159,10 @@ export function TaskPanel({ id, narrow, onClose }) {
         <div className="at-research-note"><Icon name="spark" size={14} /> Hermes is researching this task. Findings will appear here.</div>
       ) : null}
 
-      {task.body === undefined ? <div className="at-panel-loading"><Spinner /></div> : editing ? (
-        <BodyEditor task={task} onSave={saveBody} onDone={() => setEditing(false)} onStale={() => setStale(true)} />
-      ) : (
-        <BodyView task={task} onEdit={() => setEditing(true)}
-                  onToggle={async (line, checked) => {
-                    try { await saveBody(toggleLine(task.body, line, checked)) } catch (err) {
-                      if (err.code === 'stale_revision') setStale(true)
-                      toast(describeError(err), { tone: 'error' })
-                    }
-                  }} />
+      {editing ? (
+        <BodyEditor task={task} onSave={saveBody} onDone={() => setEditing(false)} onStale={() => setStale(true)} flushRef={flushRef} />
+      ) : task.body === undefined ? <div className="at-panel-loading"><Spinner /></div> : (
+        <BodyView task={task} onEdit={() => setEditing(true)} onToggle={toggle} />
       )}
 
       <Disclosure title="More" className="at-more">
@@ -247,9 +275,11 @@ function BodyView({ task, onEdit, onToggle }) {
   )
 }
 
-function BodyEditor({ task, onSave, onDone, onStale }) {
+function BodyEditor({ task, onSave, onDone, onStale, flushRef }) {
   const toast = useToast()
   const parts = React.useMemo(() => extractManaged(task.body || ''), []) // eslint-disable-line react-hooks/exhaustive-deps
+  const baseRev = React.useRef(task.revision) // the file version this editor's text was built from
+  const inFlight = React.useRef(Promise.resolve(true))
   const [text, setText] = React.useState(parts.editable)
   const [status, setStatus] = React.useState('saved') // saved | dirty | saving | error
   const latest = React.useRef(text)
@@ -257,23 +287,34 @@ function BodyEditor({ task, onSave, onDone, onStale }) {
   const timer = React.useRef(null)
   const ref = React.useRef(null)
 
-  const save = React.useCallback(async () => {
+  const save = React.useCallback(() => {
     clearTimeout(timer.current)
-    const body = latest.current
-    if (body === saved.current) { setStatus('saved'); return true }
-    setStatus('saving')
-    try {
-      await onSave(rebuildBody(body, parts.top, parts.bottom))
-      saved.current = body
-      setStatus(latest.current === body ? 'saved' : 'dirty')
-      return true
-    } catch (err) {
-      setStatus('error')
-      if (err.code === 'stale_revision') onStale()
-      toast(describeError(err), { tone: 'error' })
-      return false
-    }
+    // Chain onto any save still running, so each one uses the revision the previous one produced.
+    inFlight.current = inFlight.current.then(async () => {
+      const body = latest.current
+      if (body === saved.current) { setStatus((st) => (st === 'error' ? st : 'saved')); return true }
+      setStatus('saving')
+      try {
+        const t = await onSave(rebuildBody(body, parts.top, parts.bottom), baseRev.current)
+        baseRev.current = t.revision
+        saved.current = body
+        setStatus(latest.current === body ? 'saved' : 'dirty')
+        return true
+      } catch (err) {
+        setStatus('error')
+        if (err.code === 'stale_revision') onStale()
+        toast(describeError(err), { tone: 'error' })
+        return false
+      }
+    })
+    return inFlight.current
   }, [onSave, onStale, toast, parts])
+  React.useEffect(() => {
+    if (!flushRef) return undefined
+    flushRef.current = save
+    return () => { flushRef.current = null }
+  }, [flushRef, save])
+  const changedElsewhere = task.revision && baseRev.current && task.revision !== baseRev.current && status !== 'saving'
 
   React.useEffect(() => { if (ref.current) ref.current.focus() }, [])
   React.useEffect(() => () => clearTimeout(timer.current), [])
@@ -294,9 +335,14 @@ function BodyEditor({ task, onSave, onDone, onStale }) {
           {status === 'saving' ? 'Saving…' : status === 'saved' ? 'Saved' : status === 'error' ? 'Not saved' : 'Editing'}
         </span>
         <span className="at-flex" />
-        {status === 'error' ? <Button size="sm" onClick={save}>Retry</Button> : null}
+        {status === 'error' ? <Button size="sm" variant="ghost" onClick={onDone}>Discard changes</Button> : null}
+        {status === 'error' && !changedElsewhere ? <Button size="sm" onClick={save}>Retry</Button> : null}
         <Button size="sm" variant="primary" onClick={done}>Done</Button>
       </div>
+      {changedElsewhere ? (
+        <div className="at-banner at-tone-late"><Icon name="alert" size={15} />
+          <span className="at-flex">This task changed while you were editing. Your text is kept here and will not overwrite it. Copy what you need, then choose Discard changes to see the latest version.</span></div>
+      ) : null}
       <textarea ref={ref} className="at-editor" value={text} spellCheck
                 onChange={(e) => change(e.target.value)}
                 onKeyDown={(e) => {

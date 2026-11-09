@@ -369,6 +369,7 @@ export function TasksView({ narrow }) {
   const view = prefs.view || (narrow ? 'day' : 'month')
   const [anchor, setAnchor] = React.useState(today)
   const [scrollLen, setScrollLen] = React.useState(21)
+  const growScroll = React.useCallback(() => setScrollLen((n) => Math.min(n + 14, 120)), [])
   React.useEffect(() => { if (!anchor && today) setAnchor(today) }, [today, anchor])
   const a = anchor || today
 
@@ -447,7 +448,7 @@ export function TasksView({ narrow }) {
       <div className="at-viewport">
         {view === 'month' ? <MonthView anchor={a} narrow={narrow} /> : null}
         {view === 'week' ? <WeekView anchor={a} narrow={narrow} /> : null}
-        {view === 'day' && narrow ? <DayScroll anchor={a} length={scrollLen} onReachEnd={() => setScrollLen((n) => Math.min(n + 14, 120))} /> : null}
+        {view === 'day' && narrow ? <DayScroll anchor={a} length={scrollLen} onReachEnd={growScroll} /> : null}
         {view === 'day' && !narrow ? <DayView anchor={a} /> : null}
       </div>
       {narrow ? <button type="button" className="at-fab" aria-label="Add a task" onClick={addMenu}><Icon name="plus" size={22} /></button> : null}
