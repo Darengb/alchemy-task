@@ -789,7 +789,9 @@ class DiscoveryIntegration:
             if not decision: raise UserError('post-join semantic decision missing for ' + candidate['candidate_id'])
             if decision['request']['decision'] == 'propose': items.append(decision)
             elif decision['kind'] == 'conflict': conflicts.append({'unit_id': candidate['candidate_id'], 'reason': 'Multiple exact task destinations conflict', 'targets': decision['targets']})
-            elif decision['request']['decision'] in {'auto', 'noop'}:
+            elif decision['request']['decision'] == 'noop':
+                continue  # true noops are omitted from the digest (source: not reported as updates)
+            elif decision['request']['decision'] == 'auto':
                 _, receipt_path = self.conversion._paths(run_id, candidate['candidate_id'])
                 receipt = read_json(receipt_path, {})
                 outcomes.append({'unit_id': candidate['candidate_id'], 'title': decision['title'],
