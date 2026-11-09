@@ -143,6 +143,44 @@ def test_real_host_mount_auth_and_profile_boundary(tmp_path):
     assert 'actual host mount/auth/profile PASS' in result.stdout
 
 
+def test_real_host_accepts_serving_profile_selector_on_every_route(tmp_path):
+    """The host SPA sends ?profile=<serving>; list, detail, approve, dismiss and resume must work."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    import hermes_cli
+    home = tmp_path / 'host-home'; home.mkdir()
+    root = Path(__file__).resolve().parents[1]
+    core_root = Path(hermes_cli.__file__).resolve().parents[1]
+    import pytest as _pytest
+    extra = [str(Path(_pytest.__file__).resolve().parents[1])]
+    try:
+        import python_multipart
+        extra.append(str(Path(python_multipart.__file__).resolve().parents[1]))
+    except ImportError:
+        pass
+    extra = os.pathsep.join(extra)
+    result = subprocess.run([sys.executable, str(root / 'tests' / 'dashboard_serving_profile_probe.py'), str(root), str(home), str(core_root), extra],
+                            env={**os.environ, 'HERMES_HOME': str(home)}, text=True, capture_output=True, timeout=180)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'serving profile selector PASS' in result.stdout
+
+
+def test_route_itself_refuses_a_different_profile_selector_without_writes(tmp_path, settings, data_dir, monkeypatch):
+    service, rt, run, wid, proposal = fixture_service(tmp_path, settings, data_dir)
+    client, owner = client_for(service, monkeypatch)
+    before = {t.path: t.path.read_bytes() for t in rt.store().scan().tasks}
+    base = '/api/plugins/alchemy-task'
+    for path in ('/runs?profile=other-profile', '/runs/' + run + '?profile=other-profile'):
+        assert client.get(base + path, headers=owner).json()['error']['code'] == 'invalid_request'
+    response = client.post(base + '/proposals/' + proposal['proposal_id'] + '/approve?profile=other-profile', headers=owner,
+                           json={'choice': 'create', 'due': '2030-01-09', 'area': 'work'})
+    assert response.status_code == 400 and response.json()['error']['code'] == 'invalid_request', response.text
+    assert {t.path: t.path.read_bytes() for t in rt.store().scan().tasks} == before
+    assert service.digest._load()['proposals'][proposal['proposal_id']]['state'] == 'pending'
+
+
 @pytest.mark.parametrize('prepared', [False, True])
 def test_semantic_stale_revision_before_and_after_preparation(tmp_path, settings, data_dir, monkeypatch, prepared):
     from test_discovery_conversion import custom_joined

@@ -65,8 +65,21 @@ def _admit(request):
     late('_require_token')(request)
 
 
+def _serving_profile(name):
+    # The host SPA adds ?profile=<serving profile> to every plugin request. It
+    # carries no authority; accept it only when it names this request's home.
+    from hermes_constants import get_hermes_home
+    from hermes_cli.profiles import profile_matches_home
+    return bool(name) and profile_matches_home(name, get_hermes_home())
+
+
 def _query(request, allowed=()):
-    if set(request.query_params) - set(allowed):
+    keys = set(request.query_params)
+    if 'profile' in keys:
+        if not all(_serving_profile(name) for name in request.query_params.getlist('profile')):
+            raise APIError('invalid_request', 'profile query names a different profile')
+        keys.discard('profile')
+    if keys - set(allowed):
         raise APIError('invalid_request', 'Unsupported query parameters')
 
 
