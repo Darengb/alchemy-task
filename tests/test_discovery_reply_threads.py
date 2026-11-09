@@ -16,13 +16,14 @@ from test_discovery_integration import service, configure
 from test_setup import home  # noqa: F401  (fixture)
 
 
-def _finalize(integration, data_dir, *, stream, origin_session, deliver='origin'):
+def _finalize(integration, data_dir, *, stream, origin_session, deliver='origin', day=None):
     """One proposal for `stream`, finalized the way the stream's own run does it."""
-    store, run, items, wids = build_run(data_dir, 1, state=f'{stream} stream view of the launch.')
+    store, run, items, wids = build_run(data_dir, 1, state=f'{stream} stream view of the launch{" on " + day if day else ""}.')
     with store._lock(store._run_lock_name(run)):
         ledger = store.get_run(run)
         ledger['origin'] = {'session_id': origin_session, 'deliver': deliver}
         ledger['config']['stream_name'] = stream
+        if day: ledger['business_date'] = day
         store._save(run, ledger)
     integration.record_decision(run, wids[0], decision='propose', reason='No task.', session_id=origin_session)
     return integration.finalize(run, session_id=origin_session)
@@ -127,8 +128,14 @@ def test_reply_in_the_host_opened_delivery_thread_creates_once(settings, data_di
 
 # ---------------------------------------------------------------- N1 Discord host-opened thread
 
+# The origin channel as the Discord adapter records it; a job created there captures the same
+# chat name and guild, and the host seeder records them on every thread it opens for that job.
+DISCORD_JOB_ORIGIN = {'chat_name': 'Guild / #general', 'scope_id': 'g1'}
+
+
 def _discord_digest(integration, data_dir, ctx, host, deliver='origin'):
-    origin = host.message('discord', chat_id='555', chat_type='group', user_id='u1', user_name='Ann')
+    origin = host.message('discord', chat_id='555', chat_type='group', user_id='u1', user_name='Ann',
+                          chat_name=DISCORD_JOB_ORIGIN['chat_name'], guild_id=DISCORD_JOB_ORIGIN['scope_id'])
     _bind_work(ctx, origin)
     return _finalize(integration, data_dir, stream='work', origin_session=origin, deliver=deliver)
 
@@ -140,7 +147,7 @@ def test_discord_reply_in_the_host_opened_delivery_thread_resolves_the_digest(se
     host = HostSessions(integration.home, monkeypatch)
     try:
         digest = _discord_digest(integration, data_dir, ctx, host)
-        host.deliver_into_thread(platform='discord', origin_chat='555', thread_id='777', text=digest['text'])
+        host.deliver_into_thread(platform='discord', origin_chat='555', thread_id='777', text=digest['text'], **DISCORD_JOB_ORIGIN)
         reply = host.message('discord', chat_id='777', chat_type='thread', thread_id='777', user_id='u2',
                              user_name='Bee', parent_chat_id='555', message_id='m1')
     finally:
@@ -168,11 +175,11 @@ def test_discord_threads_that_are_not_this_digests_delivery_thread_are_refused(s
                                  user_name='Bee', parent_chat_id='555')
         elif case == 'thread_of_another_stream':
             host.deliver_into_thread(platform='discord', origin_chat='556', thread_id='779', stream='home', job_id='job-2',
-                                     text='Discovery: home (2030-01-01)\n**1.** Something else')
+                                     text='Discovery: home (2030-01-01)\n**1.** Something else', **DISCORD_JOB_ORIGIN)
             reply = host.message('discord', chat_id='779', chat_type='thread', thread_id='779', user_id='u3', user_name='Cy')
         elif case == 'same_text_under_another_job':
             host.deliver_into_thread(platform='discord', origin_chat='556', thread_id='780', stream='home', job_id='job-2',
-                                     text=digest['text'])
+                                     text=digest['text'], **DISCORD_JOB_ORIGIN)
             reply = host.message('discord', chat_id='780', chat_type='thread', thread_id='780', user_id='u3', user_name='Cy')
         elif case == 'member_thread_quoting_the_digest':
             # A member's own thread whose first turn pastes the delivered digest with the host's mirror header.
@@ -181,16 +188,128 @@ def test_discord_threads_that_are_not_this_digests_delivery_thread_are_refused(s
             host.db.append_message(reply, role='user', content=f"[Cron delivery: alchemy-task: discovery work]\n{digest['text']}")
         elif case == 'delivered_to_another_target':
             # The stream delivers to another approved channel; the host opened its thread there, not in the origin.
-            host.deliver_into_thread(platform='discord', origin_chat='556', thread_id='783', text=digest['text'])
+            host.deliver_into_thread(platform='discord', origin_chat='556', thread_id='783', text=digest['text'], **DISCORD_JOB_ORIGIN)
             reply = host.message('discord', chat_id='783', chat_type='thread', thread_id='783', user_id='u3', user_name='Cy')
         elif case == 'same_job_without_this_digest':
             # This stream's job delivered something that is not one of its digests (for example a failure notice).
             host.deliver_into_thread(platform='discord', origin_chat='556', thread_id='781',
-                                     text='Discovery could not finish; the saved run will resume.')
+                                     text='Discovery could not finish; the saved run will resume.', **DISCORD_JOB_ORIGIN)
             reply = host.message('discord', chat_id='781', chat_type='thread', thread_id='781', user_id='u3', user_name='Cy')
         else:
             host.deliver_into_thread(platform='telegram', origin_chat='555', thread_id='777', text=digest['text'])
             reply = host.message('telegram', chat_id='555', chat_type='group', thread_id='777', user_id='u2', user_name='Bee')
+    finally:
+        host.close()
+    before = task_files(settings)
+    with pytest.raises(UserError):
+        integration.decide(APPROVE_1, session_id=reply, today='2030-01-01')
+    assert task_files(settings) == before
+
+
+# ---------------------------------------------------------------- R2-1 a delivery thread answers its own digest
+
+THREAD_SURFACES = {
+    # platform: origin chat fields, and the reply fields inside the thread the host opened for a digest
+    'telegram': (dict(chat_id='-1001', chat_type='group'),
+                 lambda t: dict(chat_id='-1001', chat_type='group', thread_id=t), {}),
+    'slack': (dict(chat_id='C1', chat_type='group'),
+              lambda t: dict(chat_id='C1', chat_type='group', thread_id=t), {}),
+    'discord': (dict(chat_id='555', chat_type='group', chat_name=DISCORD_JOB_ORIGIN['chat_name'], guild_id='g1'),
+                lambda t: dict(chat_id=t, chat_type='thread', thread_id=t, parent_chat_id='555', guild_id='g1'),
+                DISCORD_JOB_ORIGIN),
+}
+
+
+@pytest.mark.parametrize('platform', sorted(THREAD_SURFACES))
+def test_bare_number_in_an_older_digests_delivery_thread_resolves_that_digest(settings, data_dir, tmp_path, monkeypatch, platform):
+    """adaptation-plan.md:188: Monday's digest arrived in thread 41 and Tuesday's in thread 42 of
+    the same origin. On Tuesday, '1' typed in thread 41 answers Monday's item 1 (the list in front
+    of the user), never Tuesday's. An explicit day or proposal id still reaches other lists, and a
+    bare number in the origin chat itself still means the newest list."""
+    origin_fields, thread_fields, job_origin = THREAD_SURFACES[platform]
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    host = HostSessions(integration.home, monkeypatch)
+    try:
+        origin = host.message(platform, user_id='u1', user_name='Ann', **origin_fields)
+        _bind_work(ctx, origin)
+        mon = _finalize(integration, data_dir, stream='work', origin_session=origin, day='2030-01-01')
+        host.deliver_into_thread(platform=platform, origin_chat=origin_fields['chat_id'], thread_id='41', text=mon['text'], **job_origin)
+        tue = _finalize(integration, data_dir, stream='work', origin_session=origin, day='2030-01-02')
+        host.deliver_into_thread(platform=platform, origin_chat=origin_fields['chat_id'], thread_id='42', text=tue['text'], **job_origin)
+        monday_thread = host.message(platform, user_id='u2', user_name='Bee', **thread_fields('41'))
+        tuesday_thread = host.message(platform, user_id='u2', user_name='Bee', **thread_fields('42'))
+    finally:
+        host.close()
+    monday_item, tuesday_item = mon['items'][0]['proposal_id'], tue['items'][0]['proposal_id']
+    assert monday_item != tuesday_item and mon['items'][0]['ref'] == tue['items'][0]['ref'] == '1'
+    today = '2030-01-02'
+    assert integration.decide({'dismiss': ['1']}, session_id=monday_thread, today=today)['dismissed'] == [monday_item]
+    assert integration.digest._load()['proposals'][tuesday_item]['state'] == 'pending'
+    assert integration.decide({'dismiss': ['1']}, session_id=origin, today=today)['dismissed'] == [tuesday_item]
+    assert integration.decide({'dismiss': ['1'], 'day': '2030-01-01'}, session_id=tuesday_thread, today=today)['dismissed'] == [monday_item]
+    assert integration.decide({'dismiss': [monday_item]}, session_id=tuesday_thread, today=today)['dismissed'] == [monday_item]
+    assert integration.decide({'dismiss': ['1']}, session_id=tuesday_thread, today=today)['dismissed'] == [tuesday_item]
+
+
+def test_delivery_thread_still_answers_after_conversation_turns(settings, data_dir, tmp_path, monkeypatch):
+    """The proof is the thread's FIRST row (the host's seed); later user and assistant turns in
+    the delivery thread do not change which digest it answers."""
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    host = HostSessions(integration.home, monkeypatch)
+    try:
+        origin = host.message(chat_id='-1001', chat_type='group', user_id='u1', user_name='Ann')
+        _bind_work(ctx, origin)
+        digest = _finalize(integration, data_dir, stream='work', origin_session=origin)
+        host.deliver_into_thread(platform='telegram', origin_chat='-1001', thread_id='42', text=digest['text'])
+        reply = host.message(chat_id='-1001', chat_type='group', thread_id='42', user_id='u2', user_name='Bee')
+        host.db.append_message(reply, role='user', content='[Bee] what is item 1 about?')
+        host.db.append_message(reply, role='assistant', content='It is about the launch.')
+        host.db.append_message(reply, role='user', content='[Bee] approve 1')
+    finally:
+        host.close()
+    before = task_files(settings)
+    integration.decide(APPROVE_1, session_id=reply, today='2030-01-01')
+    assert len(set(task_files(settings)) - set(before)) == 1
+
+
+# ---------------------------------------------------------------- R2-2 the delivery thread belongs to the origin
+
+def test_same_job_delivering_into_another_chat_is_refused(settings, data_dir, tmp_path, monkeypatch):
+    """Telegram keys a thread under its own chat: a thread this stream's own job opened in a
+    different chat (same header, same digest text, the job's own captured origin) is not the
+    origin's delivery thread."""
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    host = HostSessions(integration.home, monkeypatch)
+    try:
+        origin = host.message(chat_id='-1001', chat_type='group', user_id='u1', user_name='Ann', chat_name='Team')
+        _bind_work(ctx, origin)
+        digest = _finalize(integration, data_dir, stream='work', origin_session=origin)
+        host.deliver_into_thread(platform='telegram', origin_chat='-2002', thread_id='42', text=digest['text'], chat_name='Team')
+        reply = host.message(chat_id='-2002', chat_type='group', thread_id='42', user_id='u9', user_name='Eve')
+    finally:
+        host.close()
+    before = task_files(settings)
+    with pytest.raises(UserError):
+        integration.decide(APPROVE_1, session_id=reply, today='2030-01-01')
+    assert task_files(settings) == before
+
+
+@pytest.mark.parametrize('job_origin', [{'chat_name': 'Other guild / #general', 'scope_id': 'g2'},
+                                        {'chat_name': 'Guild / #random', 'scope_id': 'g1'},
+                                        {'chat_name': 'general', 'scope_id': None}],
+                         ids=['another_guild', 'another_channel_same_guild', 'job_origin_not_the_origin_channel'])
+def test_discord_same_named_job_thread_in_another_channel_is_refused(settings, data_dir, tmp_path, monkeypatch, job_origin):
+    """Discord keys a thread as its own chat, so the chat check cannot bind it. A different job
+    with the same name (job-9, created in another channel) delivers this digest's full text into a
+    thread of its own channel. The host records the delivering job's origin channel and guild on
+    the thread it seeds, and that origin is not this stream's origin, so nothing is created."""
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    host = HostSessions(integration.home, monkeypatch)
+    try:
+        digest = _discord_digest(integration, data_dir, ctx, host)
+        host.deliver_into_thread(platform='discord', origin_chat='999', thread_id='900', text=digest['text'], job_id='job-9', **job_origin)
+        reply = host.message('discord', chat_id='900', chat_type='thread', thread_id='900', user_id='evil', user_name='Eve',
+                             parent_chat_id='999', guild_id=job_origin['scope_id'])
     finally:
         host.close()
     before = task_files(settings)

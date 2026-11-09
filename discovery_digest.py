@@ -127,7 +127,7 @@ class DiscoveryDigest:
         except KeyError as exc:
             raise UserError('no immutable digest for this run') from exc
 
-    def resolve(self, ref, *, session_id, today, day='', stream='', origin_sessions=()):
+    def resolve(self, ref, *, session_id, today, day='', stream='', origin_sessions=(), runs=None):
         # Every authorized origin session of the reply's chat; two streams set up in one chat
         # from different sessions carry letter prefixes, so a bare shared number stays ambiguous.
         sessions = {session_id, *origin_sessions}
@@ -139,7 +139,10 @@ class DiscoveryDigest:
                 and (x['binding']['ref'] == str(ref) or str(x['binding']['number']) == str(ref) or x['binding']['proposal_id'] == ref)
                 and (not stream or x['binding']['stream'] == stream)
                 and (not day or x['binding']['day'] == day)]
-        if not day and not str(ref).startswith('p_'):
+        if runs is not None and not day and not str(ref).startswith('p_'):
+            # Reply inside a digest's delivery thread: only the list delivered there.
+            hits = [x for x in hits if x['run_id'] in runs]
+        elif not day and not str(ref).startswith('p_'):
             days = [x['binding']['day'] for x in data['proposals'].values()
                     if x['binding']['origin']['session_id'] in sessions and (not stream or x['binding']['stream'] == stream)]
             target_day = today if today in days else max(days, default=today)

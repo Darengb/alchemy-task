@@ -77,9 +77,12 @@ def host_origin(home, session_id, profile):
             return None
         try: recorded = json.loads(row.get('origin_json') or '{}')
         except ValueError: recorded = {}
-        parent = recorded.get('parent_chat_id') if isinstance(recorded, dict) else None
+        if not isinstance(recorded, dict): recorded = {}
         return {'profile': profile, 'source': row['source'], 'chat_id': str(row['chat_id']),
-                'thread_id': str(row.get('thread_id') or ''), 'parent_chat_id': str(parent or '')}
+                'thread_id': str(row.get('thread_id') or ''), 'parent_chat_id': str(recorded.get('parent_chat_id') or ''),
+                # The chat as recorded when the host created the session: for a cron-seeded thread
+                # these are the delivering job's captured origin chat name and workspace/guild.
+                'chat_name': str(recorded.get('chat_name') or ''), 'scope_id': str(recorded.get('scope_id') or '')}
     except (ImportError, OSError, ValueError, RuntimeError, sqlite3.Error):
         return None
 
@@ -195,19 +198,28 @@ class DiscoveryIntegration:
         # Other threads or topics of the origin chat, even a member's own, are refused.
         if original['thread_id'] or not reply['thread_id'] or reply['chat_id'] not in {original['chat_id'], reply['thread_id']}:
             return None
+        # Discord: the chat check cannot bind a thread keyed as its own chat. The seeder records the
+        # delivering job's captured origin (chat name and guild) on the thread session, so it must be
+        # this origin channel as the host recorded it; a same-named job elsewhere does not qualify.
+        if reply['chat_id'] != original['chat_id'] and (reply.get('chat_name'), reply.get('scope_id')) != (original.get('chat_name'), original.get('scope_id')):
+            return None
         return 'delivery_thread' if self._delivered_here(stream, session_id) else None
 
     def _delivered_here(self, stream, session_id):
+        return bool(self._delivered_runs(stream, session_id))
+
+    def _delivered_runs(self, stream, session_id):
+        """Runs of this stream's digests the host mirrored as the first row of this thread."""
         mirrored = host_delivery_seed(self.home, session_id)
-        if not mirrored: return False
+        if not mirrored: return set()
         from .jobs import PREFIX
         header, _, body = mirrored.partition('\n')
-        if header != f"[Cron delivery: {PREFIX}: discovery {stream['name']}]": return False
+        if header != f"[Cron delivery: {PREFIX}: discovery {stream['name']}]": return set()
         # Only digests the host delivered to the origin itself: a thread under another approved target is not the origin chat.
-        return any(d['stream'] == stream['name'] and d['origin']['session_id'] == stream.get('origin_session')
-                   and d['origin'].get('deliver', 'origin') == 'origin'
-                   and d['text'].strip() and d['text'].strip() in body
-                   for d in self.digest._load()['digests'].values())
+        return {run for run, d in self.digest._load()['digests'].items()
+                if d['stream'] == stream['name'] and d['origin']['session_id'] == stream.get('origin_session')
+                and d['origin'].get('deliver', 'origin') == 'origin'
+                and d['text'].strip() and d['text'].strip() in body}
 
     def _stream(self, stream):
         from .discovery import _get
@@ -927,6 +939,12 @@ class DiscoveryIntegration:
         # A stream whose origin is exactly this chat/thread owns its bare numbers; the delivery
         # thread relation applies only when no stream's origin matches exactly.
         origins = relations.get('exact') or relations.get('delivery_thread') or set()
+        # adaptation-plan.md:188: a delivery thread answers the digest the host delivered there.
+        # Without an explicit day or proposal id, bare numbers resolve only against that digest.
+        thread_runs = None
+        if not relations.get('exact') and relations.get('delivery_thread'):
+            thread_runs = set().union(*(self._delivered_runs(self._stream_or_frozen(*key), session_id)
+                                        for key, relation in by_origin.items() if relation == 'delivery_thread'))
         if not origins:
             reply = self._host_origin(session_id)
             if reply and reply['thread_id']:
@@ -939,7 +957,7 @@ class DiscoveryIntegration:
             if len(zones) > 1 and not args.get('stream'):
                 raise UserError('streams have different frozen local days; specify stream for reply')
             today = self.utcnow().astimezone(ZoneInfo(next(iter(zones), self.rt.settings.timezone))).date().isoformat()
-        return self._decide_resolved(args, resolve=lambda ref: self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=args.get('stream', ''), origin_sessions=origins))
+        return self._decide_resolved(args, resolve=lambda ref: self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=args.get('stream', ''), origin_sessions=origins, runs=thread_runs))
 
     def _decide_resolved(self, args, *, resolve):
         """Shared immutable prepare/batch-preflight/apply path after caller resolution."""

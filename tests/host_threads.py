@@ -36,12 +36,16 @@ class HostSessions:
         self.store.update_session(entry.session_key)
         return entry.session_id
 
-    def deliver_into_thread(self, *, platform, origin_chat, thread_id, text, stream='work', job_id='job-1', is_dm=False):
-        """Host native delivery of `text` for the stream's job into the thread the host opened."""
+    def deliver_into_thread(self, *, platform, origin_chat, thread_id, text, stream='work', job_id='job-1', is_dm=False,
+                            chat_name='general', scope_id=None):
+        """Host native delivery of `text` for the stream's job into the thread the host opened.
+
+        `chat_name` and `scope_id` are the delivering job's captured origin (the chat it was
+        created in), which the host seeder records on the thread session."""
         from cron.scheduler_delivery import _seed_cron_thread_session
         _seed_cron_thread_session({'id': job_id, 'name': JOB_NAME.format(stream=stream)},
                                   SimpleNamespace(_session_store=self.store), platform, str(origin_chat),
-                                  str(thread_id), text, chat_name='general', is_dm=is_dm)
+                                  str(thread_id), text, chat_name=chat_name, is_dm=is_dm, scope_id=scope_id)
 
     def close(self):
         self.db.close()
