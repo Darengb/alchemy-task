@@ -1,0 +1,35 @@
+name: alchemy-discovery-workflow-probe
+version: "0.0.1"
+description: "Temporary synthetic complete workflow canary at pinned engine."
+author: "Hermes Agent"
+license: MIT
+requires_hermes: ">=0.22.5"
+provides_tools:
+  - workflow_probe_bootstrap
+  - workflow_probe_reader
+  - workflow_probe_sender
+  - workflow_probe_message
+  - workflow_probe_receipt
+  - workflow_probe_discovery_start
+  - workflow_probe_discovery_decide
+  - discovery_research_run
+  - discovery_research_fetch
+  - discovery_research_submit
+  - discovery_research_accept
+  - discovery_actions
+  - discovery_reconcile
+  - discovery_join
+  - discovery_recover
+  - discovery_release_hold
+  - discovery_config
+  - discovery_collect
+  - discovery_context
+  - discovery_match
+  - discovery_digest
+  - discovery_decision
+  - discovery_conversion_recover
+  - discovery_runs
+provides_hooks:
+  - subagent_start
+  - pre_tool_call
+  - pre_llm_call
