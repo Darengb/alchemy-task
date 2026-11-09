@@ -61,6 +61,15 @@ researches it in the background, and keeps it current while you work on it.
   Cloud agents, so Reminders sync there waits on that app update.
 - **Validator:** `/task validate` checks hand-edited files, reports problems and assigns missing IDs with
   one-line edits that keep your comments and formatting.
+- **Tasks view in the web dashboard and the desktop app:** a **Tasks** tab (dashboard) and a **Tasks** page
+  (desktop) show your tasks by month, week or day. On a phone, or in a narrow window, it opens on a scrolling
+  list of days. Check a task off with one click (with Undo), drag it to another day, or pick a date; either way
+  its due and scheduled dates move together. Click a task to read its notes, plan, subtasks and current state,
+  tick subtasks, and edit everything in place. Today's list also shows your overdue tasks, folded under a
+  count. The **Discovery** tab lists each run with its proposals: create a task, apply a proposal to the
+  existing task it matched, or dismiss it. The gear opens settings for discovery schedules and task defaults.
+  Every change goes through the same files, log lines and Git commits as a change made in chat, and an edit
+  never overwrites a newer version of the task.
 
 ## Setup
 
@@ -206,9 +215,15 @@ Setup fills them in for you.
 ## Development
 
 ```bash
-cd tests && python -m pytest -q        # needs pytest and ruamel.yaml
+cd tests && python -m pytest -q        # needs pytest and ruamel.yaml (the UI route tests also need fastapi, httpx)
 hermes plugins validate /path/to/alchemy-task
 ```
+
+The UI source is in `ui/src` (React, shared by both hosts). `node ui/build.mjs` writes the committed bundles
+`dashboard/dist/` and `desktop/plugin.js` (it needs esbuild). `node ui/build.mjs --dev` also builds a preview
+in `ui/dev/` that runs the real UI against an in-memory demo backend; serve that folder and open `index.html`.
+`node --test ui/test/lib.test.mjs` tests the date and Markdown helpers, and `node ui/dev/desktop-smoke.mjs`
+checks that the desktop plugin loads and registers.
 
 Tests use synthetic fixtures only.
 
