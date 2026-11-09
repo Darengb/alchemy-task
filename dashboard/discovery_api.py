@@ -6,6 +6,7 @@ payloads. The host mount binds get_hermes_home for each request, including IPC.
 from __future__ import annotations
 
 import datetime as dt
+import asyncio
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -89,15 +90,17 @@ async def runs(request: Request):
     try:
         _admit(request)
         _query(request, {'stream', 'day_from', 'day_to'})
-        query = request.query_params
+        query = dict(request.query_params)
         for key in ('day_from', 'day_to'):
             if query.get(key): dt.date.fromisoformat(query[key])
-        service = _service()
-        records = [service.project_run(r) for r in service._all_runs()
-                   if (not query.get('stream') or r['config'].get('stream_name', r['stream']) == query['stream'])
-                   and (not query.get('day_from') or r['business_date'] >= query['day_from'])
-                   and (not query.get('day_to') or r['business_date'] <= query['day_to'])]
-        return {'ok': True, 'runs': sorted(records, key=lambda r: (r['time'], r['run_id']), reverse=True)}
+        def work():
+            service = _service()
+            records = [service.project_run(r) for r in service._all_runs()
+                       if (not query.get('stream') or r['config'].get('stream_name', r['stream']) == query['stream'])
+                       and (not query.get('day_from') or r['business_date'] >= query['day_from'])
+                       and (not query.get('day_to') or r['business_date'] <= query['day_to'])]
+            return {'ok': True, 'runs': sorted(records, key=lambda r: (r['time'], r['run_id']), reverse=True)}
+        return await asyncio.to_thread(work)
     except (UserError, NeedsInput, ConcurrentEditError, HTTPException, ValueError, KeyError, TypeError, OSError) as exc:
         return _error(exc)
 
@@ -107,8 +110,10 @@ async def run(request: Request, run_id: str):
     try:
         _admit(request)
         _query(request)
-        service = _service()
-        return {'ok': True, **service.project_run(service.store.get_run(run_id))}
+        def work():
+            service = _service()
+            return {'ok': True, **service.project_run(service.store.get_run(run_id))}
+        return await asyncio.to_thread(work)
     except (UserError, NeedsInput, ConcurrentEditError, HTTPException, ValueError, KeyError, TypeError, OSError) as exc:
         return _error(exc)
 
@@ -130,24 +135,26 @@ async def approve(request: Request, proposal_id: str):
         _admit(request)
         _query(request)
         body = await _body(request, approve=True)
-        service = _service()
-        record, proposal, ledger = _proposal(service, proposal_id)
-        if record['state'] == 'dismissed':
-            raise APIError('already_resolved', 'Proposal was dismissed', 409)
-        # Retries return the saved receipt even if delivery still needs resume.
-        receipt = read_json(service.conversion._paths(proposal['run_id'], proposal['unit_id'])[1])
-        if receipt:
-            return {'ok': True, 'receipt': receipt}
-        today = service.utcnow().astimezone(ZoneInfo(ledger['config'].get('timezone') or service.rt.settings.timezone)).date().isoformat()
-        if proposal['expires'] < today and body.pop('allow_expired', False) is not True:
-            raise APIError('expired', 'Proposal expired; explicit allow_expired is required', 409)
-        body.pop('allow_expired', None)
-        if body.get('choice') not in {'create', 'update'}:
-            raise APIError('invalid_choice', 'Explicit create or update choice required')
-        if body['choice'] == 'update' and not body.get('target_task_id'):
-            raise APIError('target_required', 'Select an exact nominated target_task_id')
-        result = service._decide_resolved({'approve': [proposal_id], 'edits': {proposal_id: body}}, resolve=lambda ref: proposal)
-        return {'ok': True, 'receipt': result['results'][0]}
+        def work():
+            service = _service()
+            record, proposal, ledger = _proposal(service, proposal_id)
+            if record['state'] == 'dismissed':
+                raise APIError('already_resolved', 'Proposal was dismissed', 409)
+            # Retries return the saved receipt even if delivery still needs resume.
+            receipt = read_json(service.conversion._paths(proposal['run_id'], proposal['unit_id'])[1])
+            if receipt:
+                return {'ok': True, 'receipt': receipt}
+            today = service.utcnow().astimezone(ZoneInfo(ledger['config'].get('timezone') or service.rt.settings.timezone)).date().isoformat()
+            if proposal['expires'] < today and body.pop('allow_expired', False) is not True:
+                raise APIError('expired', 'Proposal expired; explicit allow_expired is required', 409)
+            body.pop('allow_expired', None)
+            if body.get('choice') not in {'create', 'update'}:
+                raise APIError('invalid_choice', 'Explicit create or update choice required')
+            if body['choice'] == 'update' and not body.get('target_task_id'):
+                raise APIError('target_required', 'Select an exact nominated target_task_id')
+            result = service._decide_resolved({'approve': [proposal_id], 'edits': {proposal_id: body}}, resolve=lambda ref: proposal)
+            return {'ok': True, 'receipt': result['results'][0]}
+        return await asyncio.to_thread(work)
     except (UserError, NeedsInput, ConcurrentEditError, HTTPException, ValueError, KeyError, TypeError, OSError) as exc:
         return _error(exc)
 
@@ -158,12 +165,14 @@ async def dismiss(request: Request, proposal_id: str):
         _admit(request)
         _query(request)
         await _body(request)
-        service = _service()
-        record, proposal, ledger = _proposal(service, proposal_id)
-        if record['state'] != 'pending':
-            raise APIError('already_resolved', 'Proposal already resolved', 409)
-        service._decide_resolved({'dismiss': [proposal_id]}, resolve=lambda ref: proposal)
-        return {'ok': True, 'proposal_id': proposal_id, 'state': 'dismissed'}
+        def work():
+            service = _service()
+            record, proposal, ledger = _proposal(service, proposal_id)
+            if record['state'] != 'pending':
+                raise APIError('already_resolved', 'Proposal already resolved', 409)
+            service._decide_resolved({'dismiss': [proposal_id]}, resolve=lambda ref: proposal)
+            return {'ok': True, 'proposal_id': proposal_id, 'state': 'dismissed'}
+        return await asyncio.to_thread(work)
     except (UserError, NeedsInput, ConcurrentEditError, HTTPException, ValueError, KeyError, TypeError, OSError) as exc:
         return _error(exc)
 
@@ -174,14 +183,22 @@ async def resume(request: Request, run_id: str, unit_id: str):
         _admit(request)
         _query(request)
         await _body(request)
-        service = _service()
-        _production(service.store.get_run(run_id))
-        plan, _ = service.conversion._paths(run_id, unit_id)
-        if not read_json(plan): raise APIError('invalid_request', 'Resume requires an existing immutable plan')
-        receipt = service.conversion.deliver_git(run_id, unit_id)
-        for pid, record in service.digest._load()['proposals'].items():
-            if record['binding']['run_id'] == run_id and record['binding']['unit_id'] == unit_id and receipt['state'] == 'complete':
-                service.digest.decide(pid, 'complete')
-        return {'ok': True, 'receipt': receipt}
+        def work():
+            service = _service()
+            _production(service.store.get_run(run_id))
+            proposals = [(pid, record) for pid, record in service.digest._load()['proposals'].items()
+                         if record['binding']['run_id'] == run_id and record['binding']['unit_id'] == unit_id]
+            for _, record in proposals:
+                if record['state'] == 'dismissed':
+                    raise APIError('already_resolved', 'Proposal was dismissed', 409)
+                if record['state'] not in {'approved', 'complete'}:
+                    raise APIError('invalid_request', 'Approve the proposal before resuming its saved plan', 409)
+            plan, _ = service.conversion._paths(run_id, unit_id)
+            if not read_json(plan): raise APIError('invalid_request', 'Resume requires an existing immutable plan')
+            receipt = service.conversion.deliver_git(run_id, unit_id)
+            for pid, _ in proposals:
+                if receipt['state'] == 'complete': service.digest.decide(pid, 'complete')
+            return {'ok': True, 'receipt': receipt}
+        return await asyncio.to_thread(work)
     except (UserError, NeedsInput, ConcurrentEditError, HTTPException, ValueError, KeyError, TypeError, OSError) as exc:
         return _error(exc)
