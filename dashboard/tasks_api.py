@@ -244,3 +244,32 @@ async def create(request: Request):
                 pass
         return {"ok": True, "task": _row(store, tf.parse_file(doc.path), body=True), "git": receipt}
     return await handle(request, run, {"title", "date", "area", "summary"})
+
+
+# ------------------------------------------------------------------ send to chat
+
+@router.post("/tasks/{task_id}/handoff")
+async def handoff(request: Request, task_id: str):
+    """Send the task to chat. ``surface`` desktop returns the note for the desktop app to send in a new chat;
+    anything else queues it for the messaging gateway, which hands it to the agent in a chat."""
+    def run(body: dict[str, Any]) -> dict[str, Any]:
+        from .. import handoff as ho
+        surface = str(body.get("surface") or "dashboard")
+        if surface not in ho.SURFACES:
+            raise UIError("invalid_request", "surface must be dashboard, phone or desktop")
+        rt = runtime()
+        store = rt.store()
+        doc = _doc(store, task_id)
+        task = store.summary(doc)
+        if surface == "desktop":
+            return {"ok": True, "mode": "desktop", "text": ho.build_text(task, surface)}
+        return {"ok": True, "mode": "chat", "handoff": ho.request(rt, task, surface)}
+    return await handle(request, run, {"surface"})
+
+
+@router.get("/handoffs/{handoff_id}")
+async def handoff_status(request: Request, handoff_id: str):
+    def run() -> dict[str, Any]:
+        from .. import handoff as ho
+        return {"ok": True, "handoff": ho.status(runtime(), handoff_id)}
+    return await handle(request, run)

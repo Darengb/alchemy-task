@@ -76,6 +76,17 @@ export function createMockBackend({ today = nyToday() } = {}) {
       return { ok: true, task: full(t) }
     }],
     ['GET', /^\/runs$/, () => ({ ok: true, runs: clone(db.runs) })],
+    ['POST', /^\/tasks\/([^/]+)\/handoff$/, (q, [id], body) => {
+      const t = find(id)
+      const text = `[Alchemy Task handoff]\nThe user pressed "Send to chat" on a task (demo).\nTask: ${t.title}\nTask ID: ${t.task_id}`
+      if (body.surface === 'desktop') return { ok: true, mode: 'desktop', text }
+      const h = { id: `h${rev++}`, task_id: t.task_id, state: 'pending', target: { platform: 'telegram', chat_name: 'Home', reason: 'home' } }
+      db.handoffs = db.handoffs || {}
+      db.handoffs[h.id] = h
+      setTimeout(() => { h.state = 'sent' }, 1200)
+      return { ok: true, mode: 'chat', handoff: clone(h) }
+    }],
+    ['GET', /^\/handoffs\/([^/]+)$/, (q, [hid]) => ({ ok: true, handoff: clone(db.handoffs[hid]) })],
     ['POST', /^\/proposals\/([^/]+)\/approve$/, (q, [pid], body) => {
       const run = db.runs.find((r) => r.proposals.some((p) => p.proposal_id === pid))
       const p = run && run.proposals.find((x) => x.proposal_id === pid)

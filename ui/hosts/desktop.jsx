@@ -22,8 +22,21 @@ export default {
       ctx.rest(path, body === undefined ? { method } : { method, body }))
     let pending = null // a view to open next ('tasks' | 'discovery' | 'settings')
     const openWith = (view) => { pending = view; host.navigate('/alchemy-task'); window.dispatchEvent(new CustomEvent('alchemy-task:open', { detail: view })) }
+    // Send to chat on the desktop: open a new chat and send the handoff note there, so the agent replies.
+    // The new chat's composer mounts a moment after newChat(), so submit retries until it answers.
+    const chat = {
+      async startChat(text) {
+        if (typeof host.newChat !== 'function' || !host.composer || typeof host.composer.submit !== 'function') return false
+        host.newChat()
+        for (let i = 0; i < 40; i++) {
+          await new Promise((r) => setTimeout(r, 100))
+          if (host.composer.submit('new', text)) return true
+        }
+        return false
+      },
+    }
 
-    const Page = () => <App transport={transport} host="desktop" initialView={pending} />
+    const Page = () => <App transport={transport} host="desktop" initialView={pending} chat={chat} />
     ctx.registerMany([
       { id: 'page', area: ROUTES_AREA, data: { path: '/alchemy-task' }, render: () => <Page /> },
       { id: 'nav', area: SIDEBAR_NAV_AREA, data: { path: '/alchemy-task', label: 'Tasks', codicon: 'checklist' } },

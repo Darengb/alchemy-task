@@ -30,6 +30,7 @@ provides_hooks:
   - post_llm_call
   - on_session_finalize
   - post_compaction
+  - post_tool_call
 config_schema:
   workspace_root:
     type: str

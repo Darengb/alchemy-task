@@ -69,6 +69,9 @@ export function makeTransport(send) {
     putBody: (id, body, expectedRevision) =>
       call('PUT', `/tasks/${enc(id)}/body`, { body, expected_revision: expectedRevision }),
     create: (fields) => call('POST', '/tasks', fields),
+    // Send to chat: desktop gets the note back to send in a new chat; other surfaces queue it for the gateway.
+    handoff: (id, surface) => call('POST', `/tasks/${enc(id)}/handoff`, { surface }),
+    handoffStatus: (handoffId) => call('GET', `/handoffs/${enc(handoffId)}`),
 
     // ---- discovery (routes owned by the discovery backend; see docs/discovery-backend-contract.md)
     runs: (params = {}) => call('GET', '/runs' + qs(params)),

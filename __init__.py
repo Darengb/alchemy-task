@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import discovery, research_agent, runtime, worksession
+from . import discovery, handoff, research_agent, runtime, worksession
 from .commands import task_command
 from .core.config import Settings
 from .task_tools import register_tools
@@ -33,6 +33,7 @@ def register(ctx: Any) -> None:
     research_agent.register(ctx)
     worksession.register(ctx)
     discovery.register(ctx)
+    handoff.register(ctx)
     ctx.register_skill("discovery", _HERE / "skills" / "discovery" / "SKILL.md",
                        description="Use when setting up or running Alchemy Task discovery streams, or when the user "
                                    "replies to a discovery digest.")

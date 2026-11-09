@@ -22,7 +22,7 @@ export function App(props) {
   )
 }
 
-function AppInner({ transport, host, initialView, settingsOnly }) {
+function AppInner({ transport, host, initialView, settingsOnly, chat }) {
   const api = transport
   const toast = useToast()
   const rootRef = React.useRef(null)
@@ -133,8 +133,8 @@ function AppInner({ transport, host, initialView, settingsOnly }) {
   const onDrop = React.useCallback((task, date) => actions.move(task, date), [actions])
   const pending = pendingCount(runs)
   const ctx = React.useMemo(() => ({
-    api, store, meta: meta || {}, today: today || (meta && meta.today), prefs, setPrefs, actions, selectedId, narrow, host,
-  }), [api, store, meta, today, prefs, setPrefs, actions, selectedId, narrow, host])
+    api, store, meta: meta || {}, today: today || (meta && meta.today), prefs, setPrefs, actions, selectedId, narrow, host, chat,
+  }), [api, store, meta, today, prefs, setPrefs, actions, selectedId, narrow, host, chat])
 
   // Fill the space the host gives us: the desktop page has a fixed height; the dashboard scrolls the page.
   const [height, setHeight] = React.useState(null)

@@ -932,3 +932,8 @@ html.at-dragging { -webkit-user-select: none; user-select: none; }
 }
 .at-copied .at-icon { color: var(--at-accent); }
 @keyframes at-copied { from { opacity: 0; transform: translateY(-4px); } }
+
+/* Longer toasts (errors with instructions) wrap to three lines instead of cutting off */
+.at-toast span { white-space: normal; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; line-height: 1.4; }
+.at-iconbtn.is-busy { color: var(--at-accent-text); animation: at-pulse 1s ease-in-out infinite; }
+@keyframes at-pulse { 50% { opacity: .45; } }

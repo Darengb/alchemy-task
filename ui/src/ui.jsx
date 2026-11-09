@@ -28,6 +28,7 @@ const P = {
   clock: 'M12 7v5l3 2 M12 21a9 9 0 100-18 9 9 0 000 18z',
   play: 'M7 5l12 7-12 7z',
   clipboard: 'M9 4.5h6a1 1 0 011 1V7H8V5.5a1 1 0 011-1z M8 6H6.5A1.5 1.5 0 005 7.5v11A1.5 1.5 0 006.5 20h11a1.5 1.5 0 001.5-1.5v-11A1.5 1.5 0 0017.5 6H16',
+  chat: 'M5 5.5h14a1.5 1.5 0 011.5 1.5v8a1.5 1.5 0 01-1.5 1.5h-7.5L7 20v-3.5H5A1.5 1.5 0 013.5 15V7A1.5 1.5 0 015 5.5z M8 10h8 M8 13h5',
 }
 
 export function Icon({ name, size = 16, className = '', strokeWidth = 1.8 }) {

@@ -10,10 +10,17 @@ import { AreaDot, Button, Check, DatePicker, Disclosure, Icon, IconButton, Menu,
 import { isDone } from './tasks.jsx'
 
 const PRIORITIES = ['urgent', 'high', 'normal', 'low']
+const PLATFORMS = { telegram: 'Telegram', discord: 'Discord', slack: 'Slack', whatsapp: 'WhatsApp', signal: 'Signal',
+  photon: 'iMessage', bluebubbles: 'iMessage', matrix: 'Matrix', teams: 'Teams', email: 'email', sms: 'SMS' }
+// "Telegram" for the home channel; "Telegram (Ops team)" for a named chat that worked on the task.
+const chatLabel = (t) => {
+  const app = PLATFORMS[(t && t.platform) || ''] || ((t && t.platform) ? t.platform[0].toUpperCase() + t.platform.slice(1) : 'chat')
+  return t && t.reason === 'task' && t.chat_name ? `${app} (${t.chat_name})` : app
+}
 const STATUSES = [['open', 'Open'], ['in-progress', 'In progress'], ['waiting', 'Waiting']]
 
 export function TaskPanel({ id, narrow, onClose }) {
-  const { store, api, actions, today, meta } = useApp()
+  const { store, api, actions, today, meta, host, chat } = useApp()
   const toast = useToast()
   const overlay = useOverlay()
   const sel = React.useCallback((s) => s.byId[id], [id])
@@ -31,6 +38,7 @@ export function TaskPanel({ id, narrow, onClose }) {
     return () => { document.removeEventListener('pointerdown', hide, true); document.removeEventListener('keydown', hide, true) }
   }, [copied])
   React.useEffect(() => setCopied(false), [id])
+  const [sending, setSending] = React.useState(false)
 
   const load = React.useCallback(() => {
     setLoadError(null)
@@ -142,10 +150,44 @@ export function TaskPanel({ id, narrow, onClose }) {
   // release, so the write itself happens when the finger lifts (copyForChat via onLongPress).
   const holdRegistered = () => { if (navigator.vibrate) navigator.vibrate(12); setCopied(true) }
 
+  // Send to chat. Desktop: a new chat with the handoff note, so the agent replies there. Elsewhere: the gateway
+  // hands the note to the agent in a messaging chat, and the agent messages the user there.
+  const sendToChat = async () => {
+    if (sending) return
+    setSending(true)
+    try {
+      if (host === 'desktop' && chat) {
+        const res = await api.handoff(id, 'desktop')
+        if (!(await chat.startChat(res.text))) toast('Could not open a new chat. Update Hermes Desktop and try again.', { tone: 'error' })
+        return
+      }
+      const res = await api.handoff(id, narrow ? 'phone' : 'dashboard')
+      const h = res.handoff
+      const where = chatLabel(h.target)
+      toast(`Sending to ${where}…`)
+      for (let i = 0; i < 100; i++) {
+        await new Promise((r) => setTimeout(r, 1000))
+        const st = (await api.handoffStatus(h.id)).handoff
+        if (st.state === 'sent') { toast(`Sent. Hermes will message you on ${where}.`); return }
+        if (st.state === 'failed') { toast(st.error || 'Could not send it to chat.', { tone: 'error' }); return }
+      }
+      toast('Still sending. Hermes will message you when it picks this up.', { tone: 'error' })
+    } catch (err) {
+      if (err.code === 'permission') {
+        const cmd = 'hermes config set plugins.entries.alchemy-task.allow_gateway_injection true'
+        toast('Alchemy Task needs permission to message you in chat. Ask Hermes to allow it, or run the command.',
+          { tone: 'error', duration: 12000, action: { label: 'Copy command', run: () => copyText(cmd) } })
+      } else toast(describeError(err), { tone: 'error', duration: 9000 })
+    } finally {
+      setSending(false)
+    }
+  }
+
   return (
     <PanelShell narrow={narrow} onClose={onClose} actions={
       <>
         {task.loading ? <Spinner /> : null}
+        <IconButton icon="chat" label="Send to chat" onClick={sendToChat} disabled={sending} className={cx(sending && 'is-busy')} />
         <IconButton icon="clipboard" label="Copy title and ID for chat" onClick={copyForChat} />
         <IconButton icon="refresh" label="Reload" onClick={load} />
       </>
