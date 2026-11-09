@@ -136,23 +136,6 @@ function AppInner({ transport, host, initialView, settingsOnly }) {
     api, store, meta: meta || {}, today: today || (meta && meta.today), prefs, setPrefs, actions, selectedId, narrow, host,
   }), [api, store, meta, today, prefs, setPrefs, actions, selectedId, narrow, host])
 
-  // Hosts without a foreground token (some dashboard themes) leave --at-fg as currentColor, which resolves
-  // per element. Pin it to the root's actual text color so tints and inverted surfaces stay readable.
-  React.useLayoutEffect(() => {
-    const el = rootRef.current
-    if (!el) return undefined
-    const pin = () => {
-      const docStyle = getComputedStyle(document.documentElement)
-      if (docStyle.getPropertyValue('--color-foreground').trim() || docStyle.getPropertyValue('--ui-text-primary').trim()) return
-      el.style.removeProperty('--at-fg')
-      el.style.setProperty('--at-fg', getComputedStyle(el).color)
-    }
-    pin()
-    const mo = new MutationObserver(pin)
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] })
-    return () => mo.disconnect()
-  }, [])
-
   // Fill the space the host gives us: the desktop page has a fixed height; the dashboard scrolls the page.
   const [height, setHeight] = React.useState(null)
   React.useLayoutEffect(() => {
@@ -184,6 +167,7 @@ function AppInner({ transport, host, initialView, settingsOnly }) {
     return (
       <>
         <nav className="at-appbar">
+          {narrow ? null : <span className="at-brand"><i className="at-brand-mark" aria-hidden="true" />Alchemy Task</span>}
           <div className="at-tabs" role="tablist">
             <button type="button" role="tab" aria-selected={tab === 'tasks'} className={cx('at-tab', tab === 'tasks' && 'is-on')} onClick={() => setTab('tasks')}>Tasks</button>
             <button type="button" role="tab" aria-selected={tab === 'discovery'} className={cx('at-tab', tab === 'discovery' && 'is-on')} onClick={() => setTab('discovery')}>

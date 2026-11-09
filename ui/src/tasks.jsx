@@ -411,6 +411,7 @@ export function TasksView({ narrow }) {
   })
 
   if (!a) return <div className="at-loading"><Spinner size={18} /></div>
+  const periodText = view === 'day' ? D.periodLabel('month', a, today) : D.periodLabel(view, a, today)
   const areas = meta.areas || []
   const areaMenu = (e) => overlay.open(e.currentTarget, (close) => (
     <Menu close={close} items={[
@@ -432,7 +433,10 @@ export function TasksView({ narrow }) {
           <Button variant="ghost" size="sm" onClick={() => setAnchor(today)} disabled={a === today && view !== 'month'}>Today</Button>
           <IconButton icon="chevL" label="Previous" onClick={() => step(-1)} />
           <IconButton icon="chevR" label="Next" onClick={() => step(1)} />
-          <h1 className="at-period">{view === 'day' ? D.periodLabel('month', a, today) : D.periodLabel(view, a, today)}</h1>
+          <h1 className="at-period">
+            {periodText}
+            {view !== 'week' && !periodText.includes(a.slice(0, 4)) ? <span className="at-period-year">{a.slice(0, 4)}</span> : null}
+          </h1>
         </div>
         <div className="at-toolbar-right">
           <Segmented label="View" value={view} onChange={(v) => setPrefs({ view: v })}

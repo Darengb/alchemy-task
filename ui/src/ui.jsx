@@ -110,7 +110,7 @@ export function areaColor(area) {
   if (!area) return 'var(--at-faint)'
   let h = 0
   for (const c of String(area)) h = (h * 31 + c.charCodeAt(0)) >>> 0
-  return `hsl(${AREA_HUES[h % AREA_HUES.length]} 62% 56%)`
+  return `hsl(${AREA_HUES[h % AREA_HUES.length]} 78% 68%)`
 }
 
 // ------------------------------------------------------------------ overlays

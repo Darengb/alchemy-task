@@ -22,6 +22,19 @@ function loadEsbuild() {
 
 const esbuild = loadEsbuild()
 const args = new Set(process.argv.slice(2))
+
+// The stylesheet embeds its fonts as data URLs, so every host gets one self-contained file with no
+// network fetches. JS hosts import it as text; this plugin bundles it first so the fonts are inlined.
+const cssLoaders = { '.css': 'css', '.woff2': 'dataurl' }
+const inlineCss = {
+  name: 'inline-css',
+  setup(build) {
+    build.onLoad({ filter: /styles\.css$/ }, async (a) => {
+      const out = await esbuild.build({ entryPoints: [a.path], bundle: true, write: false, minify: true, loader: cssLoaders, logLevel: 'silent' })
+      return { contents: out.outputFiles[0].text, loader: 'text' }
+    })
+  },
+}
 const common = {
   bundle: true,
   jsx: 'transform',
@@ -33,6 +46,7 @@ const common = {
   loader: { '.css': 'text' },
   minify: true,
   sourcemap: false,
+  plugins: [inlineCss],
 }
 
 const builds = [
@@ -47,7 +61,8 @@ const builds = [
     ...common,
     entryPoints: [path.join(here, 'src/styles.css')],
     outfile: path.join(root, 'dashboard/dist/style.css'),
-    loader: { '.css': 'css' },
+    loader: cssLoaders,
+    plugins: [],
   },
   {
     ...common,
