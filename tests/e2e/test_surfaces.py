@@ -104,12 +104,26 @@ def test_reply_from_another_chat_is_refused_and_writes_nothing(world, host_facto
     assert proposal_states(host, day['run_id']) == {1: 'pending'}
 
 
-def test_reply_in_native_delivery_thread_resolves_the_digest(world, host_factory):
+def test_reply_in_native_delivery_thread_resolves_the_digest(world, host_factory, monkeypatch):
     """The native job attaches to the session; for an origin without a topic the host opens a delivery
-    thread in the same chat. A numbered reply typed there answers the digest shown in that thread."""
-    host, day = day_with_one_proposal(world, host_factory, [('delivery-thread', ORIGIN_CHAT, '77')])
+    thread in the same chat and seeds it with the delivered digest (the host's own SessionStore and cron
+    seeder). A numbered reply typed there answers the digest shown in that thread; another topic of the
+    same chat cannot."""
+    from host_threads import HostSessions
+    host, day = day_with_one_proposal(world, host_factory, [])
+    sessions = HostSessions(world.hermes_home, monkeypatch)
+    try:
+        sessions.deliver_into_thread(platform='telegram', origin_chat=ORIGIN_CHAT, thread_id='77',
+                                     text=day['send']['final_text'], is_dm=True)
+        delivery_thread = sessions.message(chat_id=ORIGIN_CHAT, chat_type='dm', thread_id='77', user_id='u1', message_id='m1')
+        other_topic = sessions.message(chat_id=ORIGIN_CHAT, chat_type='dm', thread_id='78', user_id='u1', message_id='m2')
+    finally:
+        sessions.close()
     before = snapshot(world)
-    out = P.approve(host, ['1'], session='delivery-thread')
+    refused = P.approve(host, ['1'], session=other_topic)
+    assert refused['ok'] is False and 'origin chat' in refused['message'], refused
+    assert snapshot(world) == before
+    out = P.approve(host, ['1'], session=delivery_thread)
     assert out['ok'], out
     created = [p for p in world.task_files() if world.rel(p) not in before['local']]
     assert len(created) == 1 and frontmatter(created[0].read_text())['title'] == 'Draft Q1 vendor contract'

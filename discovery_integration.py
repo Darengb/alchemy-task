@@ -84,6 +84,32 @@ def host_origin(home, session_id, profile):
         return None
 
 
+CRON_SEED_USER = 'system:cron'
+
+
+def host_delivery_seed(home, session_id):
+    """First transcript row of a session the host cron seeded for a delivery, else None.
+
+    Native continuable delivery opens a thread, then cron's seeder creates that thread's gateway
+    session with the recorded user 'system:cron' (no platform user carries that id) and mirrors
+    the delivered text into it as the first row: "[Cron delivery: <job name>]\\n<text>".
+    """
+    path = Path(home) / 'state.db'
+    if not session_id or not path.is_file(): return None
+    try:
+        from hermes_state import SessionDB
+        db = SessionDB(db_path=path, read_only=True)
+        try:
+            row = db.get_session(session_id)
+            if not row or row.get('user_id') != CRON_SEED_USER: return None
+            first = db.get_messages(session_id, include_inactive=True, include_ancestors=True, limit=1)
+        finally: db.close()
+        if not first or first[0].get('role') != 'user' or not isinstance(first[0].get('content'), str): return None
+        return first[0]['content']
+    except (ImportError, OSError, ValueError, RuntimeError, TypeError, sqlite3.Error):
+        return None
+
+
 def _mail_admission_declared(config):
     """Source admission is internal-sender mail minus service senders.
 
@@ -150,19 +176,38 @@ class DiscoveryIntegration:
         return host_origin(self.home, session_id, self.rt.ctx.profile_name)
 
     def origin_authorized(self, stream, session_id):
-        if session_id == stream.get('origin_session'): return True
+        return bool(self._origin_relation(stream, session_id))
+
+    def _origin_relation(self, stream, session_id):
+        """'exact' (origin session or same platform/chat/thread), 'delivery_thread' or None."""
+        if session_id == stream.get('origin_session'): return 'exact'
         original = self._host_origin(stream.get('origin_session'))
         reply = self._host_origin(session_id)
         if not original or not reply or original['profile'] != reply['profile'] or original['source'] != reply['source']:
-            return False
+            return None
         if (original['chat_id'], original['thread_id']) == (reply['chat_id'], reply['thread_id']):
-            return True
+            return 'exact'
         # Native continuable delivery: for an origin without a thread/topic the host opens a
-        # dedicated thread IN the origin chat and seeds its session (cron scheduler_delivery).
-        # A reply there is the origin chat. Thread-keyed platforms name the origin chat as
-        # parent_chat_id. An origin that already has a thread/topic never gets a new one.
-        return bool(not original['thread_id'] and reply['thread_id']
-                    and original['chat_id'] in {reply['chat_id'], reply.get('parent_chat_id') or reply['chat_id']})
+        # dedicated thread in the origin chat and seeds its session. Only that thread counts,
+        # proven by host-recorded data: the cron seed user and this stream's job delivering one
+        # of its digests as the first transcript row. Discord keys the thread as its own chat
+        # (chat id = thread id) and records no parent channel, so the mirror is the link there.
+        # Other threads or topics of the origin chat, even a member's own, are refused.
+        if original['thread_id'] or not reply['thread_id'] or reply['chat_id'] not in {original['chat_id'], reply['thread_id']}:
+            return None
+        return 'delivery_thread' if self._delivered_here(stream, session_id) else None
+
+    def _delivered_here(self, stream, session_id):
+        mirrored = host_delivery_seed(self.home, session_id)
+        if not mirrored: return False
+        from .jobs import PREFIX
+        header, _, body = mirrored.partition('\n')
+        if header != f"[Cron delivery: {PREFIX}: discovery {stream['name']}]": return False
+        # Only digests the host delivered to the origin itself: a thread under another approved target is not the origin chat.
+        return any(d['stream'] == stream['name'] and d['origin']['session_id'] == stream.get('origin_session')
+                   and d['origin'].get('deliver', 'origin') == 'origin'
+                   and d['text'].strip() and d['text'].strip() in body
+                   for d in self.digest._load()['digests'].values())
 
     def _stream(self, stream):
         from .discovery import _get
@@ -174,7 +219,7 @@ class DiscoveryIntegration:
         try:
             return self._stream(name)
         except DiscoveryError:
-            return {'name': name, 'origin_session': origin_session}
+            return {'name': name, 'origin_session': origin_session, 'removed': True}
 
     def confirm_identity(self, account_key, identity, *, user_confirmed=False):
         _component(account_key, 'account key')
@@ -714,7 +759,11 @@ class DiscoveryIntegration:
         digest = self.digest.get(run_id)
         receipt = self.digest.delivery(run_id)
         stream = self._stream_or_frozen(digest['stream'], digest['origin']['session_id'])
-        if stream.get('delivery_owner', 'native_origin') != 'native_origin': return receipt
+        owner = stream.get('delivery_owner', 'native_origin')
+        if stream.get('removed'):
+            # Removed stream: the owner frozen with the digest, else the plugin sender's own receipt evidence.
+            owner = digest['origin'].get('delivery_owner') or ('verified_sender' if receipt.get('binding') or receipt.get('message_id') else 'native_origin')
+        if owner != 'native_origin': return receipt
         # Native cron owns posting/retries. Preparation and final return supply no
         # host transport evidence, even when an origin exists in SessionDB.
         return {**receipt, 'state': 'host_pending', 'delivery_owner': 'native_origin',
@@ -856,7 +905,9 @@ class DiscoveryIntegration:
             info = ledger['resources']['freeze-withheld']
             supplement_failures += [{'title': x['title'], 'reason': x['reason']} for x in read_json(self.store.run_dir(run_id) / 'resources' / info['sha256'])]
         stream = self._stream(ledger['config'].get('stream_name', ledger['stream']))
-        origin = {**ledger['origin'], 'session_id': ledger['origin'].get('stream_origin_session', ledger['origin']['session_id'])}
+        # The delivery owner is frozen with the digest so a later stream removal keeps the run's real delivery state.
+        origin = {**ledger['origin'], 'session_id': ledger['origin'].get('stream_origin_session', ledger['origin']['session_id']),
+                  'delivery_owner': stream.get('delivery_owner', 'native_origin')}
         digest = self.digest.prepare(run_id, stream=ledger['config'].get('stream_name', ledger['stream']), day=ledger['business_date'], origin=origin,
                                      items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + supplement_failures], coverage=coverage, outcomes=outcomes,
                                      blocked=conflicts, label=stream.get('label', ''), review_namespace=run_id if ledger.get('lineage', {}).get('operation') else '', deferred=join.get('deferred', []))
@@ -867,7 +918,20 @@ class DiscoveryIntegration:
         return digest
 
     def decide(self, args, *, session_id, today=None):
-        origins = {d['origin']['session_id'] for d in self.digest._load()['digests'].values() if (not args.get('stream') or d['stream'] == args['stream']) and self.origin_authorized(self._stream_or_frozen(d['stream'], d['origin']['session_id']), session_id)}
+        relations, by_origin = {}, {}
+        for d in self.digest._load()['digests'].values():
+            if args.get('stream') and d['stream'] != args['stream']: continue
+            key = (d['stream'], d['origin']['session_id'])
+            if key not in by_origin: by_origin[key] = self._origin_relation(self._stream_or_frozen(*key), session_id)
+            if by_origin[key]: relations.setdefault(by_origin[key], set()).add(key[1])
+        # A stream whose origin is exactly this chat/thread owns its bare numbers; the delivery
+        # thread relation applies only when no stream's origin matches exactly.
+        origins = relations.get('exact') or relations.get('delivery_thread') or set()
+        if not origins:
+            reply = self._host_origin(session_id)
+            if reply and reply['thread_id']:
+                raise UserError('this thread is neither a digest origin nor the delivery thread the host opened for a digest; '
+                                'reply in the origin chat or the thread where the digest was delivered, or use the dashboard')
         if len(origins) == 1: session_id = next(iter(origins))
         if today is None:
             candidates = [d for d in self.digest._load()['digests'].values() if d['origin']['session_id'] in origins | {session_id} and (not args.get('stream') or d['stream'] == args['stream'])]
