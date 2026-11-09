@@ -30,7 +30,7 @@ class DiscoveryDigest:
     def _load(self):
         return read_json(self.path, {'digests': {}, 'proposals': {}, 'numbers': {}, 'seen': {}, 'delivery': {}})
 
-    def prepare(self, run, *, stream, day, origin, items, failures=None, coverage=None, outcomes=None, label='', review_namespace='', deferred=None):
+    def prepare(self, run, *, stream, day, origin, items, failures=None, coverage=None, outcomes=None, label='', review_namespace='', deferred=None, blocked=None):
         dt.date.fromisoformat(day)
         if not origin.get('session_id'):
             raise UserError('digest requires actual origin session')
@@ -58,29 +58,40 @@ class DiscoveryDigest:
                 numbered.append(item)
                 data['proposals'][pid] = {'binding': item, 'state': 'pending'}
                 data['seen'][identity] = pid
-            failures, coverage, deferred = failures or [], coverage or [], deferred or []
+            failures, coverage, deferred, blocked = failures or [], coverage or [], deferred or [], blocked or []
             lines = [f'Discovery: {stream} ({day})']
             degraded = bool(failures or any(s.get('status') != 'complete' for s in coverage))
             # Cap deferrals are a separate count: neither failures nor degraded.
-            lines.append(f"{dt.date.fromisoformat(day).strftime('%A')}: {len(numbered)} new proposals; {len(outcomes or [])} existing-task outcomes; {len(failures)} failures"
+            # Blocked existing-task updates count as existing-task outcomes, not failures.
+            lines.append(f"{dt.date.fromisoformat(day).strftime('%A')}: {len(numbered)} new proposals; {len(outcomes or []) + len(blocked)} existing-task outcomes; {len(failures)} failures"
                          + (f'; {len(deferred)} deferred' if deferred else '') + ('; degraded' if degraded else ''))
             lines.append('Review: ' + hashlib.sha256(run.encode()).hexdigest()[:12])
             for item in numbered:
-                qualifier = ' [update or create]' if item['kind'] in {'semantic', 'selection'} else ''
-                lines.append(f"**{item['ref']}.** {item['title']}{qualifier}")
+                semantic = item['kind'] in {'semantic', 'selection'}
+                lines.append(f"**{item['ref']}.** {item['title']}")
+                # Source task relationship labels; they never change numbering or matching.
+                if semantic:
+                    lines.append('Task type: Potential existing task update')
+                    lines.append('Existing task: ' + '; '.join(t.get('title', 'Existing task') for t in item.get('targets', [])))
+                elif item.get('research_disposition') == 'uncertain':
+                    lines.append('Task type: Unsure')
+                else:
+                    lines.append('Task type: New task')
+                if item.get('research_disposition') == 'uncertain':
+                    lines.append('Why unsure: ' + '; '.join(item.get('uncertainty') or ['See verified open questions; user judgment required']))
                 if item.get('current_understanding'): lines.append('Current state: ' + item['current_understanding'])
                 if item.get('substantive_next_action'): lines.append('Next action: ' + item['substantive_next_action'])
-                if item['kind'] in {'semantic', 'selection'}:
-                    lines.append('Potential overlap: ' + '; '.join(t.get('title', 'Existing task') for t in item.get('targets', [])))
-                if item.get('new_information'): lines.append('Addition: ' + '; '.join(item['new_information']))
-                if item.get('research_disposition') == 'uncertain': lines.append('Uncertain: ' + '; '.join(item.get('uncertainty') or ['See verified open questions; user judgment required']))
+                if item.get('new_information'): lines.append(('Proposed addition: ' if semantic else 'Addition: ') + '; '.join(item['new_information']))
+                if semantic:
+                    which = ' and name which existing task' if item['kind'] == 'selection' else ''
+                    lines.append(f'Choice: reply "{item["ref"]}, update"{which} to add this to the existing task, or "{item["ref"]}, create" for a separate task.')
                 if item.get('source_links'): lines.append('Sources: ' + ' '.join(item['source_links']))
-                if item.get('sources_unavailable'): lines.append('Unavailable context: ' + '; '.join(item['sources_unavailable']))
+                # Source: inaccessible supporting sources are evidence limits, kept in the item record only.
                 lines.append('---')
             if not numbered:
-                # Deferred work is not "nothing new": only a complete check with
+                # Deferred or blocked work is not "nothing new": only a complete check with
                 # nothing left says no follow-ups were found.
-                lines.append('No new follow-ups found.' if not degraded and not outcomes and not deferred else 'No new proposals to review.')
+                lines.append('No new follow-ups found.' if not degraded and not outcomes and not deferred and not blocked else 'No new proposals to review.')
             for outcome in outcomes or []:
                 line = f"Existing task: {outcome['title']}: {outcome['status']}"
                 for surface in ('git', 'phone'):
@@ -88,6 +99,10 @@ class DiscoveryDigest:
                     if detail: line += f"; {surface}={detail.get('state', 'unknown')}"
                 if outcome.get('resume_action'): line += '; resume with discovery_conversion_recover for this saved run/unit'
                 lines.append(line)
+            for conflict in blocked:
+                # Source: multiple exact matches are an unnumbered Blocked existing-task item.
+                lines.append(f"Existing task update blocked: {conflict['title']}: multiple exact task matches conflict; nothing was changed"
+                             + (' (' + '; '.join(t.get('title', 'Existing task') for t in conflict.get('targets', [])) + ')' if conflict.get('targets') else ''))
             for failure in failures:
                 lines.append('Attention: ' + (str(failure['title']) + ': ' if failure.get('title') else '') + _failure_status(failure))
             for item in deferred:
@@ -97,7 +112,7 @@ class DiscoveryDigest:
             if numbered:
                 lines.append('Reply with the numbers you want. Other items remain replyable for seven days.')
             result = {'run_id': run, 'stream': stream, 'day': day, 'origin': origin, 'items': numbered,
-                      'failures': failures, 'deferred': deferred, 'coverage': coverage, 'outcomes': outcomes or [], 'text': '\n'.join(lines)}
+                      'failures': failures, 'deferred': deferred, 'coverage': coverage, 'outcomes': outcomes or [], 'blocked': blocked, 'text': '\n'.join(lines)}
             result['sha256'] = hashlib.sha256(result['text'].encode()).hexdigest()
             data['digests'][run] = result
             data['delivery'][run] = {'state': 'prepared', 'digest_sha256': result['sha256'], 'origin': origin}
@@ -110,18 +125,21 @@ class DiscoveryDigest:
         except KeyError as exc:
             raise UserError('no immutable digest for this run') from exc
 
-    def resolve(self, ref, *, session_id, today, day='', stream=''):
+    def resolve(self, ref, *, session_id, today, day='', stream='', origin_sessions=()):
+        # Every authorized origin session of the reply's chat; two streams set up in one chat
+        # from different sessions carry letter prefixes, so a bare shared number stays ambiguous.
+        sessions = {session_id, *origin_sessions}
         date = dt.date.fromisoformat(today)
         if day == 'yesterday': day = (date - dt.timedelta(days=1)).isoformat()
         data = self._load()
         hits = [x['binding'] for x in data['proposals'].values()
-                if x['binding']['origin']['session_id'] == session_id
+                if x['binding']['origin']['session_id'] in sessions
                 and (x['binding']['ref'] == str(ref) or str(x['binding']['number']) == str(ref) or x['binding']['proposal_id'] == ref)
                 and (not stream or x['binding']['stream'] == stream)
                 and (not day or x['binding']['day'] == day)]
         if not day and not str(ref).startswith('p_'):
             days = [x['binding']['day'] for x in data['proposals'].values()
-                    if x['binding']['origin']['session_id'] == session_id and (not stream or x['binding']['stream'] == stream)]
+                    if x['binding']['origin']['session_id'] in sessions and (not stream or x['binding']['stream'] == stream)]
             target_day = today if today in days else max(days, default=today)
             hits = [x for x in hits if x['day'] == target_day]
         if len(hits) != 1:

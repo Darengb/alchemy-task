@@ -63,6 +63,26 @@ def _profile_home():
     return Path(get_hermes_home()).resolve()
 
 
+def host_origin(home, session_id, profile):
+    """Chat of an ACTUAL host session id from the installing profile's public SessionDB."""
+    path = Path(home) / 'state.db'
+    if not session_id or not path.is_file(): return None
+    try:
+        from hermes_state import SessionDB
+        db = SessionDB(db_path=path, read_only=True)
+        try: row = db.get_session(session_id)
+        finally: db.close()
+        if not row or not row.get('chat_id') or not row.get('source') or row['source'] in {'cli', 'cron', 'subagent', 'tool', 'api_server'}:
+            return None
+        try: recorded = json.loads(row.get('origin_json') or '{}')
+        except ValueError: recorded = {}
+        parent = recorded.get('parent_chat_id') if isinstance(recorded, dict) else None
+        return {'profile': profile, 'source': row['source'], 'chat_id': str(row['chat_id']),
+                'thread_id': str(row.get('thread_id') or ''), 'parent_chat_id': str(parent or '')}
+    except (ImportError, OSError, ValueError, RuntimeError, sqlite3.Error):
+        return None
+
+
 class DiscoveryIntegration:
     def __init__(self, rt, *, profile_home=None):
         self.rt = rt
@@ -114,28 +134,34 @@ class DiscoveryIntegration:
 
     def _host_origin(self, session_id):
         """Read the installing profile's public SessionDB by ACTUAL host id."""
-        path = self.home / 'state.db'
-        if not path.is_file(): return None
-        try:
-            from hermes_state import SessionDB
-            db = SessionDB(db_path=path, read_only=True)
-            try: row = db.get_session(session_id)
-            finally: db.close()
-            if not row or not row.get('chat_id') or not row.get('source') or row['source'] in {'cli', 'cron', 'subagent', 'tool', 'api_server'}:
-                return None
-            return {'profile': self.rt.ctx.profile_name, 'source': row['source'],
-                    'chat_id': str(row['chat_id']), 'thread_id': str(row.get('thread_id') or '')}
-        except (ImportError, OSError, ValueError, RuntimeError, sqlite3.Error):
-            return None
+        return host_origin(self.home, session_id, self.rt.ctx.profile_name)
 
     def origin_authorized(self, stream, session_id):
         if session_id == stream.get('origin_session'): return True
         original = self._host_origin(stream.get('origin_session'))
-        return bool(original and original == self._host_origin(session_id))
+        reply = self._host_origin(session_id)
+        if not original or not reply or original['profile'] != reply['profile'] or original['source'] != reply['source']:
+            return False
+        if (original['chat_id'], original['thread_id']) == (reply['chat_id'], reply['thread_id']):
+            return True
+        # Native continuable delivery: for an origin without a thread/topic the host opens a
+        # dedicated thread IN the origin chat and seeds its session (cron scheduler_delivery).
+        # A reply there is the origin chat. Thread-keyed platforms name the origin chat as
+        # parent_chat_id. An origin that already has a thread/topic never gets a new one.
+        return bool(not original['thread_id'] and reply['thread_id']
+                    and original['chat_id'] in {reply['chat_id'], reply.get('parent_chat_id') or reply['chat_id']})
 
     def _stream(self, stream):
         from .discovery import _get
         return _get(self.rt, stream)
+
+    def _stream_or_frozen(self, name, origin_session):
+        """Saved stream, or a removed stream's frozen origin: its digests/runs keep their origin binding."""
+        from .discovery import DiscoveryError
+        try:
+            return self._stream(name)
+        except DiscoveryError:
+            return {'name': name, 'origin_session': origin_session}
 
     def confirm_identity(self, account_key, identity, *, user_confirmed=False):
         _component(account_key, 'account key')
@@ -669,7 +695,7 @@ class DiscoveryIntegration:
     def delivery_status(self, run_id):
         digest = self.digest.get(run_id)
         receipt = self.digest.delivery(run_id)
-        stream = self._stream(digest['stream'])
+        stream = self._stream_or_frozen(digest['stream'], digest['origin']['session_id'])
         if stream.get('delivery_owner', 'native_origin') != 'native_origin': return receipt
         # Native cron owns posting/retries. Preparation and final return supply no
         # host transport evidence, even when an origin exists in SessionDB.
@@ -774,8 +800,10 @@ class DiscoveryIntegration:
             decision = read_json(self._decision_path(run_id, candidate['candidate_id']))
             if not decision: raise UserError('post-join semantic decision missing for ' + candidate['candidate_id'])
             if decision['request']['decision'] == 'propose': items.append(decision)
-            elif decision['kind'] == 'conflict': conflicts.append({'unit_id': candidate['candidate_id'], 'reason': 'Multiple exact task destinations conflict', 'targets': decision['targets']})
-            elif decision['request']['decision'] in {'auto', 'noop'}:
+            elif decision['kind'] == 'conflict': conflicts.append({'unit_id': candidate['candidate_id'], 'title': decision['title'], 'reason': 'Multiple exact task destinations conflict', 'targets': decision['targets']})
+            elif decision['request']['decision'] == 'noop':
+                continue  # true noops are omitted from the digest (source: not reported as updates)
+            elif decision['request']['decision'] == 'auto':
                 _, receipt_path = self.conversion._paths(run_id, candidate['candidate_id'])
                 receipt = read_json(receipt_path, {})
                 outcomes.append({'unit_id': candidate['candidate_id'], 'title': decision['title'],
@@ -795,7 +823,8 @@ class DiscoveryIntegration:
         stream = self._stream(ledger['config'].get('stream_name', ledger['stream']))
         origin = {**ledger['origin'], 'session_id': ledger['origin'].get('stream_origin_session', ledger['origin']['session_id'])}
         digest = self.digest.prepare(run_id, stream=ledger['config'].get('stream_name', ledger['stream']), day=ledger['business_date'], origin=origin,
-                                     items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + conflicts + supplement_failures], coverage=coverage, outcomes=outcomes, label=stream.get('label', ''), review_namespace=run_id if ledger.get('lineage', {}).get('operation') else '', deferred=join.get('deferred', []))
+                                     items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + supplement_failures], coverage=coverage, outcomes=outcomes,
+                                     blocked=conflicts, label=stream.get('label', ''), review_namespace=run_id if ledger.get('lineage', {}).get('operation') else '', deferred=join.get('deferred', []))
         with self.store._lock(self.store._run_lock_name(run_id)):
             pending = self.store.get_run(run_id); pending['pending_operations'] = ['finalization_projection']; self.store._save(run_id, pending)
         self.store.save_review(run_id, {'digest': digest, 'conflicts': conflicts, 'joined': join})
@@ -803,15 +832,15 @@ class DiscoveryIntegration:
         return digest
 
     def decide(self, args, *, session_id, today=None):
-        origins = {d['origin']['session_id'] for d in self.digest._load()['digests'].values() if (not args.get('stream') or d['stream'] == args['stream']) and self.origin_authorized(self._stream(d['stream']), session_id)}
+        origins = {d['origin']['session_id'] for d in self.digest._load()['digests'].values() if (not args.get('stream') or d['stream'] == args['stream']) and self.origin_authorized(self._stream_or_frozen(d['stream'], d['origin']['session_id']), session_id)}
         if len(origins) == 1: session_id = next(iter(origins))
         if today is None:
-            candidates = [d for d in self.digest._load()['digests'].values() if d['origin']['session_id'] == session_id and (not args.get('stream') or d['stream'] == args['stream'])]
+            candidates = [d for d in self.digest._load()['digests'].values() if d['origin']['session_id'] in origins | {session_id} and (not args.get('stream') or d['stream'] == args['stream'])]
             zones = {self.store.get_run(d['run_id'])['config'].get('timezone', self.rt.settings.timezone) for d in candidates}
             if len(zones) > 1 and not args.get('stream'):
                 raise UserError('streams have different frozen local days; specify stream for reply')
             today = self.utcnow().astimezone(ZoneInfo(next(iter(zones), self.rt.settings.timezone))).date().isoformat()
-        return self._decide_resolved(args, resolve=lambda ref: self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=args.get('stream', '')))
+        return self._decide_resolved(args, resolve=lambda ref: self.digest.resolve(str(ref), session_id=session_id, today=today, day=args.get('day', ''), stream=args.get('stream', ''), origin_sessions=origins))
 
     def _decide_resolved(self, args, *, resolve):
         """Shared immutable prepare/batch-preflight/apply path after caller resolution."""
@@ -876,17 +905,17 @@ class DiscoveryIntegration:
         if not isinstance(legacy_roots, (list, tuple)) or any(not isinstance(x, str) or not x.strip() for x in legacy_roots):
             raise UserError('legacy_roots must be workspace-relative folder names')
         visible = {r['run_id'] for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')}
-                   or self.origin_authorized(self._stream(r['config'].get('stream_name', r['stream'])), session_id)}
+                   or self.origin_authorized(self._stream_or_frozen(r['config'].get('stream_name', r['stream']), r['origin'].get('stream_origin_session', r['origin'].get('session_id'))), session_id)}
         return self.conversion.audit_links(run_ids=visible, legacy_roots=legacy_roots)
 
     def backend(self, run_id='', *, session_id):
         def project(ledger):
             run = ledger['run_id']
-            if session_id not in {ledger['origin'].get('session_id'), ledger['origin'].get('stream_origin_session')} and not self.origin_authorized(self._stream(ledger['config'].get('stream_name', ledger['stream'])), session_id):
+            if session_id not in {ledger['origin'].get('session_id'), ledger['origin'].get('stream_origin_session')} and not self.origin_authorized(self._stream_or_frozen(ledger['config'].get('stream_name', ledger['stream']), ledger['origin'].get('stream_origin_session', ledger['origin'].get('session_id'))), session_id):
                 self.runner._parent(run, session_id)
             return self.project_run(ledger)
         if run_id: return project(self.store.get_run(run_id))
-        return {'runs': [project(r) for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')} or self.origin_authorized(self._stream(r['config'].get('stream_name', r['stream'])), session_id)]}
+        return {'runs': [project(r) for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')} or self.origin_authorized(self._stream_or_frozen(r['config'].get('stream_name', r['stream']), r['origin'].get('stream_origin_session', r['origin'].get('session_id'))), session_id)]}
 
     def project_run(self, ledger):
         """Project durable state after the entrypoint has checked its caller."""
