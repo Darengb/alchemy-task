@@ -73,7 +73,7 @@ class DiscoveryDigest:
                 if item.get('new_information'): lines.append('Addition: ' + '; '.join(item['new_information']))
                 if item.get('research_disposition') == 'uncertain': lines.append('Uncertain: ' + '; '.join(item.get('uncertainty') or ['See verified open questions; user judgment required']))
                 if item.get('source_links'): lines.append('Sources: ' + ' '.join(item['source_links']))
-                if item.get('sources_unavailable'): lines.append('Unavailable context: ' + '; '.join(item['sources_unavailable']))
+                # Source: inaccessible supporting sources are evidence limits, kept in the item record only.
                 lines.append('---')
             if not numbered:
                 lines.append('No new follow-ups found.' if not degraded and not outcomes and not blocked else 'No new proposals to review.')
