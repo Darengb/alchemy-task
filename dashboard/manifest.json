@@ -1,0 +1,14 @@
+{
+  "name": "alchemy-task",
+  "label": "Tasks",
+  "description": "Your Alchemy Task tasks by day, week and month, and the proposals from discovery runs.",
+  "icon": "Star",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/tasks",
+    "position": "after:sessions"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}
