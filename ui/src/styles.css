@@ -598,7 +598,7 @@ html.at-dragging { -webkit-user-select: none; user-select: none; }
   font-family: var(--at-display); font-size: 30px; line-height: 1.08; font-weight: 500; letter-spacing: .003em;
   border-radius: 4px;
 }
-.at-title-input:focus { box-shadow: 0 0 0 6px var(--at-soft); background: var(--at-soft); }
+.at-title-input:focus:not(.is-idle) { box-shadow: 0 0 0 6px var(--at-soft); background: var(--at-soft); }
 .at-title-input.is-done { color: var(--at-muted); text-decoration: line-through; text-decoration-thickness: 1.5px; text-decoration-color: rgba(150, 160, 255, .45); }
 .at-fields { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 0 16px 40px; }
 .at-prio-glyph { width: 8px; height: 8px; border-radius: 2px; background: var(--at-faint); }
@@ -911,3 +911,8 @@ html.at-dragging { -webkit-user-select: none; user-select: none; }
 .at-composer-send:disabled { opacity: .35; box-shadow: none; cursor: default; }
 .at-composer-send:active:not(:disabled) { transform: scale(.94); }
 .at-root:has(.at-composer.is-open) .at-toasts { top: 64px; bottom: auto; }
+
+/* Title: tap to edit, press and hold to copy for chat */
+.at-title-input.is-idle { cursor: text; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+.at-title-input { transition: background .2s, box-shadow .2s, transform .2s var(--at-ease); }
+.at-title-input.is-armed { background: var(--at-accent-tint); box-shadow: 0 0 0 6px var(--at-accent-tint), 0 0 24px rgba(60, 70, 255, .35); transform: scale(.985); }

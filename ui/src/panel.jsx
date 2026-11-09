@@ -6,7 +6,7 @@ import * as D from './lib/dates.js'
 import { parseBlocks, renderBlocks, splitSections, toggleLine, managedTitle, extractManaged, rebuildBody } from './lib/markdown.js'
 import { describeError } from './api.js'
 import { useApp, useStore } from './store.js'
-import { AreaDot, Button, Check, DatePicker, Disclosure, Icon, IconButton, Menu, Spinner, cx, useOverlay, markScrolled, useSheetDismiss, useToast } from './ui.jsx'
+import { AreaDot, Button, Check, DatePicker, Disclosure, Icon, IconButton, Menu, Spinner, copyText, cx, taskHandoff, useOverlay, markScrolled, useSheetDismiss, useToast } from './ui.jsx'
 import { isDone } from './tasks.jsx'
 
 const PRIORITIES = ['urgent', 'high', 'normal', 'low']
@@ -119,10 +119,19 @@ export function TaskPanel({ id, narrow, onClose }) {
     }))} />
   ), { width: 180 })
 
+  // Hand the task to chat: copies its title and ID. Runs inside the tap or release that triggers it.
+  const copyForChat = async () => {
+    const cur = store.getState().byId[id] || task
+    if (navigator.vibrate) navigator.vibrate(12)
+    const ok = await copyText(taskHandoff(cur))
+    toast(ok ? 'Copied title and ID. Paste it into a chat with Hermes.' : 'Could not copy. Your browser blocked the clipboard.', ok ? {} : { tone: 'error' })
+  }
+
   return (
     <PanelShell narrow={narrow} onClose={onClose} actions={
       <>
         {task.loading ? <Spinner /> : null}
+        <IconButton icon="clipboard" label="Copy title and ID for chat" onClick={copyForChat} />
         <IconButton icon="refresh" label="Reload" onClick={load} />
       </>
     }>
@@ -134,7 +143,7 @@ export function TaskPanel({ id, narrow, onClose }) {
       ) : null}
       <div className="at-panel-titlerow">
         <Check checked={isDone(task)} onChange={async () => { if (await settle()) actions.toggle(store.getState().byId[id] || task) }} label={isDone(task) ? 'Mark not done' : 'Mark done'} size="lg" />
-        <TitleField value={task.title} done={isDone(task)} onSave={(title) => patch({ title })} />
+        <TitleField value={task.title} done={isDone(task)} onSave={(title) => patch({ title })} onLongPress={copyForChat} />
       </div>
       <div className="at-fields">
         <button type="button" className={cx('at-field', date && date < today && !isDone(task) && 'is-late')} onClick={pickDate}>
@@ -199,18 +208,67 @@ function PanelShell({ narrow, onClose, actions, children }) {
   )
 }
 
-function TitleField({ value, done, onSave }) {
+// The title edits in place on a tap. Pressing and holding it (while it is not being edited) copies the task
+// for chat instead. The copy runs on release, because browsers only allow clipboard writes in a gesture.
+function TitleField({ value, done, onSave, onLongPress }) {
   const [v, setV] = React.useState(value)
+  const [editing, setEditing] = React.useState(false)
+  const [armed, setArmed] = React.useState(false)
   const ref = React.useRef(null)
+  const press = React.useRef(null)
   React.useEffect(() => setV(value), [value])
   React.useLayoutEffect(() => {
     const el = ref.current
     if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' }
   }, [v])
   const commit = () => { const t = v.replace(/\s+/g, ' ').trim(); if (t && t !== value) onSave(t); else setV(value) }
+
+  const cancelPress = () => {
+    if (press.current) clearTimeout(press.current.timer)
+    press.current = null
+    setArmed(false)
+  }
+  const down = (e) => {
+    if (editing || (e.pointerType === 'mouse' && e.button !== 0)) return
+    const p = { x: e.clientX, y: e.clientY, armed: false, timer: 0 }
+    p.timer = setTimeout(() => { p.armed = true; setArmed(true); if (navigator.vibrate) navigator.vibrate(8) }, 450)
+    press.current = p
+  }
+  const move = (e) => {
+    const p = press.current
+    if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 8) cancelPress()
+  }
+  const release = (e) => {
+    const p = press.current
+    if (!p) return
+    const fire = p.armed
+    cancelPress()
+    if (fire) {
+      e.preventDefault()
+      press.current = { swallowClick: true }
+      onLongPress()
+    }
+  }
+  // A tap starts editing. Focus happens here, inside the tap, so phones open the keyboard.
+  const click = (e) => {
+    if (press.current && press.current.swallowClick) { press.current = null; e.preventDefault(); return }
+    if (editing) return
+    const el = e.currentTarget
+    el.readOnly = false
+    el.focus()
+    setEditing(true)
+  }
   return (
-    <textarea ref={ref} rows={1} className={cx('at-title-input', done && 'is-done')} value={v} aria-label="Title"
-              onChange={(e) => setV(e.target.value)} onBlur={commit}
+    <textarea ref={ref} rows={1} className={cx('at-title-input', done && 'is-done', armed && 'is-armed', !editing && 'is-idle')}
+              value={v} aria-label="Title" readOnly={!editing}
+              title={editing ? undefined : 'Tap to edit. Press and hold to copy for chat.'}
+              onChange={(e) => setV(e.target.value)}
+              onFocus={() => { if (!editing && !press.current) setEditing(true) }}
+              onBlur={() => { setEditing(false); commit() }}
+              onPointerDown={down} onPointerMove={move} onPointerUp={release} onPointerCancel={cancelPress}
+              onTouchEnd={(e) => { if (press.current && press.current.armed) release(e) }}
+              onClick={click}
+              onContextMenu={(e) => { if (!editing) e.preventDefault() }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() }
                 if (e.key === 'Escape') { e.preventDefault(); setV(value); e.currentTarget.blur() }

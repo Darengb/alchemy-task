@@ -27,6 +27,7 @@ const P = {
   list: 'M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01',
   clock: 'M12 7v5l3 2 M12 21a9 9 0 100-18 9 9 0 000 18z',
   play: 'M7 5l12 7-12 7z',
+  clipboard: 'M9 4.5h6a1 1 0 011 1V7H8V5.5a1 1 0 011-1z M8 6H6.5A1.5 1.5 0 005 7.5v11A1.5 1.5 0 006.5 20h11a1.5 1.5 0 001.5-1.5v-11A1.5 1.5 0 0017.5 6H16',
 }
 
 export function Icon({ name, size = 16, className = '', strokeWidth = 1.8 }) {
@@ -39,6 +40,28 @@ export function Icon({ name, size = 16, className = '', strokeWidth = 1.8 }) {
 }
 
 export const cx = (...xs) => xs.filter(Boolean).join(' ')
+
+/** Copy text to the clipboard. Call it from a tap, click or release handler: browsers only allow
+ *  clipboard writes during a user gesture. Falls back to a hidden field for older WebViews. */
+export async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true }
+  } catch { /* fall through to the fallback */ }
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.setAttribute('readonly', '')
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;font-size:16px'
+  document.body.appendChild(ta)
+  ta.select()
+  ta.setSelectionRange(0, text.length)
+  let ok = false
+  try { ok = document.execCommand('copy') } catch { ok = false }
+  ta.remove()
+  return ok
+}
+
+/** What a task looks like when handed to chat: its title plus its ID, so Hermes can find the exact task. */
+export const taskHandoff = (task) => `${task.title} (task ID: ${task.task_id})`
 
 // ------------------------------------------------------------------ basics
 export function Button({ variant = 'default', size, icon, children, className, ...rest }) {
