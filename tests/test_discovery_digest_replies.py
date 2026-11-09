@@ -28,7 +28,7 @@ def _coverage_complete(store, run):
     store.put_resource(run, 'collection-feed', {'source_key': 'feed', 'status': 'complete'})
 
 
-def build_run(data_dir, count, state=''):
+def build_run(data_dir, count, state='', nominations=None):
     """A joined run with `count` accepted candidates, each its own decisive message."""
     store, run, items = setup(data_dir, count=count)
     wids = []
@@ -36,6 +36,8 @@ def build_run(data_dir, count, state=''):
         a = prepare(store, run, item['candidate_id'])
         b = bundle(); b['candidate_id'] = a['candidate_id']
         w = b['workstreams'][0]
+        if nominations and i in nominations:
+            w['existing_task_candidates'] = nominations[i]
         w['exact_source_ids'][0]['message_ts'] = f'171.{i + 2}'
         if state: w['current_understanding'] = state
         w['title'] = f'Ask {i}'

@@ -130,7 +130,7 @@ record_coverage(stream, source, receipt) -> dict
 record_failure(run_id, cid, operation, reason, *, attempt_count=None,
                failure_category='unknown') -> dict
 save_review(run_id, review) -> dict
-prune(*, days=30) -> dict
+prune(*, days=60) -> dict
 ```
 
 Resources use exact UTF-8 bytes, lossless string splitting, full/page hashes, exact totals and revision/reader-bound cursors. Default content limit is 8 KiB and maximum is 16 KiB. Reader names are safe opaque ledger keys; the coordinator maps actual caller sessions to them. All required per-attempt index/schema/rubric/assignment/manifest/outcome pages must be fetched before a new spool commit. Parent full payload reads are checked separately. Page receipts prove retrieval only. Cohorts preserve 200-parent/256-KiB bounds; the full-run manifest and immutable successive outcome projections expose all cohorts without truncating 201 or more candidates. An attempt freezes its outcome revision, while subsequent attempts see newly accepted action representations. Cross-cohort semantic reconciliation still belongs to the parent.

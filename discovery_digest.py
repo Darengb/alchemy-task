@@ -113,7 +113,7 @@ class DiscoveryDigest:
                 lines.append('Coverage: ' + str(source.get('source_key', source.get('source', 'source'))) + ': ' + str(source.get('status', 'unknown')) + detail)
             if numbered:
                 lines.append('Reply with the numbers you want. Other items remain replyable for seven days.')
-            result = {'run_id': run, 'stream': stream, 'day': day, 'origin': origin, 'items': numbered,
+            result = {'run_id': run, 'stream': stream, 'day': day, 'prepared_at': dt.datetime.now(dt.timezone.utc).isoformat(), 'origin': origin, 'items': numbered,
                       'failures': failures, 'deferred': deferred, 'coverage': coverage, 'outcomes': outcomes or [], 'blocked': blocked, 'text': '\n'.join(lines)}
             result['sha256'] = hashlib.sha256(result['text'].encode()).hexdigest()
             data['digests'][run] = result
@@ -144,7 +144,7 @@ class DiscoveryDigest:
             for digest in data['digests'].values():
                 name = digest['stream']
                 if stream and name != stream: continue
-                if name not in newest or digest['day'] >= newest[name]['day']:
+                if name not in newest or (digest['day'], digest.get('prepared_at', '')) > (newest[name]['day'], newest[name].get('prepared_at', '')):
                     newest[name] = digest
             recent = {name: d for name, d in newest.items()
                       if (dt.date.fromisoformat(d['day']) + dt.timedelta(days=7)).isoformat() >= today}

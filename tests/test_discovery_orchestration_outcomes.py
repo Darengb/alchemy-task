@@ -425,7 +425,7 @@ def test_start_prunes_old_closed_runs_but_keeps_replyable_and_resumable_ones(set
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     configure(integration)
     store = integration.store
-    month_ago = time.time() - 40 * 86400
+    month_ago = time.time() - 70 * 86400
 
     def closed(stream, age):
         run = store.init_run(stream=stream, business_date='2026-01-01', origin={'session_id': 'old-parent'})

@@ -977,20 +977,24 @@ class DiscoveryIntegration:
             if len(reviewed) != 1: raise UserError('unknown Review code in this profile; paste a stored digest or supply its exact proposal ID')
         messages, _ = host_conversation(self.home, session_id)
         def present(text):
-            codes = {x.lower() for x in re.findall(r'\bReview:\s*([0-9a-fA-F]{12})\b', text)}
-            return {r for r, d in data['digests'].items()
-                    if hashlib.sha256(r.encode()).hexdigest()[:12] in codes or (d['text'].strip() and d['text'].strip() in text)}
+            codes = {m.group(1).lower(): m.start() for m in re.finditer(r'\bReview:\s*([0-9a-fA-F]{12})\b', text)}
+            positions = {}
+            for run, digest in data['digests'].items():
+                position = codes.get(hashlib.sha256(run.encode()).hexdigest()[:12], -1)
+                if digest['text'].strip(): position = max(position, text.rfind(digest['text'].strip()))
+                if position >= 0: positions[run] = position
+            return sorted(positions, key=lambda run: positions[run], reverse=True)
         # The latest user's reply-to pointer wins over any digest elsewhere in history.
         transcript_runs = None
         users = [m for m in reversed(messages) if m.get('role') == 'user' and isinstance(m.get('content'), str)]
         if users:
             quote = re.search(r'\[Replying to(?: your previous message)?: "(.*?)"\]', users[0]['content'], re.S)
-            if quote: transcript_runs = present(quote[1]) or None
+            if quote: transcript_runs = set(present(quote[1])) or None
         if transcript_runs is None:
             # Different streams anywhere in the active conversation need disambiguation;
             # for one stream take only its most recently mentioned digest.
             latest = {}
-            ordered = users + [m for m in reversed(messages) if m.get('role') == 'assistant' and isinstance(m.get('content'), str)]
+            ordered = [m for m in reversed(messages) if m.get('role') in {'user', 'assistant'} and isinstance(m.get('content'), str)]
             for message in ordered:
                 for run in present(message['content']):
                     name = data['digests'][run]['stream']

@@ -24,9 +24,11 @@ def test_immutable_new_only_day_numbers_cross_stream_and_reply_week(tmp_path):
     next_day = digest.prepare('run3', stream='work', day='2030-01-02', origin=origin,
         items=[{'unit_id': 'w_three', 'research_revision': 'rev3', 'title': 'Third', 'kind': 'new', 'targets': []}])
     assert next_day['items'][0]['number'] == 1
-    assert digest.resolve('1', session_id='chat', today='2030-01-03')['unit_id'] == 'w_three'
+    with pytest.raises(UserError, match='which stream'):
+        digest.resolve('1', session_id='chat', today='2030-01-03')
+    assert digest.resolve('1', stream='work', session_id='chat', today='2030-01-03')['unit_id'] == 'w_three'
     with pytest.raises(UserError, match='missing'):
-        digest.resolve('2', session_id='chat', today='2030-01-02')
+        digest.resolve('2', stream='work', session_id='chat', today='2030-01-02')
 
 
 def test_unknown_delivery_retains_number_and_cannot_blind_resend(tmp_path):
@@ -42,3 +44,19 @@ def test_unknown_delivery_retains_number_and_cannot_blind_resend(tmp_path):
     with pytest.raises(UserError, match='unknown'):
         digest.begin_delivery('run')
     assert digest.get('run')['items'][0]['number'] == 1
+
+
+def test_newest_same_day_digest_does_not_depend_on_run_id_sort_order(tmp_path):
+    from alchemy_task.discovery_digest import DiscoveryDigest
+    digest = DiscoveryDigest(tmp_path)
+    def prepare(run, unit):
+        return digest.prepare(run, stream='work', day='2030-01-01', origin={'session_id': 'origin'},
+                              items=[{'unit_id': unit, 'research_revision': unit, 'title': unit, 'kind': 'new', 'targets': []}])
+    old = prepare('z-old', 'old')
+    new = prepare('a-new', 'new')
+    assert old['items'][0]['number'] == 1 and new['items'][0]['number'] == 2
+    assert new['text'].splitlines()[0] == 'Task Discovery: work (2030-01-01)'
+    assert digest.resolve('2', stream='work', session_id='anywhere', today='2030-01-03')['unit_id'] == 'new'
+    with pytest.raises(UserError, match='missing'):
+        digest.resolve('1', stream='work', session_id='anywhere', today='2030-01-03')
+    assert digest.resolve('1', day='2030-01-01', session_id='anywhere', today='2030-01-03')['unit_id'] == 'old'

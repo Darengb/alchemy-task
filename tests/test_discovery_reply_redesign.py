@@ -145,24 +145,37 @@ def test_create_skip_update_tool_arguments_leave_skip_pending(settings, data_dir
     s, rt, ctx, host, origin = fixture(settings, data_dir, tmp_path, monkeypatch)
     try:
         streams = ctx.state.get('streams'); streams['work']['label'] = 'W'; ctx.state.set('streams', streams)
-        store, run, items, wids = build_run(data_dir, 3)
+        targets = [rt.store().create(title=title, area='work', undated=True, research=False)
+                   for title in ('Existing target', 'Other target')]
+        nominations = [{'path': rt.store().rel(t.path), 'match_basis': 'related_only'} for t in targets]
+        store, run, items, wids = build_run(data_dir, 3, nominations={2: nominations})
         with store._lock(store._run_lock_name(run)):
             ledger = store.get_run(run); ledger['origin'] = {'session_id': origin}; store._save(run, ledger)
         for wid in wids:
             s.record_decision(run, wid, decision='propose', reason='Independent action.', session_id=origin)
         digest = s.finalize(run, session_id=origin)
-        target = rt.store().create(title='Existing target', area='work', undated=True, research=False)
+
         # The model maps "work discovery 1 create 2 skip 3 update" to approve+edits,
         # omitting skip, exactly as it omits unmentioned items.
         reply = host.message(chat_id='999', chat_type='dm', user_id='other')
         before = len(task_files(settings))
-        out = s.decide({'stream': stream, 'approve': ['1'], 'edits': {'1': {'choice': 'create', 'area': 'work', 'undated': True}}}, session_id=reply)
-        assert out['results'][0]['state'] == 'complete' and len(task_files(settings)) == before + 1
+        from alchemy_task.core.taskfile import content_hash
+        args = {'stream': stream, 'approve': ['1', '3'], 'edits': {
+            '1': {'choice': 'create', 'area': 'work', 'undated': True},
+            '3': {'choice': 'update', 'target_task_id': targets[0].task_id, 'expected_revision': content_hash(targets[0].raw)}}}
+        # Several nominated targets require an explicit selection, with no task writes.
+        missing = {**args, 'edits': {**args['edits'], '3': {'choice': 'update'}}}
+        with pytest.raises(UserError, match='target_task_id'):
+            s.decide(missing, session_id=reply)
+        assert len(task_files(settings)) == before and targets[0].path.read_bytes() == targets[0].raw
+        out = s.decide(args, session_id=reply)
+        assert all(r['state'] == 'complete' for r in out['results']) and len(task_files(settings)) == before + 1
         skipped = digest['items'][1]
         assert s.digest._load()['proposals'][skipped['proposal_id']]['state'] == 'pending'
         s.decide({'approve': ['2'], 'edits': {'2': {'choice': 'create', 'area': 'work', 'undated': True}}}, session_id=reply, today='2030-01-04')
         assert len(task_files(settings)) == before + 2
-        assert target.path.read_bytes() == target.raw
+        assert targets[0].path.read_bytes() != targets[0].raw
+        assert targets[1].path.read_bytes() == targets[1].raw
     finally:
         host.close()
 

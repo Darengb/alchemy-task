@@ -89,6 +89,8 @@ def _proposal(service, proposal_id):
         raise APIError('not_found', 'Unknown exact proposal_id', 404)
     proposal = record['binding']
     ledger = service.store.get_run(proposal['run_id'])
+    if ledger.get('pruned_at'):
+        raise APIError('not_found', 'Proposal expired from retained storage; its run was pruned', 404)
     _production(ledger)
     return record, proposal, ledger
 
