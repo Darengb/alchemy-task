@@ -15,6 +15,7 @@ from .runtime import Runtime
 from .core.discovery_state import DiscoveryStore, atomic_json, read_json
 from .core.discovery_identity import UserError, _component, candidate_id
 from .core.discovery_dossiers import content_revision
+from .core.discovery_research import child_schema
 from .discovery_context import DiscoveryContext, resolve_identity
 from .discovery_sources import SourceAdapter, collect_attested, validate_source_config
 from .discovery_runner import DiscoveryRunner, RunnerPolicy, make_tool_handlers, make_hooks, CHECKLIST, BINDING_KEYS
@@ -839,6 +840,17 @@ SCHEMAS = {
  'discovery_decision': _schema('discovery_decision', 'Parent post-join disposition. Unique exact requires useful delta auto or byte-preserving noop; semantic/new remains proposal; multiple exact conflict.', {**RUN, 'unit_id': STR, 'decision': {'type': 'string', 'enum': ['propose', 'auto', 'noop', 'conflict']}, 'reason': STR, 'target_task_id': STR, 'expected_revision': STR, 'useful_delta': BOOL}, ['run_id', 'unit_id', 'decision', 'reason']),
  'discovery_conversion_recover': _schema('discovery_conversion_recover', 'Inspect/resume exact conversion, or explicitly revise/cancel/bind_manual an unwritten plan with CAS and origin approval.', {**RUN, 'unit_id': STR, 'action': {'type': 'string', 'enum': ['resume', 'inspect', 'revise', 'cancel', 'bind_manual']}, 'expected_plan_revision': STR, 'target_task_id': STR, 'expected_revision': STR, 'edits': OBJ, 'reason': STR, 'user_approved': BOOL}, ['run_id', 'unit_id']),
  'discovery_runs': _schema('discovery_runs', 'Backend API: list full run records or get exact run including research, proposals, conflicts, recovery and delivery.', {'run_id': STR}),
+}
+
+# Expose the actual structured callback contract to the model/provider. Keeping
+# only payload:object hid all twenty required fields from the called tool.
+# References resolve at the tool parameters root, not the nested payload root.
+_child_contract = child_schema()
+_submit_parameters = SCHEMAS['discovery_research_submit']['parameters']
+_submit_parameters['$defs'] = copy.deepcopy(_child_contract['$defs'])
+_submit_parameters['properties']['payload'] = {
+    key: copy.deepcopy(value) for key, value in _child_contract.items()
+    if key not in {'$schema', '$defs', '$id'}
 }
 
 _services = {}

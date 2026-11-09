@@ -365,6 +365,32 @@ class DiscoveryStore:
             attempt = {'token': token, 'correlation_id': uuid.uuid4().hex, 'run_id': run_id, 'candidate_id': cid, 'ordinal': len(previous) + 1, 'owner_session': _str(owner_session, 'owner session', allow_empty=False), 'config_revision': ledger['config_revision'], 'index_revision': ledger['index_revision'], 'schema_revision': ledger['schema_revision'], 'source_revision': item.get('source_revision'), 'rubric_revision': ledger['resources']['rubric']['sha256'], 'required_resources': ['manifest', cohort['name'], 'schema', 'rubric', 'assignment-' + cid], 'state': 'launch_intent', 'created': now(), 'fenced': False, 'handle': None, 'child_session': None, 'payload': None, 'terminal': None, 'assessment': None, 'evidence': {'execution': 'intent', 'shape': 'not_checked', 'helper': 'not_checked', 'semantic': 'not_reviewed', 'acceptance': 'not_committed'}}
             attempt['outcome_revision'] = ledger['outcome_resource']['sha256']
             attempt['required_resources'].append(ledger['outcome_resource']['name'])
+            registry = ledger['action_registry'].get(cid)
+            if registry:
+                # The parent-issued values are mechanics the child must copy,
+                # not hidden acceptance criteria it should reconstruct.
+                name = 'action-registry-' + cid + '-' + _hash(_json_bytes(registry))[:16]
+                self._put_resource_locked(run_id, ledger, name, registry)
+                attempt['action_registry_resource'] = name
+                attempt['required_resources'].append(name)
+            templates = []
+            for source in item['source_ids']:
+                parts = source.split(':')
+                if parts[0] == 'source':
+                    typed: dict[str, str] = dict(zip(('source_key', 'account_key', 'object_kind', 'object_id'), parts[1:5]))
+                    typed['type'] = 'source'
+                    if len(parts) == 6:
+                        typed['message_id'] = parts[5]
+                    rule = ('Preserve this source type and scope. For decisive message evidence, set message_id to the actual ID read in the primary source. Never substitute Gmail or another provider, invent IDs, or use a thread-only identity for decomposed message actions.')
+                    if len(parts) == 6 or parts[3] == 'message':
+                        rule = 'This assignment already identifies an exact message. Copy its typed identity unchanged for that message; do not invent another message_id or substitute Gmail or another provider.'
+                    templates.append({'assigned_source_id': source, 'typed_source': typed,
+                                      'decisive_message_rule': rule})
+            if templates:
+                name = 'identity-templates-' + cid + '-' + _hash(_json_bytes(templates))[:16]
+                self._put_resource_locked(run_id, ledger, name, templates)
+                attempt['typed_source_templates_resource'] = name
+                attempt['required_resources'].append(name)
             ledger['attempts'][token] = attempt
             self._save(run_id, ledger)
             return attempt
