@@ -26,7 +26,7 @@ from .runtime import Runtime
 SAVABLE = {"workspace_root": str, "task_dir": str, "areas": list, "default_area": str, "timezone": str,
            "research_by_default": bool, "git_transport": str, "git_remote": str, "git_branch": str,
            "git_run_hooks": bool}
-DEFAULT_AREAS = ["work", "personal"]
+DEFAULT_AREAS = ["general"]
 
 
 class SetupError(ValueError):
@@ -209,6 +209,8 @@ def save(rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
         if args.get("create_workspace"):
             areas = changes.get("areas") or rt.settings.areas or DEFAULT_AREAS
             changes.setdefault("areas", areas)
+            if len(areas) == 1 and not rt.settings.default_area:
+                changes.setdefault("default_area", areas[0])
             made = _create_workspace(p, areas, changes.get("task_dir") or rt.settings.task_dir)
             if made:
                 notes.append("Created " + ", ".join(made) + ".")

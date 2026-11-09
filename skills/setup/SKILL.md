@@ -27,15 +27,31 @@ example an Obsidian vault).
   If tasks sit elsewhere (`task_folders_elsewhere`), set `task_dir` to match (it must contain `{area}`).
   Only the task folders are used; the rest of the vault is not read. The user's own Git setup pushes.
 - **Fresh start:** propose a workspace in the Hermes data folder, for example `<hermes home>/tasks`, and
-  `save` it with `create_workspace: true`. Inside a Nous Cloud agent the Hermes home is `/opt/data`.
+  agree the areas in the next step before calling `save` with `create_workspace: true` and those areas.
+  Inside a Nous Cloud agent the Hermes home is `/opt/data`.
 
 ## 3. Areas
 
-Areas group tasks (for example work, personal, a side business). Look at what the user already has
-(existing area folders, their skills, how they talk about their work) and propose a short list; two or
-three is typical. Save `areas` and, if one is clearly the default, `default_area`. Only discuss separate Hermes
-profiles or bots if the user mentions them or their skills clearly show them; never ask them to create a
-profile for Alchemy Task.
+Ask: **"Do you have distinct areas of your life or projects that you'd like to keep separate?"**
+Offer **Yes** and **No, keep everything together**, with no recommended answer.
+
+- **Yes:** ask the open-ended follow-up: "What are they? For example, your job, a business or independent
+  project, and personal life." Use their answer to propose area names and confirm them. Do not turn this
+  follow-up into multiple choice or automatically subdivide their answer.
+- **No:** use one area, `general`, as the default and move on without another organization question.
+  If they already have a single area, reuse its name instead.
+
+Areas follow the parts of life the user wants to manage separately. Projects within a full-time job
+usually share that job's area; an independent business, music act or app may have its own area if the user
+wants it separate. Email accounts, channels, departments and topics do not automatically become areas.
+Multiple accounts can feed one area. Do not aim for a target number of areas or impose a maximum.
+Reuse an existing layout without silently moving, merging or renaming existing tasks; ask before any
+reorganization if their answer conflicts with that layout.
+
+Save `areas` and, for a single area, set `default_area` to it so tasks need no area question. For multiple
+areas, save a default only if the user chooses one or one is clearly established. Only discuss separate
+Hermes profiles or bots if the user mentions them or their skills clearly show them; never ask them to
+create a profile for Alchemy Task.
 
 ## 4. Git delivery
 
