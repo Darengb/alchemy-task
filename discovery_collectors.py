@@ -195,6 +195,10 @@ def make_daily_reader(config, read_page, *, snapshot_root, read_thread=None, rea
     return reader
 
 
+class _SlackThreadError(UserError):
+    """Content defect confined to one primary thread or cluster."""
+
+
 def _slack_page(config, start, end, seeds, read_replies):
     # Daily date padding is only a search optimization. Exact inclusive seed
     # admission happens before the source 1800s channel clustering recipe.
@@ -234,55 +238,60 @@ def _slack_page(config, start, end, seeds, read_replies):
 
     for group in groups:
         cid, anchor, cluster = group['channel_id'], group['anchor'], group['seeds']
-        if group['kind'] == 'thread':
-            messages = acquire({'operation':'replies','channel':cid,'ts':anchor,'limit':200,'inclusive':True})
-            if not any(m.get('ts') == anchor for m in messages):
-                raise UserError('Slack full primary thread root missing')
-        else:
-            first, last = cluster[0]['ts'], cluster[-1]['ts']
-            before = acquire({'operation':'before','channel':cid,'latest':first,'inclusive':True,'limit':6}, counted=True)
-            after = acquire({'operation':'after','channel':cid,'oldest':last,'inclusive':False,'limit':10}, counted=True)
-            between = acquire({'operation':'between','channel':cid,'oldest':first,'latest':last,'inclusive':True,'limit':100}) if len(cluster)>1 else []
-            messages = list(reversed(before)) + list(reversed(between)) + list(reversed(after))
-        merged = {}
-        # Always retain real seed bodies too: source search can carry useful
-        # text/metadata missing from reply/history responses. Never invent IDs.
-        for msg in cluster + messages:
-            ts = msg.get('ts')
-            if not ts:
-                raise UserError('Slack primary message lacks real timestamp')
-            channel = msg.get('channel')
-            actual_cid = channel.get('id') if isinstance(channel, dict) else msg.get('channel_id')
-            if actual_cid and actual_cid != cid:
-                raise UserError('Slack primary channel mismatch')
-            existing = merged.get(ts, {})
-            old, new = existing.get('text', ''), msg.get('text', '')
-            if old and new and old != new and not old.startswith(new) and not new.startswith(old):
-                raise UserError('contradictory Slack primary message content')
-            merged[ts] = {**existing, **msg, 'text': old if len(old)>len(new) else new}
-        ordered = sorted(merged.values(), key=lambda m: Decimal(m['ts']))
-        signature = set(merged)
-        ids = [f"slack:{config['account_key']}:{cid}:{m['ts']}" for m in cluster]
-        containing = next((b for b in blocks if b['channel_id']==cid and signature <= b['signature']), None)
-        if containing is not None:
-            containing['item']['source_ids'] = list(dict.fromkeys(containing['item']['source_ids'] + ids))
-            retained = {m['ts']:m for m in containing['item']['messages']}
-            for msg in ordered:
-                old = retained[msg['ts']]
-                left, right = old.get('text',''), msg.get('text','')
-                if left and right and not left.startswith(right) and not right.startswith(left):
-                    raise UserError('contradictory overlapping Slack block content')
-                retained[msg['ts']] = {**old, **msg, 'text': left if len(left)>len(right) else right}
-            containing['item']['messages'] = sorted(retained.values(), key=lambda m:Decimal(m['ts']))
-            containing['item']['source_revision'] = _hash(containing['item']['messages'])
-            continue
-        item = {'title': cluster[0].get('text') or 'Conversation follow-up',
-                'source_key':config['source_key'],'source_ids':ids,
-                'source_revision':_hash(ordered),'messages':ordered,
-                'context_recipe':group['kind'],'permalink':cluster[0].get('permalink','')}
-        if (cid, anchor) in truncated:
-            item.update(partial=True, partial_reason='primary conversation has more messages than one provider page')
-        blocks.append({'channel_id':cid,'signature':signature,'item':item})
+        # Source slack_daily_followups.py: a failed thread is logged and skipped;
+        # sibling threads continue. The skip is reported as partial coverage.
+        try:
+            if group['kind'] == 'thread':
+                messages = acquire({'operation':'replies','channel':cid,'ts':anchor,'limit':200,'inclusive':True})
+                if not any(m.get('ts') == anchor for m in messages):
+                    raise _SlackThreadError('primary thread root missing')
+            else:
+                first, last = cluster[0]['ts'], cluster[-1]['ts']
+                before = acquire({'operation':'before','channel':cid,'latest':first,'inclusive':True,'limit':6}, counted=True)
+                after = acquire({'operation':'after','channel':cid,'oldest':last,'inclusive':False,'limit':10}, counted=True)
+                between = acquire({'operation':'between','channel':cid,'oldest':first,'latest':last,'inclusive':True,'limit':100}) if len(cluster)>1 else []
+                messages = list(reversed(before)) + list(reversed(between)) + list(reversed(after))
+            merged = {}
+            # Always retain real seed bodies too: source search can carry useful
+            # text/metadata missing from reply/history responses. Never invent IDs.
+            for msg in cluster + messages:
+                ts = msg.get('ts')
+                if not ts:
+                    raise _SlackThreadError('primary message lacks real timestamp')
+                channel = msg.get('channel')
+                actual_cid = channel.get('id') if isinstance(channel, dict) else msg.get('channel_id')
+                if actual_cid and actual_cid != cid:
+                    raise _SlackThreadError('primary channel mismatch')
+                existing = merged.get(ts, {})
+                old, new = existing.get('text', ''), msg.get('text', '')
+                if old and new and old != new and not old.startswith(new) and not new.startswith(old):
+                    raise _SlackThreadError('contradictory primary message content')
+                merged[ts] = {**existing, **msg, 'text': old if len(old)>len(new) else new}
+            ordered = sorted(merged.values(), key=lambda m: Decimal(m['ts']))
+            signature = set(merged)
+            ids = [f"slack:{config['account_key']}:{cid}:{m['ts']}" for m in cluster]
+            containing = next((b for b in blocks if b['channel_id']==cid and signature <= b['signature']), None)
+            if containing is not None:
+                retained = {m['ts']:m for m in containing['item']['messages']}
+                for msg in ordered:
+                    old = retained[msg['ts']]
+                    left, right = old.get('text',''), msg.get('text','')
+                    if left and right and not left.startswith(right) and not right.startswith(left):
+                        raise _SlackThreadError('contradictory overlapping block content')
+                    retained[msg['ts']] = {**old, **msg, 'text': left if len(left)>len(right) else right}
+                containing['item']['source_ids'] = list(dict.fromkeys(containing['item']['source_ids'] + ids))
+                containing['item']['messages'] = sorted(retained.values(), key=lambda m:Decimal(m['ts']))
+                containing['item']['source_revision'] = _hash(containing['item']['messages'])
+                continue
+            item = {'title': cluster[0].get('text') or 'Conversation follow-up',
+                    'source_key':config['source_key'],'source_ids':ids,
+                    'source_revision':_hash(ordered),'messages':ordered,
+                    'context_recipe':group['kind'],'permalink':cluster[0].get('permalink','')}
+            if (cid, anchor) in truncated:
+                item.update(partial=True, partial_reason='primary conversation has more messages than one provider page')
+            blocks.append({'channel_id':cid,'signature':signature,'item':item})
+        except _SlackThreadError as exc:
+            partial.append(f"Slack {group['kind']} {cid}:{anchor} skipped: {exc}")
     collection = {'coverage':'all approved seed queries plus finite primary recipe; not whole-channel history'}
     if partial: collection['partial'] = partial
     return _envelope(config,start,end,[b['item'] for b in blocks],next_cursor=None,pagination_exhausted=True,

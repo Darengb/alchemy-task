@@ -393,6 +393,10 @@ def test_slack_thread_pagination_and_missing_primary_remain_partial(tmp_path,def
         if defect=='missing_root': return envelope(c,s,e,[seed])
         return envelope(c,s,e,[seed],pagination_exhausted=False,next_cursor='more')
     r,state,_ = collect(tmp_path,cfg,raw,read_replies=partial)
-    assert r['status'] != 'complete' and not state.get('watermark')
+    # The returned thread lacks its root, so this one thread is skipped (source
+    # logs and continues) and reported partial. Seed pages were exhausted, so the
+    # window is acquired and does not repeat the same defect every day.
+    assert r['status'] == 'partial' and 'C1:1767225500.000001 skipped: primary thread root missing' in r['error']
+    assert state['backlog'] == [] and state.get('watermark') == END
 
 
