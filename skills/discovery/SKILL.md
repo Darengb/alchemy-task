@@ -30,7 +30,7 @@ A structured binding names an actual configured tool, literal nonsecret argument
 
 Replies and user-confirmed source/delivery/identity setup work from any chat or topic of the installing profile. Source binding and account identity setup are still required before research. Delivery targeting keeps its saved origin; moving a reply does not move the scheduled destination. Never modify another profile or host core to make delivery work.
 
-Optional `approvals.owner_only` defaults off. To turn it on, explain that only the owner may approve, dismiss, revise or cancel, ask for explicit confirmation in their own chat, then call `discovery_config action=approvals config={owner_only:true} user_approved=true`. The plugin records the host sender user ID and alternate ID for that platform, never a model-supplied identity or approver list. A second platform requires the same confirmed setting action there. When on, another sender cannot change configuration, disable the rule or mutate proposals/plans. `discovery_config action=status` shows the current approvals setting. The authenticated dashboard settings backend can toggle it after chat has established owner identity. Scheduled runs and children cannot grant user approval.
+`approvals.owner_only` is not available in this version (planned follow-up). If the user asks for owner-only approvals, say so: the plugin refuses to turn it on (`needs: not_available`) and writes nothing, so any chat of this profile may approve; the gateway controls who may talk to the agent. `discovery_config action=status` shows the setting (off). Scheduled runs and children cannot grant user approval.
 
 ## Pilot selection and historical operations
 

@@ -14,7 +14,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 
 from ..runtime import Runtime
-from ..discovery_integration import DiscoveryIntegration
+from ..discovery_integration import DiscoveryIntegration, FeatureUnavailable
 from ..core.discovery_state import read_json
 from ..core.discovery_identity import UserError
 from ..core.taskfile import ConcurrentEditError
@@ -45,6 +45,8 @@ def _error(exc):
         code, status = ('unauthorized' if exc.status_code == 401 else 'forbidden'), exc.status_code
     elif isinstance(exc, ConcurrentEditError):
         code, status = 'stale_revision', 409
+    elif isinstance(exc, FeatureUnavailable):
+        code, status = 'not_available', 409
     else:
         code, status = 'invalid_request', 400
         message = str(exc).lower()

@@ -33,6 +33,15 @@ def _pick(value, path):
 
 
 WITHHELD_TITLE = 'Follow-up (title withheld; see source)'
+# approvals.owner_only is a planned follow-up (per-platform enrollment). v1 refuses to turn it
+# on; the gated enrollment/authorization code below stays for that follow-up.
+OWNER_ONLY_AVAILABLE = False
+OWNER_ONLY_UNAVAILABLE = ('approvals.owner_only is not available in this version; discovery approvals stay open to '
+                          "this profile's chats (the gateway controls who may talk to the agent). It is a planned follow-up.")
+
+
+class FeatureUnavailable(UserError):
+    """A refused, not-yet-available setting. Nothing was written."""
 _METADATA_LIMITS = {'title': MAX_TITLE_CHARS, 'prefilter_reason': MAX_REASON_CHARS, 'summary': MAX_STRING_CHARS,
                     'due': MAX_STRING_CHARS, 'priority': MAX_STRING_CHARS}
 
@@ -220,6 +229,8 @@ class DiscoveryIntegration:
             raise UserError('approvals accepts only owner_only: boolean')
         if user_approved is not True:
             raise UserError('confirm approvals.owner_only with the user first')
+        if config['owner_only'] and not OWNER_ONLY_AVAILABLE:
+            raise FeatureUnavailable(OWNER_ONLY_UNAVAILABLE)
         settings = self.approval_settings()
         if not dashboard:
             # An unregistered platform can be enrolled only by this explicit confirmed
@@ -1191,7 +1202,7 @@ SCHEMAS = {
  'discovery_recover': _schema('discovery_recover', 'Recover SAME saved run without blind relaunch/refund. New parent adoption requires out-of-band authorization.', {**RUN, 'owner_restarted': BOOL, 'adopt': BOOL}, ['run_id']),
  'discovery_release_hold': _schema('discovery_release_hold', 'Deliberately release safety hold without refunding unknown attempts.', {**RUN, 'reason': STR}, ['run_id', 'reason']),
  'discovery_replay': _schema('discovery_replay', 'Explicit saved_input replay of finalized frozen inputs, or current fresh_validation / targeted_supplement. Distinct lineage/review; no old task mutation.', {**RUN, 'operation': {'type': 'string', 'enum': ['saved_input', 'fresh_validation', 'targeted_supplement']}, 'mode': {'type': 'string', 'enum': ['shadow', 'research_only']}, 'candidate_ids': {'type': 'array', 'items': STR}, 'user_approved': BOOL}, ['run_id', 'operation', 'mode', 'user_approved']),
- 'discovery_config': _schema('discovery_config', 'Configure approved source/delivery, confirm identity, or approvals.owner_only (default off). action=approvals config={owner_only:true|false} requires explicit user confirmation (user_approved=true). Enabling records the host sender ID for this platform; use your own chat. status shows current approvals. No approver list or credentials.', {'action': {'type': 'string', 'enum': ['source', 'identity', 'delivery', 'approvals', 'status']}, 'stream': STR, 'config': OBJ, 'account_key': STR, 'identity': OBJ, 'user_approved': BOOL}, ['action']),
+ 'discovery_config': _schema('discovery_config', 'Configure approved source/delivery, confirm identity, or approvals. approvals.owner_only is not available in this version (turning it on is refused with needs=not_available; planned follow-up). status shows current approvals. No approver list or credentials.', {'action': {'type': 'string', 'enum': ['source', 'identity', 'delivery', 'approvals', 'status']}, 'stream': STR, 'config': OBJ, 'account_key': STR, 'identity': OBJ, 'user_approved': BOOL}, ['action']),
  'discovery_collect': _schema('discovery_collect', 'Collect approved source with actual configured reader, or explicitly partial attested envelope. SAME saved window.', {**RUN, 'source_key': STR, 'envelope': OBJ, 'max_pages': {'type': 'integer', 'minimum': 1}}, ['run_id', 'source_key']),
  'discovery_context': _schema('discovery_context', 'Freeze collected source inventory, ALL-status task bodies, installed full skills, full rubric and approved context before research.', {**RUN, 'context': OBJ}, ['run_id']),
  'discovery_match': _schema('discovery_match', 'Post-join typed exact matching and all semantic target options; returns full body resources, no mutation.', {**RUN, 'unit_id': STR}, ['run_id', 'unit_id']),
@@ -1308,6 +1319,8 @@ def register(ctx, *, integration=None):
             except tf.ConcurrentEditError as exc:
                 # Same stable code the dashboard uses; the parent re-reads with discovery_match and retries.
                 return json.dumps({'ok': False, 'error': {'code': 'stale_revision', 'message': str(exc)[:1000] + '. The task changed; re-read it with discovery_match and decide again with the current revision.'}})
+            except FeatureUnavailable as exc:
+                return json.dumps({'ok': False, 'needs': 'not_available', 'message': str(exc), 'error': str(exc)})
             except (UserError, ValueError, KeyError, TypeError, OSError) as exc:
                 return json.dumps({'ok': False, 'error': str(exc)[:1000]})
         return call

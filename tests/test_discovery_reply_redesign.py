@@ -180,7 +180,7 @@ def test_create_skip_update_tool_arguments_leave_skip_pending(settings, data_dir
         host.close()
 
 
-def test_confirmed_owner_only_setting_and_sender_not_session_creator(settings, data_dir, tmp_path, monkeypatch):
+def test_confirmed_owner_only_setting_and_sender_not_session_creator(settings, data_dir, tmp_path, monkeypatch, owner_only_feature):
     from gateway.session_context import set_session_vars, clear_session_vars
     s, rt, ctx, host, origin = fixture(settings, data_dir, tmp_path, monkeypatch)
     try:

@@ -161,7 +161,7 @@ def _child(s, origin):
     return 'child-sess'
 
 
-def test_child_agent_cannot_approve_configure_or_change_settings(settings, data_dir, tmp_path, monkeypatch):
+def test_child_agent_cannot_approve_configure_or_change_settings(settings, data_dir, tmp_path, monkeypatch, owner_only_feature):
     """R4-4: a research child is refused through the registered tools and nothing changes."""
     from test_discovery_reply_threads import _tools, SOURCE_CONFIG
     s, rt, ctx, host, origin = fixture(settings, data_dir, tmp_path, monkeypatch)
@@ -241,3 +241,22 @@ def test_prune_days_argument_governs_pending_proposal_exemption(tmp_path, settin
     result = service.store.prune(days=days)
     assert (run in result['deleted_runs']) is deleted
     assert service.store.run_dir(run).exists() is not deleted
+
+
+def test_owner_only_is_not_available_in_this_version_from_chat(settings, data_dir, tmp_path, monkeypatch):
+    """v1 gate: turning approvals.owner_only on from chat is refused and writes nothing;
+    approvals stay open to the profile's chats."""
+    from test_discovery_reply_threads import _tools
+    s, rt, ctx, host, origin = fixture(settings, data_dir, tmp_path, monkeypatch)
+    try:
+        digest = _finalize(s, data_dir, stream='work', origin_session=origin)
+        out = json.loads(_tools(s, ctx)['discovery_config'](
+            {'action': 'approvals', 'config': {'owner_only': True}, 'user_approved': True}, session_id=origin))
+        assert out['ok'] is False and out['needs'] == 'not_available', out
+        assert 'not available in this version' in out['message'], out
+        assert ctx.state.get('discovery_approvals') is None
+        assert s.approval_settings() == {'owner_only': False, 'owners': {}}
+        other = host.message('slack', chat_id='C1', chat_type='dm', user_id='anyone')
+        assert s.decide({'dismiss': ['1']}, session_id=other)['dismissed'] == [digest['items'][0]['proposal_id']]
+    finally:
+        host.close()

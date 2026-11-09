@@ -54,3 +54,11 @@ def data_dir(tmp_path):
     d = tmp_path / "plugin-data"
     d.mkdir()
     return d
+
+
+@pytest.fixture
+def owner_only_feature(monkeypatch):
+    """Planned follow-up: approvals.owner_only is gated off in v1. Tests of the gated
+    enrollment/authorization code opt in here; production never sets this."""
+    from alchemy_task import discovery_integration
+    monkeypatch.setattr(discovery_integration, 'OWNER_ONLY_AVAILABLE', True, raising=False)

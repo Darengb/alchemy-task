@@ -116,20 +116,15 @@ settings_url = base + '/settings'
 assert client.get(settings_url + mine).status_code == 401
 initial = client.get(settings_url + mine, headers=owner)
 assert initial.status_code == 200 and initial.json()['approvals']['owner_only'] is False, initial.text
-assert client.post(settings_url + mine, headers=owner, json={'approvals': {'owner_only': True}, 'user_approved': True}).status_code == 400
-# Owner identity must first come from a confirmed host-recorded sender in chat.
+# v1 gate: owner_only is a planned follow-up; turning it on is refused and writes nothing.
+refused = client.post(settings_url + mine, headers=owner, json={'approvals': {'owner_only': True}, 'user_approved': True})
+assert refused.status_code == 409 and refused.json()['error']['code'] == 'not_available', refused.text
+assert 'not available in this version' in refused.json()['error']['message'], refused.text
+assert client.get(settings_url + mine, headers=owner).json()['approvals'] == {'owner_only': False, 'owners': {}}
+# The gated rule itself still runs on state set directly (as the follow-up will write it).
 token = set_hermes_home_override(str(home))
 try:
-    from host_threads import HostSessions
-    from pytest import MonkeyPatch
-    mp = MonkeyPatch()
-    sessions = HostSessions(home, mp)
-    try:
-        sid = sessions.message(chat_id='100', chat_type='dm', user_id='synthetic-owner')
-        settings = api._service().configure_approvals({'owner_only': True}, session_id=sid, user_approved=True)
-        assert settings['owners'] == {'telegram': ['synthetic-owner']}
-    finally:
-        sessions.close(); mp.undo()
+    api._service().rt.ctx.state.set('discovery_approvals', {'owner_only': True, 'owners': {'telegram': ['synthetic-owner']}})
 finally:
     reset_hermes_home_override(token)
 assert client.get(settings_url + mine, headers=owner).json()['approvals']['owner_only'] is True
@@ -141,7 +136,8 @@ assert client.post(settings_url + mine, headers=owner, json={'approvals': {'owne
 changed = client.post(settings_url + mine, headers=owner, json={'approvals': {'owner_only': False}, 'user_approved': True})
 assert changed.status_code == 200 and changed.json()['approvals']['owner_only'] is False, changed.text
 assert client.get(settings_url + mine, headers=owner).json()['approvals']['owner_only'] is False
-assert client.post(settings_url + mine, headers=owner, json={'approvals': {'owner_only': True}, 'user_approved': True}).json()['approvals']['owner_only'] is True
+again = client.post(settings_url + mine, headers=owner, json={'approvals': {'owner_only': True}, 'user_approved': True})
+assert again.status_code == 409 and client.get(settings_url + mine, headers=owner).json()['approvals']['owner_only'] is False, again.text
 token = set_hermes_home_override(str(beta))
 try:
     assert api._service().approval_settings() == {'owner_only': False, 'owners': {}}

@@ -57,7 +57,7 @@ def test_quote_of_stream_a_beats_newer_stream_b(settings, data_dir, tmp_path, mo
 
 
 @pytest.mark.parametrize('action', ['revise', 'cancel'])
-def test_plan_changes_use_sender_rule_not_location(settings, data_dir, tmp_path, monkeypatch, action):
+def test_plan_changes_use_sender_rule_not_location(settings, data_dir, tmp_path, monkeypatch, action, owner_only_feature):
     from alchemy_task.core.discovery_dossiers import content_revision
     from alchemy_task.core.discovery_state import read_json
     s, rt, ctx, host, origin = fixture(settings, data_dir, tmp_path, monkeypatch)
@@ -85,7 +85,7 @@ def test_plan_changes_use_sender_rule_not_location(settings, data_dir, tmp_path,
         host.close()
 
 
-def test_scheduled_context_cannot_approve_or_change_settings(settings, data_dir, tmp_path, monkeypatch):
+def test_scheduled_context_cannot_approve_or_change_settings(settings, data_dir, tmp_path, monkeypatch, owner_only_feature):
     from gateway.session_context import set_session_vars, clear_session_vars
     s, rt, ctx, host, origin = fixture(settings, data_dir, tmp_path, monkeypatch)
     try:
@@ -126,7 +126,7 @@ def test_tasks_create_skip_through_public_tool(settings, data_dir, tmp_path, mon
         host.close()
 
 
-def test_owner_identity_is_confirmed_per_platform_with_host_alternate_id(settings, data_dir, tmp_path, monkeypatch):
+def test_owner_identity_is_confirmed_per_platform_with_host_alternate_id(settings, data_dir, tmp_path, monkeypatch, owner_only_feature):
     from gateway.session_context import set_session_vars, clear_session_vars
     s, rt, ctx, host, origin = fixture(settings, data_dir, tmp_path, monkeypatch)
     try:
