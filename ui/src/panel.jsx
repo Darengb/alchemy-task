@@ -222,12 +222,15 @@ export function TaskPanel({ id, narrow, onClose }) {
         <button type="button" className="at-field" onClick={pickArea}>
           <AreaDot area={task.area} /><span>{task.area || 'No area'}</span>
         </button>
-        <button type="button" className={cx('at-field', (task.priority === 'high' || task.priority === 'urgent') && 'is-high')} onClick={pickPriority}>
-          <span className="at-prio-glyph" data-p={task.priority || 'normal'} /><span>{(task.priority || 'normal').replace(/^\w/, (c) => c.toUpperCase())}</span>
-        </button>
-        {task.status === 'waiting' || task.status === 'in-progress' ? (
-          <button type="button" className="at-field" onClick={pickStatus}><span>{task.status === 'waiting' ? 'Waiting' : 'In progress'}</span></button>
-        ) : null}
+        {isDone(task) ? (
+          <span className="at-field at-status is-static" data-s={task.status}>
+            <span className="at-status-dot" /><span>{task.status === 'cancelled' ? 'Cancelled' : 'Done'}</span>
+          </span>
+        ) : (
+          <button type="button" className="at-field at-status" data-s={task.status || 'open'} onClick={pickStatus}>
+            <span className="at-status-dot" /><span>{(STATUSES.find(([v]) => v === task.status) || [0, 'Open'])[1]}</span>
+          </button>
+        )}
         {separateDue ? (
           <button type="button" className="at-field" onClick={pickDue}><span className="at-muted">Due</span><span>{D.relativeDay(task.due, today)}</span></button>
         ) : null}
@@ -246,8 +249,12 @@ export function TaskPanel({ id, narrow, onClose }) {
 
       <Disclosure title="More" className="at-more">
         <div className="at-more-grid">
-          <span className="at-muted">Status</span>
-          <button type="button" className="at-field is-plain" onClick={pickStatus}>{(STATUSES.find(([v]) => v === task.status) || [0, task.status])[1]}</button>
+          <span className="at-muted">Priority</span>
+          <span>
+            <button type="button" className={cx('at-field is-plain', (task.priority === 'high' || task.priority === 'urgent') && 'is-high')} onClick={pickPriority}>
+              <span className="at-prio-glyph" data-p={task.priority || 'normal'} /><span>{(task.priority || 'normal').replace(/^\w/, (c) => c.toUpperCase())}</span>
+            </button>
+          </span>
           <span className="at-muted">Due date</span>
           <span>
             {separateDue ? <button type="button" className="at-field is-plain" onClick={pickDue}>{D.shortDate(task.due, today)}</button>

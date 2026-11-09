@@ -960,3 +960,12 @@ html.at-dragging { -webkit-user-select: none; user-select: none; }
 .at-panel.is-side .at-panel-foot { padding: 28px 24px 20px; }
 /* While a task with the Start in chat button is open, messages sit above the button */
 .at-root:has(.at-panel-foot) .at-toasts { bottom: calc(104px + env(safe-area-inset-bottom, 0px)); }
+
+/* Status chip in the task's field row */
+.at-status-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--at-faint); }
+.at-status[data-s=in-progress] { color: var(--at-accent-text); border-color: rgba(110, 120, 255, .45); }
+.at-status[data-s=in-progress] .at-status-dot { background: var(--at-accent-text); box-shadow: 0 0 8px rgba(120, 130, 255, .8); }
+.at-status[data-s=waiting] .at-status-dot { background: var(--at-late); box-shadow: 0 0 8px rgba(255, 179, 92, .6); }
+.at-status[data-s=done] .at-status-dot { background: var(--at-ok); box-shadow: 0 0 8px rgba(91, 227, 166, .6); }
+.at-field.is-static { cursor: default; }
+.at-field.is-static:hover { background: rgba(160, 170, 255, .035); border-color: var(--at-line); color: var(--at-fg2); }
