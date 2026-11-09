@@ -827,8 +827,11 @@ class DiscoveryIntegration:
         a pending operation (an attempted explicit send still is)."""
         digest = data['digests'][run_id]
         if delivery.get('state') != 'prepared' or not digest.get('day'): return False
-        stream = self._stream_or_frozen(digest['stream'], digest['origin']['session_id'])
-        if stream.get('delivery_owner', 'native_origin') != 'native_origin': return False
+        # The owner frozen with the digest (N4); only digests from before N4 use the current stream's.
+        owner = digest['origin'].get('delivery_owner')
+        if not owner:
+            owner = self._stream_or_frozen(digest['stream'], digest['origin']['session_id']).get('delivery_owner', 'native_origin')
+        if owner != 'native_origin': return False
         zone = ZoneInfo(ledger['config'].get('timezone') or self.rt.settings.timezone)
         expires = (dt.date.fromisoformat(digest['day']) + dt.timedelta(days=7)).isoformat()
         return expires < self.utcnow().astimezone(zone).date().isoformat()

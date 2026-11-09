@@ -447,7 +447,7 @@ def test_start_prunes_old_closed_runs_but_keeps_replyable_and_resumable_ones(set
     assert store.source_state('archive', 'feed')['backlog'][0]['status'] == 'blocked'
 
 
-def _closed_work_run(integration, *, day, delivery, proposal_state=None):
+def _closed_work_run(integration, *, day, delivery, proposal_state=None, frozen_owner=None):
     """A finalized run of the SAME stream start() runs, with its digest record."""
     from alchemy_task.core.discovery_state import atomic_json
     store = integration.store
@@ -455,6 +455,8 @@ def _closed_work_run(integration, *, day, delivery, proposal_state=None):
     store.save_review(run, {'joined': {'accepted': [], 'failures': []}})
     data = integration.digest._load()
     data['digests'][run] = {'sha256': 'digest-sha', 'run_id': run, 'stream': 'work', 'day': day, 'origin': {'session_id': 'parent'}}
+    if frozen_owner:
+        data['digests'][run]['origin']['delivery_owner'] = frozen_owner  # N4: owner frozen at finalize
     data['delivery'][run] = {'digest_sha256': 'digest-sha', 'origin': {'session_id': 'parent'}, **delivery}
     if proposal_state:
         # One proposed unit whose plan was approved but not yet written.
@@ -502,3 +504,22 @@ def test_native_origin_runs_are_pruned_only_after_their_reply_window(settings, d
     assert store.run_dir(replyable).exists()  # still inside the seven-day reply window
     assert store.run_dir(approved).exists() and store.get_run(approved)['pending_operations'] == ['candidate:unit-1']
     assert store.run_dir(send_unknown).exists()  # an explicit send without proof is never forgotten
+
+
+def test_native_digest_window_follows_the_owner_frozen_with_the_digest(settings, data_dir, tmp_path):
+    """R2-4: a stream switched from native to verified-sender after a digest still closes that
+    native digest after its reply window; a never-sent verified-sender digest is never closed."""
+    from test_discovery_integration import configure, service
+    from alchemy_task.discovery import _streams, _save_streams
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    configure(integration)
+    store = integration.store
+    streams = _streams(rt); streams['work'] = {**streams['work'], 'delivery_owner': 'verified_sender'}; _save_streams(rt, streams)
+    native = _closed_work_run(integration, day='2026-01-01', delivery={'state': 'prepared'}, frozen_owner='native_origin')
+    unsent = _closed_work_run(integration, day='2026-01-01', delivery={'state': 'prepared'}, frozen_owner='verified_sender')
+    assert store.get_run(native)['pending_operations'] == []
+    assert store.get_run(unsent)['pending_operations'] == ['digest_delivery']
+    streams = _streams(rt); streams['work'] = {**streams['work'], 'delivery_owner': 'native_origin'}; _save_streams(rt, streams)
+    assert integration.reconcile_endstate(unsent)['pending_operations'] == ['digest_delivery']
+    out = store.prune(days=30)
+    assert native in out['deleted_runs'] and unsent not in out['deleted_runs']
