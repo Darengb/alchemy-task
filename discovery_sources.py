@@ -129,22 +129,38 @@ def normalize_mail_threads(threads, config):
             headers = {h['name'].lower(): h.get('value', '') for h in payload.get('headers', [])}
             sender = parseaddr(headers.get('from', ''))[1].lower()
             full.append({'id': msg['id'], 'from': sender, 'subject': headers.get('subject', ''), 'date': msg['internalDate'], 'body': extract_body_text(payload)})
-        allowed = config.get('sender_domains', [])
-        service = config.get('service_sender', '')
         if config.get('kind') == 'transcript':
-            relevant = any(m['from'] == service for m in full) if service else False
-        else:
-            relevant = not allowed or any(m['from'].rsplit('@', 1)[-1] in allowed for m in full)
-        # Narrow explicit single-message owner report only, never blanket owner.
+            service = config.get('service_sender', '').strip().lower()
+            for raw, msg in zip(ordered, full):
+                when = int(msg['date']) / 1000
+                if not service or msg['from'] != service:
+                    continue
+                if config.get('window_start') and when < _date(config['window_start']).timestamp():
+                    continue
+                if config.get('window_end') and when > _date(config['window_end']).timestamp():
+                    continue
+                steps = extract_suggested_next_steps(msg['body'])
+                if not steps:
+                    continue
+                msg['suggested_next_steps'] = steps
+                identity = canonical_source_id(f"gmail:{config['account_key']}:{tid}:{msg['id']}")
+                candidate = {'title': msg['subject'] or 'Meeting follow-up', 'source_ids': [identity], 'source_revision': hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest(), 'source_key': config['source_key']}
+                out.append({'candidate': candidate, 'messages': [msg], 'latest_activity': int(msg['date'])})
+            continue
+        allowed = {str(x).strip().lower() for x in config.get('sender_domains', [])}
+        excluded = {str(x).strip().lower() for x in config.get('excluded_senders', [])}
+        relevant = any(m['from'] not in excluded and (not allowed or m['from'].rsplit('@', 1)[-1] in allowed) for m in full)
+        # Source narrow one-message owner report, case-insensitive, not owner-only.
         report = config.get('owner_report_pattern')
-        owner_only_report = len(full) == 1 and full[0]['from'] == config.get('owner_email') and report and re.search(report, full[0]['subject'])
+        subject = next((m['subject'] for m in full if m['subject']), '')
+        owner_only_report = len(full) == 1 and full[0]['from'] == config.get('owner_email', '').strip().lower() and report and re.search(report, subject, re.I)
         if not relevant or owner_only_report:
             continue
-        if config.get('kind') == 'transcript':
-            for msg in full: msg['suggested_next_steps'] = extract_suggested_next_steps(msg['body'])
+        if config.get('window_start') and int(ordered[-1]['internalDate']) < int(_date(config['window_start']).timestamp()) * 1000:
+            continue
         identity = canonical_source_id(f"gmail:{config['account_key']}:{tid}")
         revision = hashlib.sha256(json.dumps(ordered, sort_keys=True).encode()).hexdigest()
-        candidate = {'title': full[-1]['subject'] or 'Mail follow-up', 'source_ids': [identity], 'source_revision': revision, 'source_key': config['source_key']}
+        candidate = {'title': subject or 'Mail follow-up', 'source_ids': [identity], 'source_revision': revision, 'source_key': config['source_key']}
         out.append({'candidate': candidate, 'messages': full, 'latest_activity': int(ordered[-1]['internalDate'])})
     return sorted(out, key=lambda x: x['latest_activity'])
 
@@ -348,12 +364,22 @@ def extract_body_text(payload: dict) -> str:
     # Fallback: strip HTML tags from text/html
     if mime == "text/html":
         html = _decode_b64(body.get("data", ""))
-        return re.sub(r"<[^>]+>", "", html)
+        return _html_to_text(html)
     for p in parts:
         if p.get("mimeType") == "text/html":
             html = _decode_b64((p.get("body") or {}).get("data", ""))
-            return re.sub(r"<[^>]+>", "", html)
+            return _html_to_text(html)
     return ""
+
+def _html_to_text(raw_html: str) -> str:
+    # Source block/list boundaries must precede tag stripping.
+    text = re.sub(r"(?i)<\s*br\s*/?\s*>", "\n", raw_html)
+    text = re.sub(r"(?i)</\s*(?:p|div|li|tr|h[1-6])\s*>", "\n", text)
+    text = re.sub(r"(?i)<\s*li[^>]*>", "\n- ", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = html.unescape(text)
+    return _normalize_text(text)
+
 
 def _normalize_text(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\u00a0", " ")
@@ -402,8 +428,8 @@ def extract_suggested_next_steps(body: str) -> str:
                 break
             section.append(line)
         text = _normalize_text("\n".join(section))
-        if text:
-            return text
+        # An explicit empty section must not fall back across the next heading.
+        return text
 
     # Fallback: inline/HTML-flattened section.
     m = re.search(
