@@ -113,6 +113,12 @@ export function areaColor(area) {
   return `hsl(${AREA_HUES[h % AREA_HUES.length]} 78% 68%)`
 }
 
+/** Scroll handler for panel bodies: marks the panel while its content sits under the top bar, which shows the fade. */
+export const markScrolled = (e) => {
+  const el = e.currentTarget
+  if (el.parentElement) el.parentElement.classList.toggle('is-scrolled', el.scrollTop > 2)
+}
+
 // ------------------------------------------------------------------ sheet swipe-to-close
 /**
  * Lets a phone sheet be pulled down to close. A pull starts from the sheet's top bar at any time, or from

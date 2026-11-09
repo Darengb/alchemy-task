@@ -865,3 +865,13 @@ html.at-dragging { -webkit-user-select: none; user-select: none; }
 .at-panel.is-sheet .at-panel-bar .at-iconbtn .at-icon { width: 22px; height: 22px; }
 .at-panel.is-sheet .at-panel-bar .at-iconbtn[aria-label=Close] { background: rgba(160, 170, 255, .08); border-color: var(--at-line-soft); }
 .at-panel.is-sheet .at-panel-body { overscroll-behavior-y: none; }
+
+/* Panel content fades out as it scrolls under the top bar, instead of meeting it at a hard edge. */
+.at-panel-bar { z-index: 3; }
+.at-panel-bar::after {
+  content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 36px; pointer-events: none;
+  background: linear-gradient(180deg, #0d0f42 0%, rgba(13, 15, 66, .85) 25%, rgba(13, 15, 66, .4) 62%, rgba(13, 15, 66, 0) 100%);
+  opacity: 0; transition: opacity .2s;
+}
+.at-panel.is-scrolled .at-panel-bar::after { opacity: 1; }
+.at-panel.is-sheet .at-panel-bar { border-radius: 18px 18px 0 0; background: #0d0f42; }

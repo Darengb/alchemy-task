@@ -3,7 +3,7 @@
 import React from 'react'
 import { describeError } from './api.js'
 import { useApp } from './store.js'
-import { AreaDot, Button, Icon, IconButton, Menu, Spinner, cx, useOverlay, useSheetDismiss, useToast } from './ui.jsx'
+import { AreaDot, Button, Icon, IconButton, Menu, Spinner, cx, useOverlay, markScrolled, useSheetDismiss, useToast } from './ui.jsx'
 
 const FREQUENCIES = [
   ['daily', 'Every day'], ['weekdays', 'Weekdays'], ['every 4 hours', 'Every 4 hours'],
@@ -48,7 +48,7 @@ export function SettingsPanel({ onClose, inline, narrow }) {
         <span className="at-flex" />
         <IconButton icon="x" label="Close" onClick={onClose} />
       </div>
-      <div className="at-panel-body at-scroll">{body}</div>
+      <div className="at-panel-body at-scroll" onScroll={markScrolled}>{body}</div>
     </aside>
   )
 }

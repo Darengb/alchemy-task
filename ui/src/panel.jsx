@@ -6,7 +6,7 @@ import * as D from './lib/dates.js'
 import { parseBlocks, renderBlocks, splitSections, toggleLine, managedTitle, extractManaged, rebuildBody } from './lib/markdown.js'
 import { describeError } from './api.js'
 import { useApp, useStore } from './store.js'
-import { AreaDot, Button, Check, DatePicker, Disclosure, Icon, IconButton, Menu, Spinner, cx, useOverlay, useSheetDismiss, useToast } from './ui.jsx'
+import { AreaDot, Button, Check, DatePicker, Disclosure, Icon, IconButton, Menu, Spinner, cx, useOverlay, markScrolled, useSheetDismiss, useToast } from './ui.jsx'
 import { isDone } from './tasks.jsx'
 
 const PRIORITIES = ['urgent', 'high', 'normal', 'low']
@@ -194,7 +194,7 @@ function PanelShell({ narrow, onClose, actions, children }) {
         {actions}
         <IconButton icon="x" label="Close" onClick={onClose} />
       </div>
-      <div className="at-panel-body at-scroll">{children}</div>
+      <div className="at-panel-body at-scroll" onScroll={markScrolled}>{children}</div>
     </aside>
   )
 }
