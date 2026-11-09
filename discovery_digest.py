@@ -64,14 +64,24 @@ class DiscoveryDigest:
             lines.append(f"{dt.date.fromisoformat(day).strftime('%A')}: {len(numbered)} new proposals; {len(outcomes or []) + len(blocked)} existing-task outcomes; {len(failures)} failures" + ('; degraded' if degraded else ''))
             lines.append('Review: ' + hashlib.sha256(run.encode()).hexdigest()[:12])
             for item in numbered:
-                qualifier = ' [update or create]' if item['kind'] in {'semantic', 'selection'} else ''
-                lines.append(f"**{item['ref']}.** {item['title']}{qualifier}")
+                semantic = item['kind'] in {'semantic', 'selection'}
+                lines.append(f"**{item['ref']}.** {item['title']}")
+                # Source task relationship labels; they never change numbering or matching.
+                if semantic:
+                    lines.append('Task type: Potential existing task update')
+                    lines.append('Existing task: ' + '; '.join(t.get('title', 'Existing task') for t in item.get('targets', [])))
+                elif item.get('research_disposition') == 'uncertain':
+                    lines.append('Task type: Unsure')
+                else:
+                    lines.append('Task type: New task')
+                if item.get('research_disposition') == 'uncertain':
+                    lines.append('Why unsure: ' + '; '.join(item.get('uncertainty') or ['See verified open questions; user judgment required']))
                 if item.get('current_understanding'): lines.append('Current state: ' + item['current_understanding'])
                 if item.get('substantive_next_action'): lines.append('Next action: ' + item['substantive_next_action'])
-                if item['kind'] in {'semantic', 'selection'}:
-                    lines.append('Potential overlap: ' + '; '.join(t.get('title', 'Existing task') for t in item.get('targets', [])))
-                if item.get('new_information'): lines.append('Addition: ' + '; '.join(item['new_information']))
-                if item.get('research_disposition') == 'uncertain': lines.append('Uncertain: ' + '; '.join(item.get('uncertainty') or ['See verified open questions; user judgment required']))
+                if item.get('new_information'): lines.append(('Proposed addition: ' if semantic else 'Addition: ') + '; '.join(item['new_information']))
+                if semantic:
+                    which = ' and name which existing task' if item['kind'] == 'selection' else ''
+                    lines.append(f'Choice: reply "{item["ref"]}, update"{which} to add this to the existing task, or "{item["ref"]}, create" for a separate task.')
                 if item.get('source_links'): lines.append('Sources: ' + ' '.join(item['source_links']))
                 # Source: inaccessible supporting sources are evidence limits, kept in the item record only.
                 lines.append('---')
