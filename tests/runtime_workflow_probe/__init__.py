@@ -22,7 +22,7 @@ def register(ctx):
                 result=fn(**kw)
                 s=service()
                 if not result and s.runner._child_for(kw.get('session_id',''),kw.get('task_id','')):
-                    allowed={'tool_search','tool_describe','tool_call','discovery_research_fetch','discovery_research_submit','workflow_probe_stress'}
+                    allowed={'tool_search','tool_describe','tool_call','discovery_research_fetch','discovery_research_submit'}
                     tool=kw.get('tool_name','');nested=(kw.get('args') or {}).get('calls',[]) if tool=='tool_call' else []
                     if isinstance(nested,str):
                         try:nested=json.loads(nested)
@@ -105,49 +105,3 @@ def register(ctx):
         docs=[{'id':d.task_id,'title':d.title,'status':str(d.fm.get('status')),'body':d.body,'path':s.rt.store().rel(d.path)} for d in s.rt.store().scan().tasks if d.title.startswith('ZZZ') or 'discovery-dossier:start' in d.body]
         return json.dumps({'runtime':{'pid':os.getpid(),'thread':threading.current_thread().name},'local_head':git('rev-parse','HEAD'),'remote_head':remote,'local_tree':git('rev-parse','HEAD^{tree}'),'remote_tree':subprocess.run(['git','--git-dir',str(root/'remote.git'),'rev-parse','refs/heads/main^{tree}'],capture_output=True,text=True).stdout.strip(),'status':git('status','--short'),'tasks':len(s.rt.store().scan().tasks),'relevant_docs':docs,'provider_calls':ctx.state.get('provider-calls',default=[]),'messages':json.loads((root/'messages.json').read_text()) if (root/'messages.json').exists() else [],'engine_hashes':{f:hashlib.sha256((Path(__file__).parent/f).read_bytes()).hexdigest() for f in ['discovery_runner.py','discovery_integration.py','core/discovery_state.py']}})
     add('workflow_probe_receipt',receipt)
-    def stress(a,session_id='',task_id='',**kw):
-        """Authentic child-only512KiB multipart protocol fixture. Fixture-generated single-unit bundle, NOT LLM512KiB or semantic acceptance."""
-        s=service();found=s.runner._child_for(session_id,task_id)
-        if not found or not found[1]:raise ValueError('authentic bound child required')
-        run,attempt=found;s.runner._authorize(run,attempt['token'],session_id=session_id,task_id=task_id)
-        supplied=copy.deepcopy(a['payload'])
-        if not isinstance(supplied.get('workstreams'),list) or not supplied['workstreams']:raise ValueError('small researched model payload required')
-        # Explicit PROTOCOL FIXTURE transform, not repair of deliverable research:
-        # select one real model-authored current unit, assign genuine fixture
-        # decisive identity, omit optional multi-action keys, then add filler.
-        unit=next((x for x in supplied['workstreams'] if x.get('disposition')=='retain'),supplied['workstreams'][0])
-        unit=copy.deepcopy(unit)
-        for key in ('action_key','action_anchor','action_relation'):unit.pop(key,None)
-        unit['exact_source_ids']=[{'type':'source','source_key':'feed','account_key':'account','object_kind':'issue','object_id':'print','message_id':'latest'}]
-        unit['related_source_ids']=[];unit['errors']=[];unit['represented_candidate_ids']=[];unit['research_status']='sufficient';unit['disposition']='retain'
-        payload={'candidate_id':attempt['candidate_id'],'workstreams':[unit]};target=512*1024
-        def encoded():return (json.dumps(payload,indent=2,sort_keys=True,ensure_ascii=False)+'\n').encode()
-        fields=['implementation_context','dependencies_and_risks','new_information']
-        for field in fields:unit[field]=[]
-        last=None
-        for field in fields:
-            for i in range(50):
-                if len(encoded())==target:break
-                unit[field].append('');remaining=target-len(encoded())
-                if remaining<0:
-                    unit[field].pop()
-                    if last:last[0][last[1]]+='x'*(target-len(encoded()))
-                    break
-                unit[field][-1]='x'*min(3900,remaining);last=(unit[field],len(unit[field])-1)
-            if len(encoded())==target:break
-        raw=encoded()
-        if len(raw)!=target:raise ValueError('fixture filler target not reached')
-        from .discovery_runner import BINDING_KEYS
-        base={'run_id':run,'token':attempt['token'],'binding':{k:attempt[k] for k in BINDING_KEYS}}
-        parts=[raw.decode()[i:i+12000] for i in range(0,len(raw.decode()),12000)];responses=[]
-        def dispatch(upload):
-            result=ctx.dispatch_tool('discovery_research_submit',{**base,'upload':upload},session_id=session_id,task_id=task_id)
-            result=json.loads(result) if isinstance(result,str) else result;responses.append(result)
-            if result.get('ok') is False:raise ValueError('actual multipart handler rejected protocol phase: '+str(result.get('error')))
-        dispatch({'action':'begin','total_bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),'part_count':len(parts)})
-        for index,content in enumerate(parts):dispatch({'action':'part','index':index,'content':content})
-        dispatch({'action':'commit'})
-        saved=s.store.get_attempt(run,attempt['token'])
-        out={'label':'PROTOCOL ONLY: fixture selects one model unit, fixes genuine synthetic identity, generates filler; NOT LLM512KiB, semantic acceptance or repaired discovery research','bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),'parts':len(parts),'responses':len(responses),'payload':saved.get('payload'),'evidence':saved.get('evidence'),'validation_error':saved.get('validation_error'),'actual_child_session':session_id,'runtime':{'pid':os.getpid(),'thread':threading.current_thread().name}}
-        ctx.state.set('workflow-stress-receipt:'+run,out);return json.dumps(out)
-    add('workflow_probe_stress',stress,{'payload':{'type':'object'}},['payload'])
