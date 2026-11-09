@@ -295,6 +295,11 @@ class SourceAdapter:
                     break
                 next_cursor = page['next_cursor']
                 if page['pagination_exhausted'] is True and next_cursor is None:
+                    partial = (page.get('collection') or {}).get('partial')
+                    if partial:
+                        # Items are kept, but a truncated primary earns no coverage.
+                        error = ('partial primary coverage: ' + '; '.join(map(str, partial)))[:500]
+                        break
                     exhausted, status = True, 'complete'
                     break
                 if not isinstance(next_cursor, str) or not next_cursor or next_cursor in seen:

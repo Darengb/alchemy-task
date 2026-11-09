@@ -209,7 +209,8 @@ def _slack_page(config, start, end, seeds, read_replies):
             raise UserError('contradictory Slack seed message content')
         seed_messages[key] = {**previous, **message, 'text':old if len(old)>len(new) else new}
     groups = group_slack_seeds(list(seed_messages.values()))
-    blocks = []
+    blocks, partial = [], []
+    truncated = set()
 
     def acquire(request, *, counted=False):
         if read_replies is None:
@@ -221,7 +222,10 @@ def _slack_page(config, start, end, seeds, read_replies):
             if page.get('recipe_complete') is not True:
                 raise UserError('Slack counted context recipe incomplete')
         elif not _pagination(page):
-            raise UserError('Slack thread/between pagination incomplete')
+            # Source reads one 200-limit page and keeps sibling threads. The
+            # unexhausted primary is kept, flagged and reported as partial.
+            truncated.add((request['channel'], request.get('ts') or request.get('oldest')))
+            partial.append(f"Slack {request['operation']} {request['channel']}:{request.get('ts') or request.get('oldest')} not exhausted")
         return page['items']
 
     for group in groups:
@@ -268,10 +272,14 @@ def _slack_page(config, start, end, seeds, read_replies):
             containing['item']['messages'] = sorted(retained.values(), key=lambda m:Decimal(m['ts']))
             containing['item']['source_revision'] = _hash(containing['item']['messages'])
             continue
-        blocks.append({'channel_id':cid,'signature':signature,'item':{
-            'title': cluster[0].get('text') or 'Conversation follow-up',
-            'source_key':config['source_key'],'source_ids':ids,
-            'source_revision':_hash(ordered),'messages':ordered,
-            'context_recipe':group['kind'],'permalink':cluster[0].get('permalink','')}})
+        item = {'title': cluster[0].get('text') or 'Conversation follow-up',
+                'source_key':config['source_key'],'source_ids':ids,
+                'source_revision':_hash(ordered),'messages':ordered,
+                'context_recipe':group['kind'],'permalink':cluster[0].get('permalink','')}
+        if (cid, anchor) in truncated:
+            item.update(partial=True, partial_reason='primary conversation has more messages than one provider page')
+        blocks.append({'channel_id':cid,'signature':signature,'item':item})
+    collection = {'coverage':'all approved seed queries plus finite primary recipe; not whole-channel history'}
+    if partial: collection['partial'] = partial
     return _envelope(config,start,end,[b['item'] for b in blocks],next_cursor=None,pagination_exhausted=True,
-                     collection={'coverage':'all approved seed queries plus finite primary recipe; not whole-channel history'})
+                     collection=collection)
