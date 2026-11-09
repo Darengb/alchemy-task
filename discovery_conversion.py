@@ -324,6 +324,7 @@ class DiscoveryConversion:
             doc = hits[0]
             body = doc.body
             ids = doc.fm.get('dossier_ids')
+            if isinstance(ids, str): ids = [ids]  # source accepts a scalar ID
             if not isinstance(ids, list) or dossier_id not in ids:
                 # Source _inline_dossier_valid also requires the frontmatter link.
                 repairs.append({**base, 'reason': 'dossier_ids missing dossier'}); continue

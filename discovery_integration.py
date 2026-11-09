@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+import re
 import hashlib
 import sqlite3
 from zoneinfo import ZoneInfo
@@ -415,8 +416,14 @@ class DiscoveryIntegration:
             content = fields.get('content')
             failure.content = json.dumps(content).encode() if isinstance(content, dict) else content
             raise failure
-        if not isinstance(raw, dict) or raw.get('error') or raw.get('ok') is False or raw.get('success') is False:
+        if not isinstance(raw, dict):
             raise UserError('approved reader returned failure/nonstructured response')
+        if raw.get('error') or raw.get('ok') is False or raw.get('success') is False:
+            # A structured provider-reported failure (for example Slack's
+            # thread_not_found). Callers that skip one thread can name it.
+            code = raw.get('error') if isinstance(raw.get('error'), str) else 'failure'
+            raise UserError('approved reader returned failure/nonstructured response',
+                            details={'provider_error': re.sub(r'[^A-Za-z0-9_.-]', '', code)[:60] or 'failure'})
         # Missing fields remain missing. Never echo request account/window into a
         # provider receipt or invent pagination_exhausted from a short page.
         result = {name: _pick(raw, path) for name, path in binding['response_fields'].items()}
@@ -725,6 +732,8 @@ class DiscoveryIntegration:
         data = self.digest._load()
         delivery = data['delivery'].get(run_id, {})
         pending = [] if delivery.get('state') == 'delivered' and delivery.get('verified_sha256') == data['digests'][run_id]['sha256'] and delivery.get('readback') else ['digest_delivery']
+        if pending and self._native_delivery_closed(run_id, ledger, data, delivery):
+            pending = []
         decisions = {}
         for candidate in ledger['candidates']:
             if not candidate.get('parent_candidate_id'): continue
@@ -742,11 +751,26 @@ class DiscoveryIntegration:
             decisions[wid] = 'complete' if complete else 'proposed'
         with self.store._lock(self.store._run_lock_name(run_id)):
             current = self.store.get_run(run_id)
+            changed = current.get('pending_operations') != pending
             for candidate in current['candidates']:
-                if candidate['candidate_id'] in decisions: candidate['state'] = decisions[candidate['candidate_id']]
+                if candidate['candidate_id'] in decisions and candidate.get('state') != decisions[candidate['candidate_id']]:
+                    candidate['state'] = decisions[candidate['candidate_id']]; changed = True
             current['pending_operations'] = pending
-            self.store._save(run_id, current)
+            # An unchanged ledger is not rewritten: its mtime is the retention age.
+            if changed: self.store._save(run_id, current)
         return {'state': 'pending' if pending else 'resolved', 'pending_operations': pending}
+
+    def _native_delivery_closed(self, run_id, ledger, data, delivery):
+        """Native host delivery holds no plugin receipt to verify. Once the
+        seven-day reply window is over, an untouched native digest is no longer
+        a pending operation (an attempted explicit send still is)."""
+        digest = data['digests'][run_id]
+        if delivery.get('state') != 'prepared' or not digest.get('day'): return False
+        stream = self._stream_or_frozen(digest['stream'], digest['origin']['session_id'])
+        if stream.get('delivery_owner', 'native_origin') != 'native_origin': return False
+        zone = ZoneInfo(ledger['config'].get('timezone') or self.rt.settings.timezone)
+        expires = (dt.date.fromisoformat(digest['day']) + dt.timedelta(days=7)).isoformat()
+        return expires < self.utcnow().astimezone(zone).date().isoformat()
 
     def _retain_legacy(self, stream):
         legacy = self.rt.ctx.state.get('proposals:' + stream, default={}) or {}
@@ -989,7 +1013,7 @@ class DiscoveryIntegration:
                 if receipt.get('applied_at'): outcome['applied_at'] = receipt['applied_at']
         result['summary'] = {state: sum(p['state'] == state for p in proposals) for state in ('pending', 'approved', 'complete', 'dismissed')}
         result['summary'].update(auto_updated=sum(o['status'] in {'local_verified', 'git_pending', 'phone_pending', 'complete'} for o in result['outcomes']),
-                                 conflicts=len(result['conflicts']), failures=len(result['failures']))
+                                 conflicts=len(result['conflicts']), failures=len(result['failures']), deferred=len(result['deferred']))
         result['degraded'] = bool(result['failures'] or any(c.get('status') != 'complete' for c in result['coverage']))
         return result
 

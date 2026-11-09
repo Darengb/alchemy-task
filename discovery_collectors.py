@@ -223,7 +223,14 @@ def _slack_page(config, start, end, seeds, read_replies):
     def acquire(request, *, counted=False):
         if read_replies is None:
             raise UserError('Slack primary acquisition requires approved read_replies')
-        page = read_replies(copy.deepcopy(config), start, end, request)
+        try:
+            page = read_replies(copy.deepcopy(config), start, end, request)
+        except UserError as exc:
+            # Source slack_daily_followups.py:364-367 skips a thread whose fetch
+            # fails at the provider. Contract violations still fail the source.
+            if (exc.details or {}).get('provider_error'):
+                raise _SlackThreadError('provider error ' + exc.details['provider_error']) from exc
+            raise
         _validate(page, config, start, end)
         if counted:
             # Count-limited neighbor context is NOT global history exhaustion.

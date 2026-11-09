@@ -133,6 +133,24 @@ def test_cap_reached_still_runs_an_already_charged_repair(tmp_path):
     assert sorted(joined['accepted']) == sorted(ids[:2])
 
 
+def test_timeout_retry_runs_even_when_cap_is_exhausted(tmp_path):
+    # The retry becomes eligible only on the parent's SECOND research call,
+    # after the cap is already exhausted and a never-started candidate is
+    # refused first: that refusal must not drop the charged retry.
+    runner, store, pool, run = make(tmp_path, 3, {0: ['hang', 'valid']}, daily_limit=2)
+    ids = parents(store, run)
+    runner.run(run, session_id='parent')
+    accept_all(runner, store, run)
+    runner.run(run, session_id='parent')
+    accept_all(runner, store, run)
+    assert [a['ordinal'] for a in attempts_for(store, run, ids[0])] == [1, 2]
+    assert charged_units(store) == 2
+    joined = runner.join(run, session_id='parent')
+    assert joined['joined'] and not joined['failures']
+    assert sorted(joined['accepted']) == sorted(ids[:2])
+    assert [d['candidate_id'] for d in joined['deferred']] == [ids[2]]
+
+
 def test_budget_deferred_lists_each_candidate_once(tmp_path):
     runner, store, pool, run = make(tmp_path, 5, {}, daily_limit=2)
     ids = parents(store, run)
@@ -203,6 +221,36 @@ def test_child_of_an_unknown_discovery_launch_stays_blocked(tmp_path):
     pool.launch = lost
     runner.run(run, session_id='parent')
     assert runner.pre_tool_call(tool_name='task_create', session_id='lost-child', task_id='sa-lost')['action'] == 'block'
+
+
+def test_child_start_between_launch_reply_and_bind_is_still_a_discovery_child(tmp_path):
+    # Simulated host whose subagent_start lands after launch returns but before
+    # the runner binds the handle (the contract lets start and return race).
+    runner, store, pool, run = make(tmp_path, 1, {})
+    original_launch, original_bind, real_start = pool.launch, store.bind_attempt, runner.subagent_start
+    seen = {}
+
+    def launch(request):
+        runner.subagent_start = lambda **kw: None  # the host has not fired the start hook yet
+        try:
+            seen['handle'] = original_launch(request)
+        finally:
+            runner.subagent_start = real_start
+        return seen['handle']
+
+    def bind(run_id, token, handle, **kw):
+        if not seen.get('fired'):
+            seen['fired'] = True
+            real_start(parent_session_id='parent', child_session_id='late-child', child_subagent_id=handle['subagent_id'])
+        return original_bind(run_id, token, handle, **kw)
+    pool.launch, store.bind_attempt = launch, bind
+    try:
+        runner.run(run, session_id='parent')
+    except Exception:
+        pass  # the scripted child of this host cannot submit; the guard verdict is the outcome
+    assert seen.get('fired')
+    verdict = runner.pre_tool_call(tool_name='task_create', session_id='late-child', task_id='')
+    assert verdict and verdict['action'] == 'block'
 
 
 # ---------------------------------------------------------------- ORC-F5
@@ -358,7 +406,7 @@ def test_cap_deferral_is_a_separate_digest_line_and_stays_queued_for_the_next_ru
     backlog = {e['candidate']['title']: e['status'] for e in integration.store.source_state('work', 'feed')['backlog']}
     assert backlog == {'Review release notes': 'accepted', 'Plan vendor renewal': 'deferred'}
     record = call('discovery_runs', {'run_id': run})
-    assert record['summary']['failures'] == 0 and not record['degraded']
+    assert record['summary']['failures'] == 0 and record['summary']['deferred'] == 1 and not record['degraded']
     assert [d['title'] for d in record['deferred']] == ['Plan vendor renewal']
 
     # Same day, nothing new at the source: the deferred item is carried, researched
@@ -397,3 +445,60 @@ def test_start_prunes_old_closed_runs_but_keeps_replyable_and_resumable_ones(set
     assert not store.run_dir(old).exists() and store.get_run(old)['pruned_at']  # readable tombstone
     assert store.run_dir(recent).exists() and store.run_dir(unfinished).exists()
     assert store.source_state('archive', 'feed')['backlog'][0]['status'] == 'blocked'
+
+
+def _closed_work_run(integration, *, day, delivery, proposal_state=None):
+    """A finalized run of the SAME stream start() runs, with its digest record."""
+    from alchemy_task.core.discovery_state import atomic_json
+    store = integration.store
+    run = store.init_run(stream='work', business_date=day, origin={'session_id': 'parent'})
+    store.save_review(run, {'joined': {'accepted': [], 'failures': []}})
+    data = integration.digest._load()
+    data['digests'][run] = {'sha256': 'digest-sha', 'run_id': run, 'stream': 'work', 'day': day, 'origin': {'session_id': 'parent'}}
+    data['delivery'][run] = {'digest_sha256': 'digest-sha', 'origin': {'session_id': 'parent'}, **delivery}
+    if proposal_state:
+        # One proposed unit whose plan was approved but not yet written.
+        with store._lock(store._run_lock_name(run)):
+            ledger = store.get_run(run)
+            ledger['candidates'].append({'candidate_id': 'unit-1', 'parent_candidate_id': 'parent-1', 'state': 'proposed', 'title': 'Unit'})
+            store._save(run, ledger)
+        (store.run_dir(run) / 'decisions').mkdir(exist_ok=True)
+        atomic_json(store.run_dir(run) / 'decisions' / 'unit-1.json', {'request': {'decision': 'propose'}})
+        data['proposals']['p_unit'] = {'binding': {'run_id': run, 'unit_id': 'unit-1'}, 'state': proposal_state}
+    atomic_json(integration.digest.path, data)
+    # An earlier start already reconciled it; it has been untouched since.
+    integration.reconcile_endstate(run)
+    old = time.time() - 40 * 86400
+    import os
+    os.utime(store.run_dir(run) / 'ledger.json', (old, old))
+    return run
+
+
+def test_start_prunes_an_old_settled_run_of_the_stream_it_starts(settings, data_dir, tmp_path):
+    from test_discovery_integration import configure, service
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    configure(integration)
+    store = integration.store
+    verified = _closed_work_run(integration, day='2026-01-01', delivery={'state': 'delivered', 'verified_sha256': 'digest-sha', 'readback': {'message_id': 'm', 'target': 't'}})
+    integration.start('work', session_id='parent')
+    assert not store.run_dir(verified).exists() and store.get_run(verified)['pruned_at']
+
+
+def test_native_origin_runs_are_pruned_only_after_their_reply_window(settings, data_dir, tmp_path):
+    import datetime as dt
+    from test_discovery_integration import configure, service
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    configure(integration)
+    store = integration.store
+    today = dt.date.today().isoformat()
+    # The stream's default owner is native_origin: the host posts and retries,
+    # so the plugin never holds a verified receipt for these digests.
+    expired = _closed_work_run(integration, day='2026-01-01', delivery={'state': 'prepared'})
+    replyable = _closed_work_run(integration, day=today, delivery={'state': 'prepared'})
+    approved = _closed_work_run(integration, day='2026-01-01', delivery={'state': 'prepared'}, proposal_state='approved')
+    send_unknown = _closed_work_run(integration, day='2026-01-01', delivery={'state': 'unknown'})
+    integration.start('work', session_id='parent')
+    assert not store.run_dir(expired).exists() and store.get_run(expired)['pruned_at']
+    assert store.run_dir(replyable).exists()  # still inside the seven-day reply window
+    assert store.run_dir(approved).exists() and store.get_run(approved)['pending_operations'] == ['candidate:unit-1']
+    assert store.run_dir(send_unknown).exists()  # an explicit send without proof is never forgotten
