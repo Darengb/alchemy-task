@@ -14,6 +14,7 @@ from test_discovery_integration import service, configure
 from test_discovery_conversion import custom_joined
 from test_discovery_schema import bundle
 from test_discovery_state import setup, prepare, read_all
+from test_setup import home  # noqa: F401  (fixture)
 
 
 # ---------------------------------------------------------------- helpers
@@ -27,7 +28,7 @@ def _coverage_complete(store, run):
     store.put_resource(run, 'collection-feed', {'source_key': 'feed', 'status': 'complete'})
 
 
-def build_run(data_dir, count):
+def build_run(data_dir, count, state=''):
     """A joined run with `count` accepted candidates, each its own decisive message."""
     store, run, items = setup(data_dir, count=count)
     wids = []
@@ -36,6 +37,7 @@ def build_run(data_dir, count):
         b = bundle(); b['candidate_id'] = a['candidate_id']
         w = b['workstreams'][0]
         w['exact_source_ids'][0]['message_ts'] = f'171.{i + 2}'
+        if state: w['current_understanding'] = state
         w['title'] = f'Ask {i}'
         receipt = store.spool_payload(run, a['token'], b)
         store.observe_terminal(run, a['token'], state='SUCCEEDED', receipt={'state': 'SUCCEEDED'})
@@ -114,6 +116,8 @@ def test_reply_in_thread_keyed_on_its_own_channel_resolves_through_parent_chat(s
 
 
 @pytest.mark.parametrize('origin,reply', [
+    # another chat (cross-chat isolation)
+    (dict(chat_id='123', chat_type='dm'), dict(chat_id='456', chat_type='dm')),
     # another chat's thread
     (dict(chat_id='123', chat_type='dm'), dict(chat_id='456', chat_type='dm', thread_id='99')),
     # origin has its own topic: the host never opens a new thread, so another topic is refused
@@ -216,3 +220,136 @@ def test_new_unsure_and_potential_update_items_carry_source_labels_and_choice(se
     text = digest['text']
     assert 'Task type: Potential existing task update' in text and 'Existing task: Plan the launch page' in text
     assert f'Choice: reply "{ref}, update" to add this to the existing task, or "{ref}, create" for a separate task' in text
+
+
+# ---------------------------------------------------------------- streams sharing a chat
+
+def _finalized(integration, data_dir, *, stream, origin_session, title):
+    """Finalize one proposal for `stream` the way the stream's own run would."""
+    store, run, items, wids = build_run(data_dir, 1, state=f'{stream} stream view of the launch.')
+    with store._lock(store._run_lock_name(run)):
+        ledger = store.get_run(run)
+        ledger['origin'] = {'session_id': origin_session}
+        ledger['config']['stream_name'] = stream
+        store._save(run, ledger)
+    integration.record_decision(run, wids[0], decision='propose', reason='No task.', session_id=origin_session)
+    digest = integration.finalize(run, session_id=origin_session)
+    assert digest['items'][0]['title'] == 'Ask 0'
+    return digest
+
+
+def _two_streams(rt, ctx, sessions):
+    from alchemy_task import discovery
+    ctx.state.set('streams', {})
+    ctx.state.set('timezone_confirmed', True)
+    for name, sid in zip(('work', 'home'), sessions):
+        discovery.create_stream(rt, {'name': name, 'areas': [name], 'sources': [{'name': 'Feed', 'scope': ['board'], 'method': 'reader'}],
+                                     'user_approved': True}, sid)
+    return ctx.state.get('streams')
+
+
+def test_two_streams_created_in_one_chat_from_different_sessions_get_distinct_prefixes(settings, data_dir, tmp_path, monkeypatch, home):
+    """Approved: letter prefixes when more than one stream delivers into the same CHAT;
+    a session reset (/new) between setups must not change that."""
+    from alchemy_task import discovery_integration
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    monkeypatch.setattr(discovery_integration, '_profile_home', lambda: integration.home)
+    chat = dict(chat_id='123', chat_type='dm', user_id='u1')
+    _host_sessions(integration.home, {'s-old': dict(chat), 's-new': dict(chat), 's-reply': dict(chat)})
+    streams = _two_streams(rt, ctx, ('s-old', 's-new'))
+    assert (streams['work']['label'], streams['home']['label']) == ('W', 'H')
+    work = _finalized(integration, data_dir, stream='work', origin_session='s-old', title='Ask 0')
+    home_digest = _finalized(integration, data_dir, stream='home', origin_session='s-new', title='Ask 0')
+    assert '**W1.** Ask 0' in work['text'] and '**H1.** Ask 0' in home_digest['text']
+    with pytest.raises(UserError, match='ambiguous'):        # bare number: ask which stream
+        integration.decide({'dismiss': ['1']}, session_id='s-reply', today='2030-01-01')
+    out = integration.decide({'dismiss': ['H1']}, session_id='s-reply', today='2030-01-01')
+    assert out['dismissed'] == [home_digest['items'][0]['proposal_id']]
+    # Separate chats keep plain numbers.
+    _host_sessions(integration.home, {'s-far': dict(chat_id='456', chat_type='dm', user_id='u1')})
+    from alchemy_task import discovery
+    discovery.remove_stream(rt, 'home')
+    discovery.create_stream(rt, {'name': 'home', 'areas': ['home'], 'sources': [{'name': 'Feed', 'scope': ['board'], 'method': 'reader'}],
+                                 'user_approved': True}, 's-far')
+    assert {s['label'] for s in ctx.state.get('streams').values()} == {''}
+
+
+def test_same_session_streams_freeze_prefix_into_digest_and_reply(settings, data_dir, tmp_path, monkeypatch, home):
+    """Two streams sharing one origin session render W1/H2; 'H2' resolves home."""
+    from alchemy_task import discovery_integration
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    monkeypatch.setattr(discovery_integration, '_profile_home', lambda: integration.home)
+    _two_streams(rt, ctx, ('parent', 'parent'))
+    work = _finalized(integration, data_dir, stream='work', origin_session='parent', title='Ask 0')
+    home_digest = _finalized(integration, data_dir, stream='home', origin_session='parent', title='Ask 0')
+    assert '**W1.** Ask 0' in work['text'] and '**H2.** Ask 0' in home_digest['text']
+    out = integration.decide({'dismiss': ['H2']}, session_id='parent', today='2030-01-01')
+    assert out['dismissed'] == [home_digest['items'][0]['proposal_id']]
+
+
+# ---------------------------------------------------------------- F4 removed stream
+
+def test_removing_a_stream_keeps_bare_replies_and_run_list_working_for_the_others(settings, data_dir, tmp_path, monkeypatch, home):
+    from alchemy_task import discovery, discovery_integration
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    monkeypatch.setattr(discovery_integration, '_profile_home', lambda: integration.home)
+    _two_streams(rt, ctx, ('parent', 'parent'))
+    work = _finalized(integration, data_dir, stream='work', origin_session='parent', title='Ask 0')
+    _finalized(integration, data_dir, stream='home', origin_session='parent', title='Ask 0')
+    discovery.remove_stream(rt, 'home')
+    assert ctx.state.get('streams')['work']['label'] == ''
+    assert len(integration.backend(session_id='parent')['runs']) == 2
+    before = task_files(settings)
+    result = integration.decide({'approve': ['W1'], 'edits': {'W1': {'area': 'work', 'undated': True}}},
+                                session_id='parent', today='2030-01-02')
+    assert result['results'][0]['state'] == 'complete'
+    assert len(set(task_files(settings)) - set(before)) == 1
+    assert integration.digest._load()['proposals'][work['items'][0]['proposal_id']]['state'] == 'complete'
+
+
+# ---------------------------------------------------------------- M1 seven-day window
+
+@pytest.mark.parametrize('today,ok', [('2030-01-07', True), ('2030-01-08', True), ('2030-01-09', False)])
+def test_numbered_approval_is_open_through_day_seven_and_refused_after(settings, data_dir, tmp_path, today, ok):
+    """Digest published 2030-01-01 is replyable through 2030-01-08; 2030-01-09 refuses with no write."""
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    _one_proposal(integration, data_dir)
+    before = task_files(settings)
+    args = {**APPROVE_1, 'day': '2030-01-01'}
+    if not ok:
+        with pytest.raises(UserError, match='expired'):
+            integration.decide(args, session_id='parent', today=today)
+        assert task_files(settings) == before
+        return
+    result = integration.decide(args, session_id='parent', today=today)
+    created = sorted(set(task_files(settings)) - set(before))
+    assert len(created) == 1
+    assert 'Choose the launch date.' in rt.store().resolve(result['results'][0]['task_id']).raw.decode()
+    integration.decide(args, session_id='parent', today=today)
+    assert sorted(set(task_files(settings)) - set(before)) == created
+
+
+# ---------------------------------------------------------------- SEM-009/010 and pure-chase rubric reach children
+
+def test_research_child_reads_the_frozen_rubric_with_handoff_authoritative_and_pure_chase_rules(settings, data_dir, tmp_path):
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    configure(integration)
+    run = integration.start('work', session_id='parent')['run_id']
+    ctx.dispatch_tool = lambda tool, args: json.dumps({'account_key': 'account', 'scope': args['scope'], 'start': args['start'], 'end': args['end'],
+        'items': [{'title': 'Review issue', 'source_ids': ['source:feed:account:issue:one'], 'source_revision': 'v1'}],
+        'next_cursor': None, 'pagination_exhausted': True})
+    integration.collect(run, 'feed', session_id='parent')
+    integration.freeze(run, session_id='parent')
+    store = integration.store
+    attempt = prepare(store, run, store.get_run(run)['candidates'][0]['candidate_id'])
+    assert 'rubric' in attempt['required_resources']
+    rubric = read_all(store, run, 'rubric', attempt['token'])
+    # Pure-chase prefilter rule (source "Candidate pre-filter").
+    assert "Exclude only pure chases of another explicit owner's work" in rubric
+    assert "Another owner's work may be a dependency without making the user's next step a pure chase." in rubric
+    # SEM-009 cross-channel handoffs and hidden links.
+    assert 'follow explicit cross-channel handoffs' in rubric and 'file chips' in rubric
+    assert 'open the actual linked assets' in rubric
+    # SEM-010 authoritative operating systems, active versus legacy records.
+    assert 'corroborate them read-only at that system' in rubric
+    assert 'Never prefer a legacy record because its title matches better.' in rubric

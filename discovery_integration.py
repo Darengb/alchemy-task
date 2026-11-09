@@ -155,6 +155,14 @@ class DiscoveryIntegration:
         from .discovery import _get
         return _get(self.rt, stream)
 
+    def _stream_or_frozen(self, name, origin_session):
+        """Saved stream, or a removed stream's frozen origin: its digests/runs keep their origin binding."""
+        from .discovery import DiscoveryError
+        try:
+            return self._stream(name)
+        except DiscoveryError:
+            return {'name': name, 'origin_session': origin_session}
+
     def confirm_identity(self, account_key, identity, *, user_confirmed=False):
         _component(account_key, 'account key')
         if user_confirmed is not True:
@@ -683,7 +691,7 @@ class DiscoveryIntegration:
     def delivery_status(self, run_id):
         digest = self.digest.get(run_id)
         receipt = self.digest.delivery(run_id)
-        stream = self._stream(digest['stream'])
+        stream = self._stream_or_frozen(digest['stream'], digest['origin']['session_id'])
         if stream.get('delivery_owner', 'native_origin') != 'native_origin': return receipt
         # Native cron owns posting/retries. Preparation and final return supply no
         # host transport evidence, even when an origin exists in SessionDB.
@@ -820,7 +828,7 @@ class DiscoveryIntegration:
         return digest
 
     def decide(self, args, *, session_id, today=None):
-        origins = {d['origin']['session_id'] for d in self.digest._load()['digests'].values() if (not args.get('stream') or d['stream'] == args['stream']) and self.origin_authorized(self._stream(d['stream']), session_id)}
+        origins = {d['origin']['session_id'] for d in self.digest._load()['digests'].values() if (not args.get('stream') or d['stream'] == args['stream']) and self.origin_authorized(self._stream_or_frozen(d['stream'], d['origin']['session_id']), session_id)}
         if len(origins) == 1: session_id = next(iter(origins))
         if today is None:
             candidates = [d for d in self.digest._load()['digests'].values() if d['origin']['session_id'] in origins | {session_id} and (not args.get('stream') or d['stream'] == args['stream'])]
@@ -893,17 +901,17 @@ class DiscoveryIntegration:
         if not isinstance(legacy_roots, (list, tuple)) or any(not isinstance(x, str) or not x.strip() for x in legacy_roots):
             raise UserError('legacy_roots must be workspace-relative folder names')
         visible = {r['run_id'] for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')}
-                   or self.origin_authorized(self._stream(r['config'].get('stream_name', r['stream'])), session_id)}
+                   or self.origin_authorized(self._stream_or_frozen(r['config'].get('stream_name', r['stream']), r['origin'].get('stream_origin_session', r['origin'].get('session_id'))), session_id)}
         return self.conversion.audit_links(run_ids=visible, legacy_roots=legacy_roots)
 
     def backend(self, run_id='', *, session_id):
         def project(ledger):
             run = ledger['run_id']
-            if session_id not in {ledger['origin'].get('session_id'), ledger['origin'].get('stream_origin_session')} and not self.origin_authorized(self._stream(ledger['config'].get('stream_name', ledger['stream'])), session_id):
+            if session_id not in {ledger['origin'].get('session_id'), ledger['origin'].get('stream_origin_session')} and not self.origin_authorized(self._stream_or_frozen(ledger['config'].get('stream_name', ledger['stream']), ledger['origin'].get('stream_origin_session', ledger['origin'].get('session_id'))), session_id):
                 self.runner._parent(run, session_id)
             return self.project_run(ledger)
         if run_id: return project(self.store.get_run(run_id))
-        return {'runs': [project(r) for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')} or self.origin_authorized(self._stream(r['config'].get('stream_name', r['stream'])), session_id)]}
+        return {'runs': [project(r) for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')} or self.origin_authorized(self._stream_or_frozen(r['config'].get('stream_name', r['stream']), r['origin'].get('stream_origin_session', r['origin'].get('session_id'))), session_id)]}
 
     def project_run(self, ledger):
         """Project durable state after the entrypoint has checked its caller."""
