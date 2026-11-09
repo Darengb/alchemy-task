@@ -442,3 +442,35 @@ def test_i_seven_day_reply_window(world, host_factory, offset, allowed):
         out = P.approve(host, ['1'], day='2026-11-03')
         assert out['ok'] is False and 'expired' in out['message']
         assert snapshot(world) == before
+
+
+# --------------------------------------------------------------------------- j / k: existing-task-only days
+@pytest.mark.xfail(strict=True, reason='semantics F1 (noop-only completed check), fixed on the Phase 4 branch')
+def test_j_noop_only_completed_check_says_no_new_followups(world, host_factory):
+    host = started_host(host_factory)
+    tid, existing = seed_normal(world, host)
+    host.source.pages = [[host.source.item('103', 'Fix login timeout')]]
+    before = snapshot(world)
+    day = P.run_day(host, decisions={'103': 'noop'})
+    text = day['digest']['text']
+    assert snapshot(world) == before  # noop: no task byte change, log, sync or commit
+    assert 'No new follow-ups found.' in text.splitlines(), text
+    assert 'noop' not in text and 'Fix login timeout' not in text, text
+    assert 'degraded' not in text and 'Reply with the numbers' not in text
+
+
+@pytest.mark.xfail(strict=True, reason='semantics F2 (multiple-exact conflict counted as failure), fixed on the Phase 4 branch')
+def test_k_multiple_exact_destinations_are_blocked_not_failures(world, host_factory):
+    host = started_host(host_factory)
+    for slug in ('fix-login-timeout', 'fix-login-timeout-copy'):
+        world.add_task(slug, 'Fix login timeout', notes='Tracked from source:feed:acct:issue:103 on the board.')
+    host.source.pages = [[host.source.item('103', 'Fix login timeout', revision='v2')]]
+    before = snapshot(world)
+    day = P.run_day(host)
+    text = day['digest']['text']
+    assert snapshot(world) == before  # never a guessed mutation
+    assert day['digest']['items'] == []  # unnumbered
+    head = header(day)
+    assert '0 failures' in head and 'degraded' not in head, text
+    assert any('Fix login timeout' in line and not line.startswith('Attention:') for line in text.splitlines()), text
+    assert day['record']['summary']['conflicts'] == 1 and day['record']['summary']['failures'] == 0
