@@ -166,7 +166,7 @@ class DiscoveryConversion:
                 if not expected_plan_revision and old['request'] != request:
                     raise UserError('conversion binding is immutable; resume exact saved conversion')
                 if not expected_plan_revision: return old
-                self._unwritten(old, run, wid, expected_plan_revision)
+                self._unwritten(old, run, wid, expected_plan_revision, target_may_change=True)
             task_store = self.rt.store()
             if choice != 'create':
                 targets = [t for t in outcome['targets'] if t['task_id'] == target_task_id]
@@ -289,12 +289,24 @@ class DiscoveryConversion:
             atomic_json(plan_path, plan)  # UUID, path and FULL postimage persisted BEFORE any task write
             return plan
 
-    def _unwritten(self, plan, run, wid, expected):
+    def _unwritten(self, plan, run, wid, expected, *, target_may_change=False):
+        """Refuse unless the plan provably never reached the task.
+
+        Cancel/revise may proceed after the user edited the target (stale plan),
+        because cancel writes nothing and revise re-reads with a fresh CAS. A merge
+        still needs the exact preimage.
+        """
         if content_revision(plan) != expected: raise UserError('stale conversion plan revision')
         _, receipt_path = self._paths(run, wid)
         path = self.rt.store().root / plan['path']
         actual = path.read_bytes() if path.exists() else None
-        if read_json(receipt_path) or (tf.content_hash(actual) if actual is not None else None) != plan['preimage_sha256']:
+        actual_hash = tf.content_hash(actual) if actual is not None else None
+        if actual_hash != plan['preimage_sha256']:
+            written = (actual_hash == plan['postimage_sha256'] or plan['preimage_sha256'] is None
+                       or f"**Content revision:** `{plan['dossier_revision']}`".encode() in actual)
+            if not target_may_change or written:
+                raise UserError('conversion may already be written or task changed; cannot revise/cancel pending plan')
+        if read_json(receipt_path):
             raise UserError('conversion may already be written or task changed; cannot revise/cancel pending plan')
         if plan.get('merge_group'): raise UserError('revise/cancel the whole merge group, not one member')
 
@@ -319,7 +331,7 @@ class DiscoveryConversion:
         with self.store._lock('conversion:' + run + ':' + wid):
             plan = read_json(plan_path)
             if not plan: raise UserError('no prepared plan to cancel')
-            self._unwritten(plan, run, wid, expected_plan_revision)
+            self._unwritten(plan, run, wid, expected_plan_revision, target_may_change=True)
             plan.update(state='cancelled', cancellation_reason=reason)
             atomic_json(plan_path, plan)
             return plan

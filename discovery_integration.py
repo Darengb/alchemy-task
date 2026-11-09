@@ -831,7 +831,7 @@ class DiscoveryIntegration:
             plan_path, _ = self.conversion._paths(run_id, unit_id)
             plan = read_json(plan_path)
             if plan and any(key not in plan['request'] or plan['request'][key] != value for key, value in edit.items()):
-                raise UserError('approval edits differ from immutable saved conversion; reconcile/cancel the unwritten plan explicitly or edit the existing task, never silently ignore corrections')
+                raise UserError('approval edits differ from the immutable saved conversion; revise or cancel the unwritten plan with discovery_conversion_recover (action=revise or action=cancel), or edit the existing task; corrections are never silently ignored')
             if not plan:
                 kind = proposal['kind']
                 choice = edit.pop('choice', 'create' if kind == 'new' else '')

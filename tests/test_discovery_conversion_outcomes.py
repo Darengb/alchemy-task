@@ -200,6 +200,64 @@ def test_enrichment_adds_one_dated_log_line_naming_the_revision(settings, data_d
     assert tf.parse_file(task.path).body.count('Discovery context added') == 1
 
 
+# ---------------------------------------------------------------- F4 stale unwritten plan has an exit
+def _stale_update_plan(settings, data_dir, tmp_path):
+    from test_discovery_conversion import custom_joined
+    tasks = TaskStore(settings, data_dir)
+    doc = tasks.create(title='Restore visibility', area='work', undated=True, research=False, notes='Mine.')
+    rt, store, run, wid, conv = custom_joined(settings, data_dir, tmp_path, [{'path': tasks.rel(doc.path), 'match_basis': 'related_only'}])
+    plan = conv.prepare(run, wid, choice='update', user_approved=True, reason='User chose update.', target_task_id=doc.task_id,
+                        expected_revision=tf.content_hash(doc.raw))
+    tasks.update(doc.task_id, {'notes_append': 'Edited after approval.'})
+    return tasks, doc, run, wid, conv, plan
+
+
+def test_stale_unwritten_update_plan_can_be_cancelled_without_touching_task(settings, data_dir, tmp_path):
+    tasks, doc, run, wid, conv, plan = _stale_update_plan(settings, data_dir, tmp_path)
+    edited = doc.path.read_bytes()
+    with pytest.raises(tf.ConcurrentEditError):
+        conv.apply(run, wid)
+    cancelled = conv.cancel(run, wid, expected_plan_revision=content_revision(plan), reason='User cancels the stale update.')
+    assert cancelled['state'] == 'cancelled'
+    assert doc.path.read_bytes() == edited and b'discovery-dossier' not in edited
+    assert not (conv.store.run_dir(run) / 'conversions' / (wid + '.receipt.json')).exists()
+
+
+def test_stale_unwritten_update_plan_can_be_revised_to_the_current_task(settings, data_dir, tmp_path):
+    tasks, doc, run, wid, conv, plan = _stale_update_plan(settings, data_dir, tmp_path)
+    fresh = tf.parse_file(doc.path)
+    conv.revise(run, wid, expected_plan_revision=content_revision(plan), edits={'expected_revision': tf.content_hash(fresh.raw)},
+                reason='Refresh to the current task.')
+    conv.apply(run, wid)
+    body = tf.parse_file(doc.path).body
+    assert 'Edited after approval.' in body and 'Mine.' in body and body.count('<!-- discovery-dossier:start ') == 1
+
+
+def test_cancel_refuses_once_the_postimage_was_written(settings, data_dir, tmp_path):
+    from test_discovery_conversion import custom_joined
+    tasks = TaskStore(settings, data_dir)
+    doc = tasks.create(title='Restore visibility', area='work', undated=True, research=False, notes='Mine.')
+    rt, store, run, wid, conv = custom_joined(settings, data_dir, tmp_path, [{'path': tasks.rel(doc.path), 'match_basis': 'related_only'}])
+    plan = conv.prepare(run, wid, choice='update', user_approved=True, reason='User chose update.', target_task_id=doc.task_id,
+                        expected_revision=tf.content_hash(doc.raw))
+    doc.path.write_bytes(plan['postimage'].encode())  # written, receipt lost
+    tasks.update(doc.task_id, {'notes_append': 'User edit after the write.'})
+    with pytest.raises(UserError, match='already be written'):
+        conv.cancel(run, wid, expected_plan_revision=content_revision(plan), reason='Too late.')
+
+
+def test_approval_edit_mismatch_names_the_working_recovery_tool(settings, data_dir, tmp_path):
+    integration, rt, ctx, store, run = _integration(settings, data_dir, tmp_path, count=1)
+    _propose_all(integration, store, run)
+    binding = next(iter(integration.digest._load()['proposals'].values()))['binding']
+    integration.conversion.prepare(binding['run_id'], binding['unit_id'], choice='create', user_approved=True, area='work',
+                                   undated=True, reason='User approved.')
+    with pytest.raises(UserError) as caught:
+        integration.decide({'approve': ['1'], 'day': '2030-01-01', 'edits': {'1': {'title': 'Different title'}}},
+                           session_id='parent', today='2030-01-02')
+    assert 'discovery_conversion_recover' in str(caught.value)
+
+
 # ---------------------------------------------------------------- M10 stale read at prepare
 def test_prepare_with_outdated_task_revision_is_refused_without_plan(settings, data_dir, tmp_path):
     tasks = TaskStore(settings, data_dir)
