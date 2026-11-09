@@ -6,7 +6,7 @@ import * as D from './lib/dates.js'
 import { parseBlocks, renderBlocks, splitSections, toggleLine, managedTitle, extractManaged, rebuildBody } from './lib/markdown.js'
 import { describeError } from './api.js'
 import { useApp, useStore } from './store.js'
-import { AreaDot, Button, Check, DatePicker, Disclosure, Icon, IconButton, Menu, Spinner, cx, useOverlay, useToast } from './ui.jsx'
+import { AreaDot, Button, Check, DatePicker, Disclosure, Icon, IconButton, Menu, Spinner, cx, useOverlay, useSheetDismiss, useToast } from './ui.jsx'
 import { isDone } from './tasks.jsx'
 
 const PRIORITIES = ['urgent', 'high', 'normal', 'low']
@@ -184,8 +184,10 @@ export function TaskPanel({ id, narrow, onClose }) {
 }
 
 function PanelShell({ narrow, onClose, actions, children }) {
+  const ref = React.useRef(null)
+  useSheetDismiss(ref, narrow, onClose)
   return (
-    <aside className={cx('at-panel', narrow ? 'is-sheet' : 'is-side')} aria-label="Task">
+    <aside ref={ref} className={cx('at-panel', narrow ? 'is-sheet' : 'is-side')} aria-label="Task">
       <div className="at-panel-bar">
         {narrow ? <span className="at-grabber" /> : null}
         <span className="at-flex" />

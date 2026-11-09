@@ -113,6 +113,75 @@ export function areaColor(area) {
   return `hsl(${AREA_HUES[h % AREA_HUES.length]} 78% 68%)`
 }
 
+// ------------------------------------------------------------------ sheet swipe-to-close
+/**
+ * Lets a phone sheet be pulled down to close. A pull starts from the sheet's top bar at any time, or from
+ * its content when the content is scrolled to the top. Short pulls spring back; long or fast ones close it.
+ */
+export function useSheetDismiss(ref, enabled, onClose) {
+  const closeRef = React.useRef(onClose)
+  closeRef.current = onClose
+  React.useEffect(() => {
+    const el = ref.current
+    if (!el || !enabled) return undefined
+    let start = null // { y, t, fromBar, scroller }
+    let dy = 0
+    let dragging = false
+    const scrollerOf = (target) => target.closest && target.closest('.at-scroll')
+    const onStart = (e) => {
+      if (e.touches.length !== 1) return
+      const t = e.target
+      if (t.closest && t.closest('textarea, input, [contenteditable], .at-pop')) { start = null; return }
+      start = { y: e.touches[0].clientY, t: Date.now(), fromBar: !!(t.closest && t.closest('.at-panel-bar')), scroller: scrollerOf(t) }
+      dy = 0
+      dragging = false
+    }
+    const onMove = (e) => {
+      if (!start) return
+      const d = e.touches[0].clientY - start.y
+      if (!dragging) {
+        const atTop = !start.scroller || start.scroller.scrollTop <= 0
+        if (d > 6 && (start.fromBar || atTop)) {
+          dragging = true
+          start.y = e.touches[0].clientY // start the drag from here so the sheet does not jump
+          el.style.transition = 'none'
+          el.style.animation = 'none'
+        } else if (Math.abs(d) > 6) { start = null; return }
+      }
+      if (dragging) {
+        e.preventDefault()
+        dy = Math.max(0, e.touches[0].clientY - start.y)
+        el.style.transform = `translateY(${dy}px)`
+      }
+    }
+    const onEnd = () => {
+      if (!start) return
+      const wasDragging = dragging
+      const speed = dy / Math.max(1, Date.now() - start.t)
+      start = null
+      dragging = false
+      if (!wasDragging) return
+      el.style.transition = 'transform .24s cubic-bezier(.2, .8, .2, 1)'
+      if (dy > 110 || speed > 0.6) {
+        el.style.transform = 'translateY(100%)'
+        setTimeout(() => closeRef.current(), 200)
+      } else {
+        el.style.transform = ''
+      }
+    }
+    el.addEventListener('touchstart', onStart, { passive: true })
+    el.addEventListener('touchmove', onMove, { passive: false })
+    el.addEventListener('touchend', onEnd)
+    el.addEventListener('touchcancel', onEnd)
+    return () => {
+      el.removeEventListener('touchstart', onStart)
+      el.removeEventListener('touchmove', onMove)
+      el.removeEventListener('touchend', onEnd)
+      el.removeEventListener('touchcancel', onEnd)
+    }
+  }, [ref, enabled])
+}
+
 // ------------------------------------------------------------------ overlays
 export const OverlayCtx = React.createContext(null)
 export const useOverlay = () => React.useContext(OverlayCtx)

@@ -3,7 +3,7 @@
 import React from 'react'
 import { describeError } from './api.js'
 import { useApp } from './store.js'
-import { AreaDot, Button, Icon, IconButton, Menu, Spinner, cx, useOverlay, useToast } from './ui.jsx'
+import { AreaDot, Button, Icon, IconButton, Menu, Spinner, cx, useOverlay, useSheetDismiss, useToast } from './ui.jsx'
 
 const FREQUENCIES = [
   ['daily', 'Every day'], ['weekdays', 'Weekdays'], ['every 4 hours', 'Every 4 hours'],
@@ -28,6 +28,8 @@ export function SettingsPanel({ onClose, inline, narrow }) {
   const { api } = useApp()
   const [data, setData] = React.useState(null)
   const [error, setError] = React.useState(null)
+  const sheetRef = React.useRef(null)
+  useSheetDismiss(sheetRef, narrow && !inline, onClose)
   const load = React.useCallback(() => {
     setError(null)
     return api.settings().then(setData, setError)
@@ -39,8 +41,9 @@ export function SettingsPanel({ onClose, inline, narrow }) {
   ) : <SettingsBody data={data} reload={load} />
   if (inline) return <div className="at-settings-inline">{body}</div>
   return (
-    <aside className={cx('at-panel', narrow ? 'is-sheet' : 'is-side', 'at-settings')} aria-label="Settings">
+    <aside ref={sheetRef} className={cx('at-panel', narrow ? 'is-sheet' : 'is-side', 'at-settings')} aria-label="Settings">
       <div className="at-panel-bar">
+        {narrow ? <span className="at-grabber" /> : null}
         <span className="at-panel-heading">Settings</span>
         <span className="at-flex" />
         <IconButton icon="x" label="Close" onClick={onClose} />

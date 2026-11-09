@@ -856,3 +856,12 @@ html.at-dragging { -webkit-user-select: none; user-select: none; }
 .at-row.is-selected, .at-overdue, .at-overdue > .at-disc-head, .at-state {
   border-top-left-radius: 0; border-bottom-left-radius: 0;
 }
+
+/* Phone sheets: a taller top bar that works as a drag handle, and 44 px touch targets for its buttons. */
+.at-panel.is-sheet { will-change: transform; }
+.at-panel.is-sheet .at-panel-bar { height: 60px; padding: 8px 10px 0 20px; touch-action: none; }
+.at-panel.is-sheet .at-grabber { top: 8px; width: 44px; height: 5px; margin-left: -22px; }
+.at-panel.is-sheet .at-panel-bar .at-iconbtn { width: 44px; height: 44px; border-radius: 10px; color: var(--at-fg2); }
+.at-panel.is-sheet .at-panel-bar .at-iconbtn .at-icon { width: 22px; height: 22px; }
+.at-panel.is-sheet .at-panel-bar .at-iconbtn[aria-label=Close] { background: rgba(160, 170, 255, .08); border-color: var(--at-line-soft); }
+.at-panel.is-sheet .at-panel-body { overscroll-behavior-y: none; }
