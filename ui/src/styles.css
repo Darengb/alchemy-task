@@ -969,3 +969,6 @@ html.at-dragging { -webkit-user-select: none; user-select: none; }
 .at-status[data-s=done] .at-status-dot { background: var(--at-ok); box-shadow: 0 0 8px rgba(91, 227, 166, .6); }
 .at-field.is-static { cursor: default; }
 .at-field.is-static:hover { background: rgba(160, 170, 255, .035); border-color: var(--at-line); color: var(--at-fg2); }
+/* Room to scroll the last of the task (the More section) clear of the pinned button. Must beat the phone
+   rule ".at-root.is-narrow .at-panel-body", which otherwise sets only 64 px. */
+.at-root .at-panel .at-panel-body.has-foot { padding-bottom: calc(132px + env(safe-area-inset-bottom, 0px)); }
