@@ -223,6 +223,36 @@ def test_child_of_an_unknown_discovery_launch_stays_blocked(tmp_path):
     assert runner.pre_tool_call(tool_name='task_create', session_id='lost-child', task_id='sa-lost')['action'] == 'block'
 
 
+def test_child_start_between_launch_reply_and_bind_is_still_a_discovery_child(tmp_path):
+    # Simulated host whose subagent_start lands after launch returns but before
+    # the runner binds the handle (the contract lets start and return race).
+    runner, store, pool, run = make(tmp_path, 1, {})
+    original_launch, original_bind, real_start = pool.launch, store.bind_attempt, runner.subagent_start
+    seen = {}
+
+    def launch(request):
+        runner.subagent_start = lambda **kw: None  # the host has not fired the start hook yet
+        try:
+            seen['handle'] = original_launch(request)
+        finally:
+            runner.subagent_start = real_start
+        return seen['handle']
+
+    def bind(run_id, token, handle, **kw):
+        if not seen.get('fired'):
+            seen['fired'] = True
+            real_start(parent_session_id='parent', child_session_id='late-child', child_subagent_id=handle['subagent_id'])
+        return original_bind(run_id, token, handle, **kw)
+    pool.launch, store.bind_attempt = launch, bind
+    try:
+        runner.run(run, session_id='parent')
+    except Exception:
+        pass  # the scripted child of this host cannot submit; the guard verdict is the outcome
+    assert seen.get('fired')
+    verdict = runner.pre_tool_call(tool_name='task_create', session_id='late-child', task_id='')
+    assert verdict and verdict['action'] == 'block'
+
+
 # ---------------------------------------------------------------- ORC-F5
 
 def _month_of_runs(tmp_path, runs=30, attempts=50):

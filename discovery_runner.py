@@ -484,17 +484,22 @@ class DiscoveryRunner:
                     except queue.Empty: break
                     if token not in active:
                         continue # late launch remains fenced/unknown audit, no new authority
-                    self._inflight(run_id, token)
+                    # The in-flight marker is released only once the launch is
+                    # fenced or bound, so a start hook racing the reply is still
+                    # recorded on this run (the finally releases it on errors).
                     if error:
                         self.store.fence_attempt(run_id, token, reason='launch_unknown', cancellation={'accepted': False, 'outcome': 'unknown', 'diagnostic': error})
+                        self._inflight(run_id, token)
                         active.pop(token)
                         admit_until = self.clock.monotonic()
                     else:
                         if handle.get('parent_session_id') != session_id:
                             self.store.fence_attempt(run_id, token, reason='launch_unknown')
+                            self._inflight(run_id, token)
                             active.pop(token)
                             continue
                         self.store.bind_attempt(run_id, token, handle, owner_session=session_id)
+                        self._inflight(run_id, token)
                         active[token].update(handle=handle, pending_start=self.clock.monotonic())
                 for token, slot in list(active.items()):
                     handle = slot.get('handle')
