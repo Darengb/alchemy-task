@@ -11,7 +11,8 @@ Two routes, chosen when the user presses the button (phone or web dashboard):
 2. New session (about a minute). Used otherwise, and as a fallback when the gateway has not taken a queued
    request within ``FALLBACK_SECONDS``. A one-time scheduled agent job runs the same note; its run is a new
    session named after the task, in which the user can reply. It needs only Hermes's scheduler, which runs
-   without a messaging gateway.
+   without a messaging gateway. The fallback runs in a background worker (and when the UI asks for the
+   status), so it happens even if the user closes the app right after pressing the button.
 
 On the desktop app the UI opens a new chat and sends the note there itself; this module only builds it.
 
@@ -20,6 +21,7 @@ the exact reply to send, and not to start until the user says "go". Wording stay
 """
 from __future__ import annotations
 
+import contextvars
 import datetime as dt
 import json
 import os
@@ -246,38 +248,67 @@ def public(rec: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _fall_back(rt: Runtime, d: Path, hid: str, now: float) -> dict[str, Any] | None:
+    """Turn a messaging request the gateway has not taken within FALLBACK_SECONDS into a new session.
+    Returns the finished record, or None when it is not due or another process got to it first."""
+    pending = d / f"{hid}.json"
+    try:
+        rec = json.loads(pending.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if now - rec.get("created", now) <= FALLBACK_SECONDS:
+        return None
+    mine = d / f"{hid}.claimed-fallback-{os.getpid()}"
+    try:
+        os.rename(pending, mine)  # the same claim the gateway uses: only one of them ever acts on it
+    except OSError:
+        return None
+    try:
+        session = start_session(rt, rec.get("task") or {"task_id": rec["task_id"], "title": rec["title"]},
+                                rec.get("surface") or "dashboard")
+        rec.update(route="session", state="started", fallback=True, reason="gateway_silent", session=session)
+    except Exception as exc:  # noqa: BLE001 - report it; nothing was sent
+        rec.update(state="failed", error=str(getattr(exc, "message", exc))[:300])
+    _write(d / f"{hid}.done.json", rec)
+    mine.unlink(missing_ok=True)
+    return rec
+
+
 def status(rt: Runtime, hid: str, now: float | None = None) -> dict[str, Any]:
-    """A handoff's state. A messaging request the gateway has not taken within FALLBACK_SECONDS becomes a new
-    session here: this runs in the dashboard request, where Hermes has the user's profile selected."""
+    """A handoff's state. The background worker normally does the fallback; this does it too when asked first."""
     now = now or time.time()
     if not hid.isalnum():
         raise NeedsInput("not_found", "Unknown handoff")
     d = _queue_dir(rt)
-    done = d / f"{hid}.done.json"
     pending = d / f"{hid}.json"
     if pending.exists():
-        rec = json.loads(pending.read_text(encoding="utf-8"))
-        if now - rec["created"] > FALLBACK_SECONDS:
-            mine = d / f"{hid}.claimed-fallback-{os.getpid()}"
-            try:
-                os.rename(pending, mine)  # the gateway did not claim it: take it back
-            except OSError:
-                return {"id": hid, "task_id": rec["task_id"], "route": "chat", "state": "sending"}
-            try:
-                session = start_session(rt, rec.get("task") or {"task_id": rec["task_id"], "title": rec["title"]},
-                                        rec.get("surface") or "dashboard")
-                rec.update(route="session", state="started", fallback=True, reason="gateway_silent", session=session)
-            except Exception as exc:  # noqa: BLE001 - report it; nothing was sent
-                rec.update(state="failed", error=str(getattr(exc, "message", exc))[:300])
-            _write(done, rec)
-            mine.unlink(missing_ok=True)
+        rec = _fall_back(rt, d, hid, now)
+        if rec is not None:
             return public(rec)
-        return public(rec)
+        if pending.exists():
+            return public(json.loads(pending.read_text(encoding="utf-8")))
+    done = d / f"{hid}.done.json"
     if done.exists():
         return public(json.loads(done.read_text(encoding="utf-8")))
     if any(d.glob(f"{hid}.claimed-*")):
         return {"id": hid, "route": "chat", "state": "sending"}
     raise NeedsInput("not_found", "Unknown handoff")
+
+
+def fallback_once(rt: Runtime, data_dir: Path, now: float | None = None) -> list[str]:
+    """The background half of the fallback, so it happens even when no screen is asking for the status."""
+    now = now or time.time()
+    d = Path(data_dir) / "handoffs"
+    if not d.is_dir():
+        return []
+    done = []
+    for p in sorted(d.glob("*.json")):
+        if p.name.endswith(".done.json"):
+            continue
+        rec = _fall_back(rt, d, p.stem, now)
+        if rec is not None:
+            done.append(p.stem)
+    return done
 
 
 # ------------------------------------------------------------------ relay (a thread in every process that
@@ -296,6 +327,12 @@ def in_gateway_process() -> bool:
         return bool(owns_gateway_runtime_lock())
     except Exception:  # noqa: BLE001
         return False
+
+
+def in_dashboard_process() -> bool:
+    """True in the dashboard's process or its plugin host (``HERMES_DASHBOARD_PUBLIC_URL`` is set there).
+    Like the gateway check, a disclosed seam: Hermes has no public "which host am I in" call yet."""
+    return bool(os.environ.get("HERMES_DASHBOARD_PUBLIC_URL"))
 
 
 def relay_once(rt: Any, now: float | None = None, *, data_dir: Path | None = None) -> list[str]:
@@ -345,21 +382,26 @@ def relay_once(rt: Any, now: float | None = None, *, data_dir: Path | None = Non
 
 
 class _RelayRuntime:
-    """What the relay needs: the plugin context. Building a full Runtime here would read the launch
-    profile's config, because a thread does not inherit the profile the plugin was loaded for."""
+    """What the relay needs: the plugin context."""
     def __init__(self, ctx: Any) -> None:
         self.ctx = ctx
 
 
 def _loop(ctx: Any, data_dir: Path, stop: threading.Event) -> None:
+    """Runs in the context captured when the plugin loaded (see ensure_relay), so Hermes's notion of the
+    current profile is the plugin's own: a job it schedules lands in this profile."""
     wait = POLL_SECONDS
-    rt = _RelayRuntime(ctx)
+    relay_rt = _RelayRuntime(ctx)
     while not stop.wait(wait):
         try:
-            # Outside the gateway's process there is nothing to do; check again now and then.
-            wait = POLL_SECONDS if in_gateway_process() else 30.0
-            if wait == POLL_SECONDS:
-                relay_once(rt, data_dir=data_dir)
+            gateway, dashboard = in_gateway_process(), in_dashboard_process()
+            # Outside the gateway's and dashboard's processes there is nothing to do; check now and then.
+            wait = POLL_SECONDS if (gateway or dashboard) else 30.0
+            if gateway:
+                relay_once(relay_rt, data_dir=data_dir)
+            if (gateway or dashboard) and any(not p.name.endswith(".done.json")
+                                              for p in (Path(data_dir) / "handoffs").glob("*.json")):
+                fallback_once(Runtime(ctx, data_dir=Path(data_dir)), data_dir)
         except Exception:  # noqa: BLE001 - keep relaying
             pass
 
@@ -378,8 +420,11 @@ def ensure_relay(ctx: Any, data_dir: Path) -> None:
         if cur and cur[0].is_alive():
             return
         stop = threading.Event()
-        t = threading.Thread(target=_loop, args=(ctx, Path(data_dir), stop), name="alchemy-task-handoff-relay",
-                             daemon=True)
+        # A new thread starts with an empty context; run it in a copy of the current one, which carries the
+        # profile Hermes selected while loading the plugin.
+        loaded = contextvars.copy_context()
+        t = threading.Thread(target=loaded.run, args=(_loop, ctx, Path(data_dir), stop),
+                             name="alchemy-task-handoff-relay", daemon=True)
         _relays[key] = (t, stop)
         t.start()
 

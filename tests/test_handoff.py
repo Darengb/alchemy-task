@@ -203,3 +203,36 @@ def test_the_relay_thread_uses_the_folder_captured_at_load(client, ctx, sessions
     data_dir = runtime.Runtime(ctx).data_dir
     assert ho.relay_once(ho._RelayRuntime(ctx), data_dir=data_dir) == [h["id"]]
     assert ho.relay_once(ho._RelayRuntime(ctx), data_dir=data_dir / "elsewhere") == []
+
+
+def test_the_background_fallback_works_with_no_screen_asking(client, ctx, sessions, jobs):
+    t = make_task(client, "Call the accountant")
+    h = client.post(f"/tasks/{t['task_id']}/handoff", json={}).json()["handoff"]
+    rt = runtime.Runtime(ctx)
+    assert ho.fallback_once(rt, rt.data_dir, now=time.time() + 2) == [] and not jobs  # not due yet
+    assert ho.fallback_once(rt, rt.data_dir, now=time.time() + ho.FALLBACK_SECONDS + 1) == [h["id"]]
+    assert len(jobs) == 1 and jobs[0][1]["name"] == "Call the accountant"
+    assert ho.fallback_once(rt, rt.data_dir, now=time.time() + 60) == [] and len(jobs) == 1  # once only
+    st = client.get(f"/handoffs/{h['id']}").json()["handoff"]
+    assert st["route"] == "session" and st["reason"] == "gateway_silent"
+
+
+def test_the_worker_thread_keeps_the_profile_selected_when_the_plugin_loaded(tmp_path, monkeypatch):
+    # Hermes marks the selected profile in a context variable; a plain thread would start without it.
+    import contextvars
+    import threading
+    profile = contextvars.ContextVar("profile", default="launch profile")
+    seen, ready = [], threading.Event()
+
+    def fake_loop(ctx, data_dir, stop):
+        seen.append(profile.get())
+        ready.set()
+    monkeypatch.delenv("ALCHEMY_TASK_NO_RELAY", raising=False)
+    monkeypatch.setattr(ho, "_loop", fake_loop)
+    token = profile.set("twf-ui")
+    try:
+        ho.ensure_relay(object(), tmp_path)
+    finally:
+        profile.reset(token)
+    assert ready.wait(5) and seen == ["twf-ui"]
+    ho.stop_relay()
