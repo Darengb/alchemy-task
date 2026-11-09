@@ -414,6 +414,33 @@ def test_link_audit_reports_a_task_whose_frontmatter_lost_the_dossier_id(setting
     assert path.read_bytes() == tampered
 
 
+def test_link_audit_accepts_a_hand_edited_scalar_dossier_id(settings, data_dir, tmp_path):
+    """Source mbg_followup_dossiers treats `dossier_ids: <id>` as a one-item list."""
+    rt, store, run, wid, conv = _one_unit(settings, data_dir)
+    conv.prepare(run, wid, choice='create', user_approved=True, area='work', undated=True, reason='Approved.')
+    receipt = conv.apply(run, wid)
+    path = rt.store().resolve(receipt['task_id']).path
+    dossier_id = tf.parse_file(path).fm['dossier_ids'][0]
+    raw = path.read_text()
+    head, sep, body = raw[3:].partition('\n---')
+
+    def scalar(value):
+        lines = head.split('\n')
+        start = next(i for i, line in enumerate(lines) if line.startswith('dossier_ids:'))
+        end = start + 1
+        while end < len(lines) and lines[end].startswith(('- ', '  ')):
+            end += 1
+        lines[start:end] = ['dossier_ids: ' + value]
+        path.write_text('---' + '\n'.join(lines) + sep + body)
+        assert tf.parse_file(path).fm.get('dossier_ids') == value
+        return path.read_bytes()
+    edited = scalar(dossier_id)
+    assert conv.audit_links()['repairs'] == []
+    assert path.read_bytes() == edited
+    scalar('d_some_other_dossier')
+    assert [(r['task_id'], r['reason']) for r in conv.audit_links()['repairs']] == [(receipt['task_id'], 'dossier_ids missing dossier')]
+
+
 def test_link_audit_scans_the_task_workspace_once_for_many_links(settings, data_dir, tmp_path, monkeypatch):
     integration, rt, ctx, store, run = _integration(settings, data_dir, tmp_path, count=3)
     _propose_all(integration, store, run)
