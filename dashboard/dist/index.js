@@ -2279,8 +2279,15 @@
     ), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-editor-hint" }, "Markdown. Saves as you type.", parts.top.length + parts.bottom.length ? " Research added by Hermes is kept as it is." : ""));
   }
 
-  // ui/src/discovery.jsx
+  // ui/src/lib/discovery.js
   var pendingCount = (runs) => (runs || []).reduce((n, r) => n + (r.proposals || []).filter((p) => p.state === "pending" && !p.expired).length, 0);
+  var discoveryBadge = (runs, streams) => {
+    const pending = pendingCount(runs);
+    if (pending) return pending;
+    return Array.isArray(runs) && !runs.length && Array.isArray(streams) && !streams.length ? 1 : 0;
+  };
+
+  // ui/src/discovery.jsx
   var titleCase = (s) => String(s || "").replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   function runTime(r) {
     const t = r.time;
@@ -2318,7 +2325,8 @@
         {
           icon: "spark",
           title: "No discovery runs yet",
-          text: /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, "Discovery reads the sources you choose and proposes tasks. To start one, ask Hermes:", /* @__PURE__ */ react_dashboard_default.createElement("br", null), /* @__PURE__ */ react_dashboard_default.createElement("q", null, "Set up a daily digest from my email and Slack at 7 AM."))
+          text: "Discovery reads the sources you choose and proposes tasks. To get started, send Hermes:",
+          action: /* @__PURE__ */ react_dashboard_default.createElement(SetupPrompt, null)
         }
       );
     }
@@ -2334,6 +2342,12 @@
         options: [{ value: "waiting", label: "Waiting for you" }, { value: "all", label: "All runs" }]
       }
     ), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Refresh", onClick: reload })), !shown.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "check", size: 18 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup-title" }, "All caught up"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, "Last run: ", titleCase(latest.stream), ", ", relativeDay(latest.day, today), " ", runTime(latest)))) : null, shown.map((r) => /* @__PURE__ */ react_dashboard_default.createElement(RunCard, { key: r.run_id, run: r, filter, reload }))));
+  }
+  var SETUP_PROMPT = "Set up task discovery";
+  function SetupPrompt() {
+    const toast = useToast();
+    const copy = async () => toast(await copyText(SETUP_PROMPT) ? "Copied. Paste it into a chat with Hermes." : "Could not copy");
+    return /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-setup-prompt", onClick: copy, title: "Copy" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-setup-prompt-text" }, SETUP_PROMPT), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-setup-prompt-copy" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "clipboard", size: 15 }), " Copy"));
   }
   function Empty({ icon, title, text, action }) {
     return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-disco" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-emptystate" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-emptystate-icon" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: icon, size: 22 })), /* @__PURE__ */ react_dashboard_default.createElement("h2", null, title), /* @__PURE__ */ react_dashboard_default.createElement("p", null, text), action));
@@ -2593,6 +2607,7 @@
     const [runs, setRuns] = react_dashboard_default.useState(null);
     const [runsError, setRunsError] = react_dashboard_default.useState(null);
     const [runsLoading, setRunsLoading] = react_dashboard_default.useState(false);
+    const [streams, setStreams] = react_dashboard_default.useState(null);
     const loadMeta = react_dashboard_default.useCallback(() => api.meta().then((m) => {
       setMeta(m);
       setMetaError(null);
@@ -2608,6 +2623,12 @@
         setRunsError(err);
       }
       setRunsLoading(false);
+      try {
+        const s = await api.settings();
+        setStreams(Array.isArray(s.streams) ? s.streams : null);
+      } catch {
+        setStreams(null);
+      }
     }, [api]);
     react_dashboard_default.useEffect(() => {
       loadMeta();
@@ -2718,7 +2739,7 @@
       return a;
     }, [api, store, toast]);
     const onDrop = react_dashboard_default.useCallback((task, date) => actions.move(task, date), [actions]);
-    const pending = pendingCount(runs);
+    const pending = discoveryBadge(runs, streams);
     const ctx = react_dashboard_default.useMemo(() => ({
       api,
       store,

@@ -4,10 +4,9 @@ import React from 'react'
 import * as D from './lib/dates.js'
 import { describeError } from './api.js'
 import { useApp } from './store.js'
-import { AreaDot, Button, DatePicker, Disclosure, Icon, IconButton, Menu, Segmented, Spinner, cx, useOverlay, useToast } from './ui.jsx'
+import { AreaDot, Button, DatePicker, Disclosure, Icon, IconButton, Menu, Segmented, Spinner, copyText, cx, useOverlay, useToast } from './ui.jsx'
 
-export const pendingCount = (runs) => (runs || []).reduce((n, r) =>
-  n + (r.proposals || []).filter((p) => p.state === 'pending' && !p.expired).length, 0)
+export { pendingCount, discoveryBadge } from './lib/discovery.js'
 
 const titleCase = (s) => String(s || '').replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
@@ -39,7 +38,8 @@ export function DiscoveryView({ runs, error, loading, reload }) {
   const all = runs || []
   if (!all.length) {
     return <Empty icon="spark" title="No discovery runs yet"
-                  text={<>Discovery reads the sources you choose and proposes tasks. To start one, ask Hermes:<br /><q>Set up a daily digest from my email and Slack at 7 AM.</q></>} />
+                  text="Discovery reads the sources you choose and proposes tasks. To get started, send Hermes:"
+                  action={<SetupPrompt />} />
   }
   const needs = (r) => (r.summary ? r.summary.pending : (r.proposals || []).filter((p) => p.state === 'pending').length) > 0
     || (r.conflicts || []).length || (r.failures || []).length
@@ -67,6 +67,20 @@ export function DiscoveryView({ runs, error, loading, reload }) {
         {shown.map((r) => <RunCard key={r.run_id} run={r} filter={filter} reload={reload} />)}
       </div>
     </div>
+  )
+}
+
+export const SETUP_PROMPT = 'Set up task discovery'
+
+// The one message that starts discovery setup, shown big enough that it cannot be missed. Click to copy.
+function SetupPrompt() {
+  const toast = useToast()
+  const copy = async () => toast((await copyText(SETUP_PROMPT)) ? 'Copied. Paste it into a chat with Hermes.' : 'Could not copy')
+  return (
+    <button type="button" className="at-setup-prompt" onClick={copy} title="Copy">
+      <span className="at-setup-prompt-text">{SETUP_PROMPT}</span>
+      <span className="at-setup-prompt-copy"><Icon name="clipboard" size={15} /> Copy</span>
+    </button>
   )
 }
 

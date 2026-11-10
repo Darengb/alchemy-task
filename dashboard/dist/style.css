@@ -2797,6 +2797,85 @@ html.at-dragging {
   color: var(--at-fg);
   font-style: normal;
 }
+.at-setup-prompt {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 22px 28px 18px;
+  border-radius: 14px;
+  cursor: pointer;
+  text-align: center;
+  font: inherit;
+  color: var(--at-fg);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(74, 82, 255, .22),
+      rgba(47, 55, 255, .10));
+  border: 1.5px solid rgba(140, 148, 255, .75);
+  box-shadow:
+    0 0 0 4px rgba(60, 70, 255, .14),
+    0 0 42px rgba(60, 70, 255, .45),
+    inset 0 1px 0 rgba(255, 255, 255, .08);
+  transition:
+    transform .12s ease,
+    box-shadow .15s ease,
+    border-color .15s ease;
+}
+.at-setup-prompt:hover {
+  border-color: #b9beff;
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 0 4px rgba(60, 70, 255, .22),
+    0 0 56px rgba(74, 82, 255, .6),
+    inset 0 1px 0 rgba(255, 255, 255, .1);
+}
+.at-setup-prompt:focus-visible {
+  outline: 2px solid var(--at-accent-text);
+  outline-offset: 4px;
+}
+.at-setup-prompt-text {
+  font-family: var(--at-display);
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: .01em;
+  color: #ffffff;
+  text-shadow: 0 0 22px rgba(120, 130, 255, .55);
+}
+.at-setup-prompt-text::before {
+  content: "\201c";
+  color: var(--at-accent-text);
+}
+.at-setup-prompt-text::after {
+  content: "\201d";
+  color: var(--at-accent-text);
+}
+.at-setup-prompt-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--at-mono);
+  font-size: 10.5px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--at-accent-text);
+}
+.at-setup-prompt:hover .at-setup-prompt-copy {
+  color: #c9ccff;
+}
+@media (max-width: 520px) {
+  .at-setup-prompt-text {
+    font-size: 28px;
+  }
+  .at-setup-prompt {
+    padding: 18px 18px 14px;
+  }
+}
 .at-root q::before {
   content: "\201c";
 }
