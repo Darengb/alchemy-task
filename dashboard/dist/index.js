@@ -2301,7 +2301,7 @@
     const ok = cov.filter((c) => c.status === "complete").length;
     return ok === cov.length ? `${ok} ${ok === 1 ? "source" : "sources"} checked` : `${ok} of ${cov.length} sources checked`;
   }
-  function DiscoveryView({ runs, error, loading, reload }) {
+  function DiscoveryView({ runs, streams, error, loading, reload }) {
     const { today } = useApp();
     const [filter, setFilter] = react_dashboard_default.useState("waiting");
     if (error && error.code === "not_found") {
@@ -2319,6 +2319,10 @@
       return /* @__PURE__ */ react_dashboard_default.createElement(Empty, { icon: "alert", title: "Could not load discovery", text: describeError(error), action: /* @__PURE__ */ react_dashboard_default.createElement(Button, { onClick: reload }, "Try again") });
     }
     const all = runs || [];
+    const configured = Array.isArray(streams) && streams.length > 0;
+    if (!all.length && configured) {
+      return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-disco" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disco-inner" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disco-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("h1", { className: "at-period" }, "Discovery"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Refresh", onClick: reload })), /* @__PURE__ */ react_dashboard_default.createElement(SourcesBar, { streams }), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "clock", size: 18 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup-title" }, "Waiting for the first run"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, streams.map((s) => `${titleCase(s.name)}: ${s.when || "scheduled"}`).join(" \xB7 "))))));
+    }
     if (!all.length) {
       return /* @__PURE__ */ react_dashboard_default.createElement(
         Empty,
@@ -2342,9 +2346,21 @@
         onChange: setFilter,
         options: [{ value: "waiting", label: "Waiting for you" }, { value: "all", label: "All runs" }]
       }
-    ), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Refresh", onClick: reload })), !shown.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "check", size: 18 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup-title" }, "All caught up"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, "Last run: ", titleCase(latest.stream), ", ", relativeDay(latest.day, today), " ", runTime(latest)))) : null, shown.map((r) => /* @__PURE__ */ react_dashboard_default.createElement(RunCard, { key: r.run_id, run: r, filter, reload }))));
+    ), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Refresh", onClick: reload })), configured ? /* @__PURE__ */ react_dashboard_default.createElement(SourcesBar, { streams }) : null, !shown.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "check", size: 18 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup-title" }, "All caught up"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, "Last run: ", titleCase(latest.stream), ", ", relativeDay(latest.day, today), " ", runTime(latest)))) : null, shown.map((r) => /* @__PURE__ */ react_dashboard_default.createElement(RunCard, { key: r.run_id, run: r, filter, reload }))));
   }
   var SETUP_PROMPT = "Set up task discovery";
+  var ADD_SOURCE_PROMPT = "I want to add a new source to task discovery";
+  var SOURCE_ICONS = { email: "inbox", chat: "chat", transcript: "list", meeting_notes: "list", document: "edit", tracker: "check" };
+  function SourcesBar({ streams }) {
+    const [adding, setAdding] = react_dashboard_default.useState(false);
+    const many = streams.length > 1;
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-rows" }, streams.map((s) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: s.name, className: "at-sources-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-label" }, many ? `${titleCase(s.name)} reads` : "Reads"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-chips" }, (s.sources || []).length ? (s.sources || []).map((src, i) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: `${src.name}-${i}`, className: "at-source-chip", title: src.scope || src.name }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: SOURCE_ICONS[src.type] || "link", size: 13 }), src.name)) : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "No sources yet"))))), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", icon: "plus", onClick: () => setAdding((v) => !v), "aria-expanded": adding }, "Add a source"), adding ? /* @__PURE__ */ react_dashboard_default.createElement(CopyPrompt, { className: "is-compact", text: ADD_SOURCE_PROMPT }) : null);
+  }
+  function CopyPrompt({ text, className }) {
+    const toast = useToast();
+    const copy = async () => toast(await copyText(text) ? "Copied. Paste it into a chat with Hermes." : "Could not copy");
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-copy-prompt", className) }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-setup-prompt-label" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "chat", size: 15 }), " Tell Hermes in chat"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-copy-prompt-row" }, /* @__PURE__ */ react_dashboard_default.createElement("q", { className: "at-copy-prompt-text" }, text), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", icon: "clipboard", onClick: copy }, "Copy")));
+  }
   function SetupPrompt() {
     const toast = useToast();
     const copy = async () => toast(await copyText(SETUP_PROMPT) ? "Copied. Paste it into a chat with Hermes." : "Could not copy");
@@ -2835,7 +2851,7 @@
       return /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("nav", { className: "at-appbar" }, narrow ? null : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-brand" }, /* @__PURE__ */ react_dashboard_default.createElement("i", { className: "at-brand-mark", "aria-hidden": "true" }), "Alchemy Task"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-tabs", role: "tablist" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", role: "tab", "aria-selected": tab === "tasks", className: cx("at-tab", tab === "tasks" && "is-on"), onClick: () => setTab("tasks") }, "Tasks"), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", role: "tab", "aria-selected": tab === "discovery", className: cx("at-tab", tab === "discovery" && "is-on"), onClick: () => setTab("discovery") }, "Discovery", pending ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-badge-dot" }, pending) : null)), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), busy ? /* @__PURE__ */ react_dashboard_default.createElement(Spinner, { size: 12 }) : null, /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "gear", label: "Settings", className: cx(settingsOpen && "is-on"), onClick: () => {
         setSelectedId(null);
         setSettingsOpen((v) => !v);
-      } })), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-main", selectedId && !narrow && "has-panel", settingsOpen && !narrow && "has-panel") }, tab === "tasks" ? /* @__PURE__ */ react_dashboard_default.createElement(TasksView, { narrow }) : /* @__PURE__ */ react_dashboard_default.createElement(DiscoveryView, { runs, error: runsError, loading: runsLoading, reload: loadRuns })), selectedId ? /* @__PURE__ */ react_dashboard_default.createElement(TaskPanel, { id: selectedId, narrow, onClose: () => setSelectedId(null) }) : null, settingsOpen && !selectedId ? /* @__PURE__ */ react_dashboard_default.createElement(SettingsPanel, { narrow, onClose: () => setSettingsOpen(false) }) : null);
+      } })), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-main", selectedId && !narrow && "has-panel", settingsOpen && !narrow && "has-panel") }, tab === "tasks" ? /* @__PURE__ */ react_dashboard_default.createElement(TasksView, { narrow }) : /* @__PURE__ */ react_dashboard_default.createElement(DiscoveryView, { runs, streams, error: runsError, loading: runsLoading, reload: loadRuns })), selectedId ? /* @__PURE__ */ react_dashboard_default.createElement(TaskPanel, { id: selectedId, narrow, onClose: () => setSelectedId(null) }) : null, settingsOpen && !selectedId ? /* @__PURE__ */ react_dashboard_default.createElement(SettingsPanel, { narrow, onClose: () => setSettingsOpen(false) }) : null);
     })();
     return /* @__PURE__ */ react_dashboard_default.createElement(AppContext.Provider, { value: ctx }, /* @__PURE__ */ react_dashboard_default.createElement(
       "div",

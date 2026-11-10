@@ -2365,6 +2365,118 @@ html.at-dragging {
 .at-disco-bar .at-period {
   margin-left: 0;
 }
+.at-sources {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px 14px;
+  padding: 12px 14px;
+  margin: -8px 0 20px;
+  border-radius: var(--at-r-lg);
+  background: var(--at-soft);
+  border: 1px solid var(--at-line-soft);
+}
+.at-sources-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.at-sources-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.at-sources-label {
+  flex: none;
+  padding-top: 4px;
+  font-family: var(--at-mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--at-faint);
+  white-space: nowrap;
+}
+.at-sources-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.at-source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 10px 4px 8px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--at-fg);
+  background: var(--at-accent-tint);
+  border: 1px solid rgba(130, 140, 255, .22);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.at-source-chip .at-icon {
+  flex: none;
+  color: var(--at-accent-text);
+}
+.at-sources > .at-btn {
+  align-self: center;
+}
+.at-copy-prompt {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(74, 82, 255, .18),
+      rgba(47, 55, 255, .08));
+  border: 1.5px solid rgba(140, 148, 255, .6);
+  box-shadow: 0 0 26px rgba(60, 70, 255, .3);
+}
+.at-copy-prompt .at-setup-prompt-label {
+  font-size: 15px;
+}
+.at-copy-prompt-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.at-copy-prompt-text {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--at-display);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: #fff;
+}
+@media (max-width: 560px) {
+  .at-sources {
+    grid-template-columns: 1fr;
+  }
+  .at-sources > .at-btn {
+    justify-self: start;
+  }
+  .at-sources-row {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .at-copy-prompt-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .at-copy-prompt-text {
+    font-size: 20px;
+  }
+}
 .at-caughtup {
   display: flex;
   align-items: center;

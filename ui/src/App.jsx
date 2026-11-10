@@ -183,7 +183,7 @@ function AppInner({ transport, host, initialView, settingsOnly, chat }) {
         </nav>
         <div className={cx('at-main', selectedId && !narrow && 'has-panel', settingsOpen && !narrow && 'has-panel')}>
           {tab === 'tasks' ? <TasksView narrow={narrow} /> : (
-            <DiscoveryView runs={runs} error={runsError} loading={runsLoading} reload={loadRuns} />
+            <DiscoveryView runs={runs} streams={streams} error={runsError} loading={runsLoading} reload={loadRuns} />
           )}
         </div>
         {selectedId ? <TaskPanel id={selectedId} narrow={narrow} onClose={() => setSelectedId(null)} /> : null}
