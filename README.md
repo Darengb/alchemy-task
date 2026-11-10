@@ -40,8 +40,13 @@ follow-up clearly matches a task you already have, discovery adds the new detail
   researches the web, and writes a dossier into the task: the recommended
   approach, context, risks, open questions, sources, and an **access plan**. The plan says whether Hermes can
   do the task now, what access is missing and how to set it up. When it finishes, your agent mentions it in
-  the same chat and offers to set up missing access now or when you start the task. Say "no research needed"
-  to skip it, or "research it again" to refresh it.
+  the same chat and offers to set up missing access now or when you start the task. Research also fills in the
+  parts of the task you left blank: the summary, a few sentences of context at the top of Notes, a short Plan
+  and Subtasks (skipped for one-step tasks). It never overwrites what you or an agent wrote; each section it
+  writes ends with *(from research, date)*, and "research it again" refreshes only research-written sections
+  nobody has edited since. Say "no research needed" to skip it, "research it again" to refresh it, or use the
+  **Start research** / **Refresh research** button at the top of a task's research section in the dashboard,
+  which queues research and starts the research sweep job right away (or within 30 minutes if the job is off).
 - **Bounded and safe research:** the research agent is read-only. It cannot run commands, write or edit
   files, change skills, or change accounts or settings; the plugin blocks those tools for every research agent
   it starts, discovery research included. It never reads credential files (keys, tokens, `.env`, `.ssh`,
