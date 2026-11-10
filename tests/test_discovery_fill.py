@@ -151,3 +151,64 @@ def test_bad_agent_subtasks_type_is_rejected_before_writing(settings, data_dir, 
     rt, store, run, wid, conv = _make(settings, data_dir, tmp_path)
     with pytest.raises(UserError, match='subtasks'):
         conv.prepare(run, wid, choice='create', user_approved=True, area='work', undated=True, reason='r', subtasks='not a list')
+
+
+def test_approved_text_past_fill_caps_is_appended_whole_not_dropped(settings, data_dir, tmp_path):
+    rt, store, run, wid, conv = _make(settings, data_dir, tmp_path)
+    checklist = [f'Checklist item number {i}' for i in range(25)]
+    notes = ' '.join(f'Sentence {i} about the approved context.' for i in range(80))
+    assert len(notes) > 2900
+    plan = [f'Step {i} of the approved plan' for i in range(10)]
+    conv.prepare(run, wid, choice='create', user_approved=True, area='work', undated=True, reason='User approved.',
+                 notes=notes, plan=plan, checklist=checklist)
+    task = rt.store().resolve(conv.apply(run, wid)['task_id'])
+    main = task.body.split('<!-- discovery-dossier:start')[0]
+    for item in checklist: assert '- [ ] ' + item + '\n' in main
+    assert notes in main
+    for step in plan: assert step in main
+    assert 'Step 9 of the approved plan' in _section(task.body, 'Plan')
+    # nothing truncated was written as a fill in place of the approved text
+    assert main.count('Checklist item number 0\n') == 1 and main.count('Step 0 of the approved plan') == 1
+
+
+def test_agent_subtasks_past_cap_are_kept(settings, data_dir, tmp_path):
+    rt, store, run, wid, conv = _make(settings, data_dir, tmp_path)
+    subtasks = [f'Agent subtask {i}' for i in range(15)]
+    checklist = [f'Checklist entry {i}' for i in range(10)]
+    conv.prepare(run, wid, choice='create', user_approved=True, area='work', undated=True, reason='User approved.',
+                 subtasks=subtasks, checklist=checklist)
+    task = rt.store().resolve(conv.apply(run, wid)['task_id'])
+    subs = _section(task.body, 'Subtasks')
+    for item in subtasks + checklist: assert '- [ ] ' + item + '\n' in subs
+
+
+def test_bind_manual_rebinds_create_plan_with_list_plan(settings, data_dir, tmp_path):
+    from test_discovery_conversion import joined
+    from alchemy_task.core.discovery_dossiers import content_revision
+    rt, store, run, wid, conv = joined(tmp_path, settings, data_dir)
+    prepared = conv.prepare(run, wid, choice='create', user_approved=True, area='work', undated=True, reason='User approved.',
+                            plan=['Check the proof', 'Send wording to legal', 'Book the print slot'])
+    manual = rt.store().create(title='Manual task', area='work', undated=True, research=False, notes='Manual words.')
+    conv.bind_manual(run, wid, target_task_id=manual.task_id, expected_revision=tf.content_hash(manual.raw),
+                     expected_plan_revision=content_revision(prepared), reason='User named the manual task.')
+    actual = rt.store().resolve(conv.apply(run, wid)['task_id'])
+    assert actual.task_id == manual.task_id
+    assert 'Check the proof' in actual.body and 'Book the print slot' in actual.body
+
+
+def test_merge_does_not_duplicate_shared_notes_or_plan_and_keeps_member_subtasks(settings, data_dir):
+    from test_discovery_completion import two_joined
+    rt, store, run, units, conv = two_joined(settings, data_dir)
+    shared = dict(choice='create', user_approved=True, area='work', undated=True, reason='User selected same combined task.',
+                  notes='Shared approved notes paragraph.', plan=['First shared step', 'Second shared step', 'Third shared step'])
+    conv.prepare(run, units[0], **shared, subtasks=['First member subtask'])
+    conv.prepare(run, units[1], **shared, subtasks=['Second member subtask'], checklist=['Second member check'])
+    conv.merge_prepared([(run, w) for w in units], reason='User explicitly merged these two proposals.')
+    conv.preflight([(run, w) for w in units])
+    doc = rt.store().resolve(conv.apply(run, units[0])['task_id'])
+    main = doc.body.split('<!-- discovery-dossier:start')[0]
+    assert main.count('Shared approved notes paragraph.') == 1
+    assert main.count('First shared step') == 1
+    subs = _section(doc.body, 'Subtasks')
+    for item in ('First member subtask', 'Second member subtask', 'Second member check'):
+        assert subs.count('- [ ] ' + item) == 1

@@ -506,6 +506,7 @@ class DiscoveryConversion:
         if not old or old['request']['choice'] != 'create': raise UserError('manual recovery requires an existing unwritten create plan')
         request = {**old['request'], 'choice': 'update', 'target_task_id': target_task_id, 'expected_revision': expected_revision,
                    'user_approved': True, 'manual_binding': True, 'reason': reason, 'area': '', 'title': '', 'due': '', 'undated': False}
+        if isinstance(request.get('plan'), list): request['plan'] = '\n'.join(request['plan'])  # list steps are for new tasks only
         return self.prepare(run, wid, **request, expected_plan_revision=expected_plan_revision)
 
     def cancel(self, run, wid, *, expected_plan_revision, reason):
@@ -551,7 +552,14 @@ class DiscoveryConversion:
                 for field, heading in (('notes', 'Notes'), ('scope_notes', 'Notes'), ('plan', 'Plan'), ('active_goal', 'Plan'), ('execution_method', 'Plan')):
                     value = plan['request'].get(field)
                     if isinstance(value, list): value = '\n'.join(value)
-                    if value and value not in body: body = self._append_section(body, heading, value)
+                    # the first member's text may sit in the body in filled (normalized) form
+                    lines = [rs._fill_line(x) for x in value.split('\n')] if isinstance(value, str) else []
+                    if value and value not in body and not (any(lines) and all(x in body for x in lines if x)):
+                        body = self._append_section(body, heading, value)
+                have = {line.strip() for line in body.split('\n')}
+                items = [x for x in (*(plan['request'].get('subtasks') or []), *(plan['request'].get('checklist') or []))
+                         if '- [ ] ' + x.strip() not in have and '- [ ] ' + rs._fill_line(x) not in have]
+                if items: body = self._append_section(body, 'Subtasks' if create else 'Plan', '\n'.join('- [ ] ' + x for x in dict.fromkeys(items)))
                 member_fm, _ = tf.split_text(plan['postimage'], rt=True)
                 for field in ('title', 'due', 'scheduled', 'priority', 'execution_method', 'active_goal'):
                     explicit = plan['request'].get(field) or (field in {'due', 'scheduled'} and plan['request'].get('undated'))
