@@ -12,10 +12,68 @@ from .core.discovery_state import atomic_json, read_json
 from .core.discovery_dossiers import content_revision, render_discovery_dossier, upsert_managed_block
 from .core.locks import task_lock
 from .core import taskfile as tf
+from .core import research as rs
 from .core.discovery_identity import UserError, canonical_source_id, extract_identities, source_identity_covers, is_message_refinement
 
 # Core Git outcomes that are final for a workspace without a remote or without Git.
 LOCAL_GIT_TERMINAL = frozenset({'local_only', 'no_git'})
+# Optional approval fields saved in a conversion request only when supplied, so plans
+# prepared before they existed still resume byte-identically.
+FILL_REQUEST_FIELDS = ('summary', 'subtasks', 'subtasks_skipped_reason')
+_SENTENCE_RE = re.compile(r'(?<=[.!?])\s+(?=\S)')
+
+
+def _sentences(text):
+    return [x.strip() for x in _SENTENCE_RE.split(' '.join(str(text or '').split())) if x.strip()]
+
+
+def _steps(value):
+    """Plan text or list as step strings (one per line, list leads stripped)."""
+    items = value if isinstance(value, list) else str(value or '').split('\n')
+    return [s for s in (rs._fill_line(x) for x in items) if s]
+
+
+def _whole_items(items, cap):
+    """True when the fill keeps every item verbatim: within the item count cap and the item length cap."""
+    items = [x for x in (items or []) if str(x).strip()]
+    return len(items) <= cap and all(len(rs._fill_line(x)) <= rs.ITEM_MAX for x in items)
+
+
+def _whole_notes(notes):
+    """True when the notes fill keeps the text whole: within the cap, no list or heading lines."""
+    return len(notes) <= rs.NOTES_MAX and all(rs._fill_line(x) == ' '.join(x.split()) for x in notes.split('\n'))
+
+
+def discovery_fallback_fill(research):
+    """Deterministic fill from accepted discovery research when the approving agent supplied none."""
+    said = _sentences(research.get('current_understanding'))
+    fill = {}
+    if said:
+        summary = said[0] if len(said[0]) >= 80 or len(said) == 1 else ' '.join(said[:2])
+        fill['summary'] = summary[:300]
+        fill['notes'] = ' '.join(said[:4])
+    steps = []
+    for line in str(research.get('substantive_next_action') or '').split('\n'):
+        steps += _sentences(line)
+    steps += [x for x in research.get('implementation_context') or [] if isinstance(x, str)]
+    steps = [s for s in dict.fromkeys(rs._fill_line(x)[:300] for x in steps) if s]
+    if len(steps) >= rs.PLAN_MIN:
+        fill['plan'] = steps[:rs.PLAN_MAX]
+    return fill
+
+
+def _put_summary(fm, summary):
+    if 'summary' in fm or not hasattr(fm, 'insert'):
+        if 'summary' in fm or not isinstance(fm, dict) or 'title' not in fm:
+            fm['summary'] = summary
+            return
+        items = list(fm.items())
+        fm.clear()
+        for key, value in items:
+            fm[key] = value
+            if key == 'title': fm['summary'] = summary
+        return
+    fm.insert(1, 'summary', summary)
 
 
 class DiscoveryConversion:
@@ -133,10 +191,50 @@ class DiscoveryConversion:
             main = main.rstrip() + '\n\n## ' + heading + '\n\n' + text.rstrip() + '\n\n'
         return main + tail
 
+    def _fill(self, fm, body, research, *, new, summary, notes, plan, subtasks, checklist, skipped):
+        """Fill blank summary/notes/plan/subtasks with the research rules (marker, fingerprint, log line).
+
+        New tasks use the approving agent's text, else a deterministic fallback from the accepted
+        research. Existing tasks only take the agent's summary and subtasks, and only where blank.
+        Returns (body, keys the fill wrote, log line). A fill problem never blocks the conversion."""
+        day = self.rt.settings.today()
+        try:
+            # A key is offered to the fill only when the fill keeps it whole; otherwise the
+            # append path in prepare writes the approved text verbatim, so nothing is cut.
+            items = [*(subtasks or []), *(checklist or [] if new else [])]
+            whole_items = _whole_items(items, rs.SUBTASKS_MAX)
+            raw = {'summary': summary, 'subtasks': items if items and whole_items else None,
+                   'subtasks_skipped_reason': skipped}
+            if new:
+                steps = _steps(plan)
+                raw['notes'] = notes if notes and _whole_notes(notes) else None
+                raw['plan'] = steps if rs.PLAN_MIN <= len(steps) and _whole_items(steps, rs.PLAN_MAX) else None
+                fallback = discovery_fallback_fill(research)
+                for key in ('summary', 'notes', 'plan'):
+                    if not raw.get(key) and not (key == 'plan' and plan) and not (key == 'notes' and notes) and fallback.get(key):
+                        raw[key] = fallback[key]
+                if not raw['subtasks'] and not raw['subtasks_skipped_reason'] and not items:
+                    raw['subtasks_skipped_reason'] = 'not supplied at approval'
+            fill, problems = rs.normalize_fill(raw)
+            if not new:  # never overwrite: only sections blank right now
+                blank = set(rs.blank_sections(fm, body))
+                fill = {k: v for k, v in fill.items() if k in blank or k == 'subtasks_skipped_reason'}
+            new_body, new_summary, prints, report = rs.apply_fill(fm, body, fill, day=day)
+        except Exception as exc:  # noqa: BLE001 - the conversion must land whatever the fill holds
+            return body, set(), f'Discovery fill dropped ({type(exc).__name__}).'
+        if new_summary is not None:
+            _put_summary(fm, new_summary)
+        st = rs.state(fm)
+        if st is not None:
+            if prints: st['fill'] = prints
+            elif 'fill' in st: del st['fill']
+        return new_body, set(report['filled']) | set(report['refreshed']), rs.fill_log(report, problems)
+
     def prepare(self, run, wid, *, choice, reason, target_task_id='', expected_revision='',
                 useful_delta=False, user_approved=False, area='', title='', due='', undated=False,
                 expected_plan_revision='', scope_notes='', priority='', scheduled='', execution_method='',
-                notes='', plan='', checklist=None, active_goal='', manual_binding=False, correction_overlay=None):
+                notes='', plan='', checklist=None, active_goal='', manual_binding=False, correction_overlay=None,
+                summary='', subtasks=None, subtasks_skipped_reason=''):
         self._production(run)
         if not isinstance(reason, str) or not reason.strip() or len(reason) > 2000:
             raise UserError('substantive parent decision reason required')
@@ -159,6 +257,15 @@ class DiscoveryConversion:
                        user_approved=user_approved, area=area, title=title, due=due, undated=undated,
                        scope_notes=scope_notes, priority=priority, scheduled=scheduled, execution_method=execution_method,
                        notes=notes, plan=plan, checklist=checklist, active_goal=active_goal, manual_binding=manual_binding, correction_overlay=correction_overlay)
+        extra = {'summary': summary, 'subtasks': subtasks, 'subtasks_skipped_reason': subtasks_skipped_reason}
+        request.update({k: v for k, v in extra.items() if v not in (None, '', [])})
+        if not isinstance(summary, str) or len(summary) > 2000: raise UserError('summary must be text up to 2000 characters')
+        if not isinstance(subtasks_skipped_reason, str) or len(subtasks_skipped_reason) > 500: raise UserError('subtasks_skipped_reason must be text up to 500 characters')
+        if subtasks is not None and (not isinstance(subtasks, list) or len(subtasks) > 50 or any(not isinstance(x, str) or not x.strip() or len(x) > 2000 for x in subtasks)):
+            raise UserError('subtasks requires a list of bounded nonempty text items')
+        if isinstance(plan, list):
+            if choice != 'create' or len(plan) > 50 or any(not isinstance(x, str) or len(x) > 2000 for x in plan):
+                raise UserError('plan as a list of steps is only for new tasks, with bounded text items')
         plan_path, _ = self._paths(run, wid)
         with self.store._lock('conversion:' + run + ':' + wid):
             old = read_json(plan_path)
@@ -211,7 +318,7 @@ class DiscoveryConversion:
                     fm['due'] = date
                     fm['scheduled'] = date
                 if area and area != fm.get('area'): raise UserError('rehome existing tasks through task_update, not discovery approval')
-            for field, value in {'scope_notes': scope_notes, 'notes': notes, 'plan': plan, 'active_goal': active_goal, 'execution_method': execution_method}.items():
+            for field, value in {'scope_notes': scope_notes, 'notes': notes, 'plan': '' if isinstance(plan, list) else plan, 'active_goal': active_goal, 'execution_method': execution_method}.items():
                 if not isinstance(value, str) or len(value) > 16000: raise UserError(field + ' must be text up to 16000 characters')
             if priority:
                 if priority not in tf.PRIORITIES: raise UserError('invalid priority override')
@@ -219,11 +326,8 @@ class DiscoveryConversion:
             if scheduled: fm['scheduled'] = tf.parse_date_words(scheduled, self.rt.settings.today(), 'scheduled')
             if execution_method: fm['execution_method'] = execution_method
             if active_goal: fm['active_goal'] = active_goal
-            if notes or scope_notes: body = self._append_section(body, 'Notes', '\n\n'.join(x for x in (notes, scope_notes) if x))
-            if plan or active_goal or execution_method: body = self._append_section(body, 'Plan', '\n\n'.join(x for x in (active_goal, plan, 'Execution method: ' + execution_method if execution_method else '') if x))
             if checklist is not None:
                 if not isinstance(checklist, list) or len(checklist) > 50 or any(not isinstance(x, str) or not x.strip() or len(x) > 2000 for x in checklist): raise UserError('checklist requires bounded nonempty text items')
-                body = self._append_section(body, 'Plan', '\n'.join('- [ ] ' + x for x in checklist))
             dossier_id = 'dos-' + wid[2:]
             active_research = copy.deepcopy(research)
             # An explicit new goal supersedes recommendations, not source evidence.
@@ -256,6 +360,22 @@ class DiscoveryConversion:
                             raise UserError('correction decisions require decisions and open_questions lists')
                         value = {k: _bounded_strings(v, k, chars=4000) for k, v in value.items()}
                     active_research[key] = copy.deepcopy(value)
+            body, taken, fill_line = self._fill(fm, body, active_research, new=not before, summary=summary, notes=notes, plan=plan,
+                                     subtasks=subtasks, checklist=checklist, skipped=subtasks_skipped_reason)
+            # Approved text the fill did not take is appended as before; nothing is ever dropped.
+            plan_text = '\n'.join(plan) if isinstance(plan, list) else plan
+            if notes and 'notes' in taken: notes = ''
+            if plan_text and 'plan' in taken: plan_text = ''
+            if notes or scope_notes: body = self._append_section(body, 'Notes', '\n\n'.join(x for x in (notes, scope_notes) if x))
+            if plan_text or active_goal or execution_method: body = self._append_section(body, 'Plan', '\n\n'.join(x for x in (active_goal, plan_text, 'Execution method: ' + execution_method if execution_method else '') if x))
+            # Agent subtasks the fill could not keep whole join the checklist append path.
+            if subtasks and 'subtasks' not in taken and not _whole_items([*subtasks, *(checklist or [] if not before else [])], rs.SUBTASKS_MAX):
+                checklist = [*subtasks, *(checklist or [])]
+            if checklist and not before and 'subtasks' not in taken:
+                body = self._append_section(body, 'Subtasks', '\n'.join('- [ ] ' + x for x in checklist))
+            elif checklist and before:
+                body = self._append_section(body, 'Plan', '\n'.join('- [ ] ' + x for x in checklist))
+            if fill_line: body = tf.append_log(body, fill_line, self.rt.settings.today())
             revision, block = render_discovery_dossier(active_research, dossier_id=dossier_id, candidate_source_ids=candidate['source_ids'])
             if active_research != research:
                 marker = f'<!-- discovery-dossier:end {dossier_id} -->'
@@ -376,7 +496,7 @@ class DiscoveryConversion:
     def revise(self, run, wid, *, expected_plan_revision, edits, reason):
         plan = read_json(self._paths(run, wid)[0])
         if not plan: raise UserError('no prepared plan to revise')
-        if set(edits) - {'choice', 'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated', 'scope_notes', 'priority', 'scheduled', 'execution_method', 'notes', 'plan', 'checklist', 'active_goal', 'correction_overlay'}:
+        if set(edits) - {'choice', 'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated', 'scope_notes', 'priority', 'scheduled', 'execution_method', 'notes', 'plan', 'checklist', 'active_goal', 'correction_overlay', 'summary', 'subtasks', 'subtasks_skipped_reason'}:
             raise UserError('unsupported pending plan edits')
         request = {**plan['request'], **edits, 'reason': reason, 'user_approved': True}
         return self.prepare(run, wid, **request, expected_plan_revision=expected_plan_revision)
@@ -386,6 +506,7 @@ class DiscoveryConversion:
         if not old or old['request']['choice'] != 'create': raise UserError('manual recovery requires an existing unwritten create plan')
         request = {**old['request'], 'choice': 'update', 'target_task_id': target_task_id, 'expected_revision': expected_revision,
                    'user_approved': True, 'manual_binding': True, 'reason': reason, 'area': '', 'title': '', 'due': '', 'undated': False}
+        if isinstance(request.get('plan'), list): request['plan'] = '\n'.join(request['plan'])  # list steps are for new tasks only
         return self.prepare(run, wid, **request, expected_plan_revision=expected_plan_revision)
 
     def cancel(self, run, wid, *, expected_plan_revision, reason):
@@ -430,7 +551,15 @@ class DiscoveryConversion:
                 if additions: body = self._append_section(body, 'Notes', '### Combined approved context\n\n' + '\n'.join('- ' + x for x in additions))
                 for field, heading in (('notes', 'Notes'), ('scope_notes', 'Notes'), ('plan', 'Plan'), ('active_goal', 'Plan'), ('execution_method', 'Plan')):
                     value = plan['request'].get(field)
-                    if value and value not in body: body = self._append_section(body, heading, value)
+                    if isinstance(value, list): value = '\n'.join(value)
+                    # the first member's text may sit in the body in filled (normalized) form
+                    lines = [rs._fill_line(x) for x in value.split('\n')] if isinstance(value, str) else []
+                    if value and value not in body and not (any(lines) and all(x in body for x in lines if x)):
+                        body = self._append_section(body, heading, value)
+                have = {line.strip() for line in body.split('\n')}
+                items = [x for x in (*(plan['request'].get('subtasks') or []), *(plan['request'].get('checklist') or []))
+                         if '- [ ] ' + x.strip() not in have and '- [ ] ' + rs._fill_line(x) not in have]
+                if items: body = self._append_section(body, 'Subtasks' if create else 'Plan', '\n'.join('- [ ] ' + x for x in dict.fromkeys(items)))
                 member_fm, _ = tf.split_text(plan['postimage'], rt=True)
                 for field in ('title', 'due', 'scheduled', 'priority', 'execution_method', 'active_goal'):
                     explicit = plan['request'].get(field) or (field in {'due', 'scheduled'} and plan['request'].get('undated'))

@@ -59,6 +59,12 @@ export function createMockBackend({ today = nyToday() } = {}) {
     }],
     ['POST', /^\/tasks\/([^/]+)\/complete$/, (q, [id]) => { const t = find(id); t.status = 'done'; t.completed = today; log(t, 'Marked done.'); bump(t); return { ok: true, task: full(t) } }],
     ['POST', /^\/tasks\/([^/]+)\/reopen$/, (q, [id]) => { const t = find(id); t.status = 'open'; t.completed = null; log(t, 'Reopened.'); bump(t); return { ok: true, task: full(t) } }],
+    ['POST', /^\/tasks\/([^/]+)\/research$/, (q, [id]) => {
+      const t = find(id)
+      if (t.research === 'pending' || t.research === 'running') throw new HttpError(409, 'research_busy', 'Research is already queued or running')
+      t.research = 'pending'; log(t, 'Research requested in the Tasks view.'); bump(t)
+      return { ok: true, queued: true, starts: 'within 30 minutes', message: 'Queued, starts within 30 minutes', task: full(t) }
+    }],
     ['PUT', /^\/tasks\/([^/]+)\/body$/, (q, [id], body) => {
       const t = find(id)
       if (body.expected_revision !== t.revision) throw new HttpError(409, 'stale_revision', 'The task changed since it was read')

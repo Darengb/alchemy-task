@@ -163,6 +163,33 @@ def _spec(path: str) -> list[str]:
     return ["--", path or ".", *_EXCLUDES]
 
 
+def _folder(repo: Path, path: str) -> str:
+    """A path naming a folder in the repo gets a trailing '/' so git treats it as a directory pathspec."""
+    if not path or path.endswith("/"):
+        return path
+    try:
+        return path + "/" if (repo / path).is_dir() else path
+    except OSError:
+        return path
+
+
+def _ls_listing(repo: Path, path: str) -> tuple[str, bool]:
+    """Tracked files under *path*. Credential names are filtered in Python by the caller: some git versions
+    (2.34) drop every file of a folder when ls-files is given the icase exclude pathspecs."""
+    return _ls_names(repo, path or ".")
+
+
+def _ls_names(repo: Path, path: str, cap: int = OUTPUT_CAP) -> tuple[str, bool]:
+    """``ls-files -z`` so each name is raw (git quotes non-ASCII or odd names otherwise, which hides them from
+    the credential filter). Credential names are dropped, and so is a last name cut short by the cap."""
+    raw, cut = _git_capped(repo, ["ls-files", "-z", "--", path], cap=cap)
+    names = raw.split("\0")
+    if cut or (names and names[-1] == ""):
+        names = names[:-1]
+    keep = [n.replace("\n", "\\n") for n in names if n and not is_secret_path(n)]
+    return "".join(n + "\n" for n in keep), cut
+
+
 def _run(fn):
     def handler(args: dict[str, Any] | None = None, **_: Any) -> str:
         try:
@@ -247,7 +274,7 @@ def _log(args: dict[str, Any]) -> dict[str, Any]:
         argv.append("--grep=" + str(args["grep"]))   # one argv item: data, not an option
     if rev:
         argv.append(rev)
-    return _result(repo, argv + _spec(path))
+    return _result(repo, argv + _spec(_folder(repo, path)))
 
 
 def _show(args: dict[str, Any]) -> dict[str, Any]:
@@ -275,15 +302,28 @@ def _grep(args: dict[str, Any]) -> dict[str, Any]:
     argv += ["-e", pattern]
     if rev:
         argv.append(rev)
-    return _result(repo, argv + _spec(path))
+    return _result(repo, argv + _spec(_folder(repo, path)))
+
+
+def _visible(text: str) -> str:
+    return "".join(line for line in text.splitlines(keepends=True) if not is_secret_path(line.strip()))
 
 
 def _ls_files(args: dict[str, Any]) -> dict[str, Any]:
     repo = _repo(args.get("repo"))
-    path = _path(args.get("path"))
-    res = _result(repo, ["ls-files", "--", path or ".", *_EXCLUDES])
-    res["output"] = "".join(line for line in res["output"].splitlines(keepends=True)
-                            if not is_secret_path(line.strip()))
+    path = _folder(repo, _path(args.get("path")))
+    out, cut = _ls_listing(repo, path)
+    res: dict[str, Any] = {"ok": True, "repo": str(repo), "output": _visible(out), "truncated": cut}
+    if cut:
+        res["hint"] = f"Output cut at {OUTPUT_CAP} characters; narrow with path, rev or max_count."
+    if path and not res["output"].strip():
+        # Safety net: never report an empty folder when git does track readable files there.
+        probe, _ = _ls_names(repo, path.rstrip("/") or ".", cap=4000)
+        if _visible(probe).strip():
+            return {"ok": False, "repo": str(repo), "error": (
+                f"Listing failed: git returned no files for '{path}' but it does track files there. "
+                "Do not conclude the folder is empty or untracked; retry with the folder path ending in '/' "
+                "or list the parent folder.")}
     return res
 
 

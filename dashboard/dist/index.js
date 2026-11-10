@@ -329,6 +329,8 @@
       reopen: (id) => call("POST", `/tasks/${enc(id)}/reopen`, {}),
       putBody: (id, body, expectedRevision) => call("PUT", `/tasks/${enc(id)}/body`, { body, expected_revision: expectedRevision }),
       create: (fields) => call("POST", "/tasks", fields),
+      // Queue research (start, retry or refresh); the answer says whether the sweep starts now or later.
+      research: (id) => call("POST", `/tasks/${enc(id)}/research`, {}),
       // Send to chat: desktop gets the note back to send in a new chat; other surfaces queue it for the gateway.
       handoff: (id, surface) => call("POST", `/tasks/${enc(id)}/handoff`, { surface }),
       handoffStatus: (handoffId) => call("GET", `/handoffs/${enc(handoffId)}`),
@@ -1488,6 +1490,106 @@
     ));
   }
 
+  // ui/src/lib/sections.js
+  var START_RE = /^\s*<!--\s*([\w-]+):start((?:\s+[\w.:-]+)*)\s*-->\s*$/;
+  var END_RE = /^\s*<!--\s*([\w-]+):end((?:\s+[\w.:-]+)*)\s*-->\s*$/;
+  var ids = (s) => String(s || "").trim().split(/\s+/).join(" ");
+  function blockEnd(lines, i) {
+    const m = lines[i].match(START_RE);
+    if (!m) return -1;
+    for (let j = i + 1; j < lines.length; j++) {
+      const e = lines[j].match(END_RE);
+      if (e && e[1] === m[1] && ids(e[2]) === ids(m[2])) return j;
+    }
+    return -1;
+  }
+  function splitSections(body) {
+    const lines = String(body || "").replace(/\r\n?/g, "\n").split("\n");
+    const visible = lines.slice();
+    const managed = [];
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(START_RE);
+      if (!m) continue;
+      const j = blockEnd(lines, i);
+      if (j < 0) continue;
+      managed.push({ name: m[1], id: ids(m[2]), text: lines.slice(i + 1, j).join("\n").trim() });
+      for (let k = i; k <= j; k++) visible[k] = "";
+      i = j;
+    }
+    const sections = [];
+    let cur = { title: "", start: 0, lines: [] };
+    visible.forEach((l, idx) => {
+      const m = l.match(/^##\s+(.*)$/);
+      if (m) {
+        sections.push(cur);
+        cur = { title: m[1].trim(), start: idx + 1, lines: [] };
+      } else cur.lines.push(l);
+    });
+    sections.push(cur);
+    return {
+      sections: sections.filter((x) => x.title || x.lines.join("").trim()).map((x) => ({
+        title: x.title,
+        text: x.lines.join("\n"),
+        start: x.start,
+        folded: /^(log|history|activity)$/i.test(x.title)
+      })),
+      managed
+    };
+  }
+  function managedTitle(name) {
+    if (/dossier|research|discovery/i.test(name)) return "Research";
+    if (/state/i.test(name)) return "Current state";
+    return name.replace(/[-_]+/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+  }
+  function extractManaged(body) {
+    const lines = String(body || "").replace(/\r\n?/g, "\n").split("\n");
+    const keep = [];
+    const top = [];
+    const bottom = [];
+    let seenContent = false;
+    for (let i = 0; i < lines.length; i++) {
+      if (START_RE.test(lines[i])) {
+        const j = blockEnd(lines, i);
+        if (j >= 0 && (!seenContent || /-dossier$/.test(lines[i].match(START_RE)[1]))) {
+          ;
+          (seenContent ? bottom : top).push(lines.slice(i, j + 1).join("\n"));
+          i = j;
+          continue;
+        }
+      }
+      if (lines[i].trim()) seenContent = true;
+      keep.push(lines[i]);
+    }
+    const editable = keep.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+/, "").replace(/\s+$/, "") + "\n";
+    return { editable, top, bottom };
+  }
+  function rebuildBody(editable, top, bottom) {
+    const parts = [];
+    if (top.length) parts.push(top.join("\n\n"));
+    parts.push(String(editable).replace(/\s+$/, ""));
+    if (bottom.length) parts.push(bottom.join("\n\n"));
+    return "\n" + parts.filter((x) => x.trim()).join("\n\n") + "\n";
+  }
+  function groupManaged(managed) {
+    const out = [];
+    let research = null;
+    for (const m of managed || []) {
+      const title = managedTitle(m.name);
+      if (title !== "Research") {
+        out.push({ title, text: m.text, names: [m.name] });
+        continue;
+      }
+      if (!research) {
+        research = { title, text: m.text, names: [m.name] };
+        out.push(research);
+        continue;
+      }
+      research.text = [research.text, m.text].filter((x) => x).join("\n\n---\n\n");
+      research.names.push(m.name);
+    }
+    return out;
+  }
+
   // ui/src/lib/markdown.js
   var h = react_dashboard_default.createElement;
   var SAFE_URL = /^(https?:|mailto:|obsidian:|#)/i;
@@ -1672,77 +1774,22 @@
     lines[line] = `${m[1]}[${checked ? "x" : " "}]${m[3]}`;
     return lines.join("\n");
   }
-  var START_RE = /^\s*<!--\s*([\w-]+):start\s*-->\s*$/;
-  var END_RE = /^\s*<!--\s*([\w-]+):end\s*-->\s*$/;
-  function splitSections(body) {
-    const lines = String(body || "").replace(/\r\n?/g, "\n").split("\n");
-    const visible = lines.slice();
-    const managed = [];
-    for (let i = 0; i < lines.length; i++) {
-      const m = lines[i].match(START_RE);
-      if (!m) continue;
-      let j = i + 1;
-      while (j < lines.length && !(END_RE.test(lines[j]) && lines[j].match(END_RE)[1] === m[1])) j++;
-      if (j >= lines.length) continue;
-      managed.push({ name: m[1], text: lines.slice(i + 1, j).join("\n").trim() });
-      for (let k = i; k <= j; k++) visible[k] = "";
-      i = j;
-    }
-    const sections = [];
-    let cur = { title: "", start: 0, lines: [] };
-    visible.forEach((l, idx) => {
-      const m = l.match(/^##\s+(.*)$/);
-      if (m) {
-        sections.push(cur);
-        cur = { title: m[1].trim(), start: idx + 1, lines: [] };
-      } else cur.lines.push(l);
-    });
-    sections.push(cur);
-    return {
-      sections: sections.filter((x) => x.title || x.lines.join("").trim()).map((x) => ({
-        title: x.title,
-        text: x.lines.join("\n"),
-        start: x.start,
-        folded: /^(log|history|activity)$/i.test(x.title)
-      })),
-      managed
-    };
+
+  // ui/src/lib/research.js
+  var BUSY = /* @__PURE__ */ new Set(["pending", "running", "promoted"]);
+  var RESEARCHING = "Hermes is researching this task. Findings will appear here.";
+  function researchButton(status, click = null) {
+    const s = String(status || "none").toLowerCase();
+    if (click && click.phase === "sending") return { label: "Queued", disabled: true, note: null };
+    const label = s === "complete" ? "Refresh research" : "Start research";
+    if (click && click.phase === "done") return { label: "Queued", disabled: true, note: click.message || null };
+    if (BUSY.has(s)) return { label, disabled: true, note: RESEARCHING };
+    return { label, disabled: false, note: null };
   }
-  function managedTitle(name) {
-    if (/dossier|research/i.test(name)) return "Research";
-    if (/state/i.test(name)) return "Current state";
-    return name.replace(/[-_]+/g, " ").replace(/^\w/, (c) => c.toUpperCase());
-  }
-  function extractManaged(body) {
-    const lines = String(body || "").replace(/\r\n?/g, "\n").split("\n");
-    const keep = [];
-    const top = [];
-    const bottom = [];
-    let seenContent = false;
-    for (let i = 0; i < lines.length; i++) {
-      const m = lines[i].match(START_RE);
-      if (m) {
-        let j = i + 1;
-        while (j < lines.length && !(END_RE.test(lines[j]) && lines[j].match(END_RE)[1] === m[1])) j++;
-        if (j < lines.length) {
-          ;
-          (seenContent ? bottom : top).push(lines.slice(i, j + 1).join("\n"));
-          i = j;
-          continue;
-        }
-      }
-      if (lines[i].trim()) seenContent = true;
-      keep.push(lines[i]);
-    }
-    const editable = keep.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+/, "").replace(/\s+$/, "") + "\n";
-    return { editable, top, bottom };
-  }
-  function rebuildBody(editable, top, bottom) {
-    const parts = [];
-    if (top.length) parts.push(top.join("\n\n"));
-    parts.push(String(editable).replace(/\s+$/, ""));
-    if (bottom.length) parts.push(bottom.join("\n\n"));
-    return "\n" + parts.filter((x) => x.trim()).join("\n\n") + "\n";
+  function researchStartedMessage(res) {
+    if (res && typeof res.message === "string" && res.message) return res.message;
+    if (res && res.starts === "now") return "Starting now";
+    return `Queued, starts ${res && res.starts || "within 30 minutes"}`;
   }
 
   // ui/src/panel.jsx
@@ -1966,7 +2013,29 @@
         onLongPress: copyForChat,
         copied
       }
-    )), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-fields" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field", date && date < today && !isDone(task) && "is-late"), onClick: pickDate }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "cal", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, date ? relativeDay(date, today) : "No date")), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickArea }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: task.area }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, task.area || "No area")), isDone(task) ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-field at-status is-static", "data-s": task.status }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, task.status === "cancelled" ? "Cancelled" : "Done")) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field at-status", "data-s": task.status || "open", onClick: pickStatus }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, (STATUSES.find(([v]) => v === task.status) || [0, "Open"])[1])), separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickDue }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(task.due, today))) : null), /* @__PURE__ */ react_dashboard_default.createElement(SummaryField, { value: task.summary || "", onSave: (summary) => patch({ summary }) }), task.research === "pending" || task.research === "running" ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-research-note" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "spark", size: 14 }), " Hermes is researching this task. Findings will appear here.") : null, editing ? /* @__PURE__ */ react_dashboard_default.createElement(BodyEditor, { task, onSave: saveBody, onDone: () => setEditing(false), onStale: () => setStale(true), flushRef }) : task.body === void 0 ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-loading" }, /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null)) : /* @__PURE__ */ react_dashboard_default.createElement(BodyView, { task, onEdit: () => setEditing(true), onToggle: toggle }), /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "More", className: "at-more" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-more-grid" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Priority"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field is-plain", (task.priority === "high" || task.priority === "urgent") && "is-high"), onClick: pickPriority }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-prio-glyph", "data-p": task.priority || "normal" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, (task.priority || "normal").replace(/^\w/, (c) => c.toUpperCase())))), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due date"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field is-plain", onClick: pickDue }, shortDate(task.due, today)) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-link", onClick: pickDue }, "Set a separate due date")), task.completed ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Completed"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, shortDate(task.completed, today))) : null, task.project ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Project"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono" }, String(task.project).replace(/^\[\[|\]\]$/g, "").split("/").slice(-2, -1)[0] || task.project)) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "File"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono at-break" }, task.path))));
+    )), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-fields" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field", date && date < today && !isDone(task) && "is-late"), onClick: pickDate }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "cal", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, date ? relativeDay(date, today) : "No date")), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickArea }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: task.area }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, task.area || "No area")), isDone(task) ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-field at-status is-static", "data-s": task.status }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, task.status === "cancelled" ? "Cancelled" : "Done")) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field at-status", "data-s": task.status || "open", onClick: pickStatus }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, (STATUSES.find(([v]) => v === task.status) || [0, "Open"])[1])), separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickDue }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(task.due, today))) : null), /* @__PURE__ */ react_dashboard_default.createElement(SummaryField, { value: task.summary || "", onSave: (summary) => patch({ summary }) }), editing ? /* @__PURE__ */ react_dashboard_default.createElement(BodyEditor, { task, onSave: saveBody, onDone: () => setEditing(false), onStale: () => setStale(true), flushRef }) : task.body === void 0 ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-loading" }, /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null)) : /* @__PURE__ */ react_dashboard_default.createElement(BodyView, { task, onEdit: () => setEditing(true), onToggle: toggle }), /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "More", className: "at-more" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-more-grid" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Priority"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field is-plain", (task.priority === "high" || task.priority === "urgent") && "is-high"), onClick: pickPriority }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-prio-glyph", "data-p": task.priority || "normal" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, (task.priority || "normal").replace(/^\w/, (c) => c.toUpperCase())))), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due date"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field is-plain", onClick: pickDue }, shortDate(task.due, today)) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-link", onClick: pickDue }, "Set a separate due date")), task.completed ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Completed"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, shortDate(task.completed, today))) : null, task.project ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Project"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono" }, String(task.project).replace(/^\[\[|\]\]$/g, "").split("/").slice(-2, -1)[0] || task.project)) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "File"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono at-break" }, task.path))));
+  }
+  function ResearchBar({ task }) {
+    const { store, api } = useApp();
+    const toast = useToast();
+    const [click, setClick] = react_dashboard_default.useState(null);
+    react_dashboard_default.useEffect(() => setClick(null), [task.task_id]);
+    react_dashboard_default.useEffect(() => {
+      if (click && click.phase === "done" && !["pending", "running", "promoted"].includes(task.research)) setClick(null);
+    }, [task.research]);
+    const b = researchButton(task.research, click);
+    const start = async () => {
+      setClick({ phase: "sending" });
+      try {
+        const res = await api.research(task.task_id);
+        if (res.task) store.put(res.task);
+        setClick({ phase: "done", message: researchStartedMessage(res) });
+      } catch (err) {
+        setClick(null);
+        toast(err.code === "research_busy" ? "Research is already queued or running." : describeError(err), { tone: "error" });
+      }
+    };
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-research-bar" }, /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", icon: task.research === "complete" ? "refresh" : "spark", disabled: b.disabled, onClick: start }, b.label), b.note ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-research-status" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "spark", size: 14 }), " ", b.note) : null);
   }
   function PanelShell({ narrow, onClose, actions, footer, children }) {
     const ref = react_dashboard_default.useRef(null);
@@ -2126,7 +2195,7 @@
     const after = logAt >= 0 ? rest.slice(logAt) : [];
     const renderSection = (s) => renderBlocks(parseBlocks(s.text), { onToggle: (line, checked) => onToggle(s.start + line, checked) });
     const hasContent = sections.some((s) => s.text.trim());
-    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-body" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-body-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-body-label" }, "Notes"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", icon: "edit", onClick: onEdit }, "Edit")), state && state.text.trim() ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-state" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-state-label" }, "Current state"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, state.managed ? renderBlocks(parseBlocks(state.text)) : renderSection(state))) : null, !hasContent && !managed.length ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-empty-notes", onClick: onEdit }, "Add notes") : null, before.map((s, i) => /* @__PURE__ */ react_dashboard_default.createElement(BodySection, { key: `b${i}`, s, render: renderSection })), managed.map((m, i) => /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { key: `m${i}`, title: managedTitle(m.name), defaultOpen: managedTitle(m.name) === "Research", className: "at-fold", right: /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "spark", size: 13 }) }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, renderBlocks(parseBlocks(m.text))))), after.map((s, i) => /* @__PURE__ */ react_dashboard_default.createElement(BodySection, { key: `a${i}`, s, render: renderSection })));
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-body" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-body-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-body-label" }, "Notes"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", icon: "edit", onClick: onEdit }, "Edit")), state && state.text.trim() ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-state" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-state-label" }, "Current state"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, state.managed ? renderBlocks(parseBlocks(state.text)) : renderSection(state))) : null, !hasContent && !managed.length ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-empty-notes", onClick: onEdit }, "Add notes") : null, before.map((s, i) => /* @__PURE__ */ react_dashboard_default.createElement(BodySection, { key: `b${i}`, s, render: renderSection })), groupManaged(managed).map((m, i) => /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { key: `m${i}`, title: m.title, defaultOpen: m.title === "Research", className: "at-fold", right: /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "spark", size: 13 }) }, m.title === "Research" && !isDone(task) ? /* @__PURE__ */ react_dashboard_default.createElement(ResearchBar, { task }) : null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, renderBlocks(parseBlocks(m.text))))), !isDone(task) && !groupManaged(managed).some((m) => m.title === "Research") ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Research", defaultOpen: true, className: "at-fold", right: /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "spark", size: 13 }) }, /* @__PURE__ */ react_dashboard_default.createElement(ResearchBar, { task })) : null, after.map((s, i) => /* @__PURE__ */ react_dashboard_default.createElement(BodySection, { key: `a${i}`, s, render: renderSection })));
   }
   function BodySection({ s, render }) {
     return s.folded ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: s.title, className: "at-fold" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, render(s))) : /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-section" }, s.title && !/^notes$/i.test(s.title) ? /* @__PURE__ */ react_dashboard_default.createElement("h3", { className: "at-section-title" }, s.title) : null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, render(s)));
