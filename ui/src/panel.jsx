@@ -8,6 +8,7 @@ import { describeError } from './api.js'
 import { useApp, useStore } from './store.js'
 import { AreaDot, Button, Check, DatePicker, Disclosure, Icon, IconButton, Menu, Spinner, copyText, cx, taskHandoff, useOverlay, markScrolled, useSheetDismiss, useToast } from './ui.jsx'
 import { isDone } from './tasks.jsx'
+import { researchButton, researchStartedMessage } from './lib/research.js'
 
 const PRIORITIES = ['urgent', 'high', 'normal', 'low']
 const PLATFORMS = { gui: 'the Hermes app', desktop: 'Hermes Desktop', tui: 'the terminal', telegram: 'Telegram', discord: 'Discord', slack: 'Slack', whatsapp: 'WhatsApp', signal: 'Signal',
@@ -237,9 +238,7 @@ export function TaskPanel({ id, narrow, onClose }) {
       </div>
 
       <SummaryField value={task.summary || ''} onSave={(summary) => patch({ summary })} />
-      {task.research === 'pending' || task.research === 'running' ? (
-        <div className="at-research-note"><Icon name="spark" size={14} /> Hermes is researching this task. Findings will appear here.</div>
-      ) : null}
+      {isDone(task) ? null : <ResearchBar task={task} />}
 
       {editing ? (
         <BodyEditor task={task} onSave={saveBody} onDone={() => setEditing(false)} onStale={() => setStale(true)} flushRef={flushRef} />
@@ -266,6 +265,37 @@ export function TaskPanel({ id, narrow, onClose }) {
         </div>
       </Disclosure>
     </PanelShell>
+  )
+}
+
+// Top of the research section: start, retry or refresh research. Workers only start inside an agent turn,
+// so the button queues research and shows when it starts.
+function ResearchBar({ task }) {
+  const { store, api } = useApp()
+  const toast = useToast()
+  const [click, setClick] = React.useState(null)
+  React.useEffect(() => setClick(null), [task.task_id])
+  // Once research leaves the queue (finished or failed), the button shows the new state again.
+  React.useEffect(() => {
+    if (click && click.phase === 'done' && !['pending', 'running', 'promoted'].includes(task.research)) setClick(null)
+  }, [task.research])
+  const b = researchButton(task.research, click)
+  const start = async () => {
+    setClick({ phase: 'sending' })
+    try {
+      const res = await api.research(task.task_id)
+      if (res.task) store.put(res.task)
+      setClick({ phase: 'done', message: researchStartedMessage(res) })
+    } catch (err) {
+      setClick(null)
+      toast(err.code === 'research_busy' ? 'Research is already queued or running.' : describeError(err), { tone: 'error' })
+    }
+  }
+  return (
+    <div className="at-research-bar">
+      <Button size="sm" icon={task.research === 'complete' ? 'refresh' : 'spark'} disabled={b.disabled} onClick={start}>{b.label}</Button>
+      {b.note ? <span className="at-research-status"><Icon name="spark" size={14} /> {b.note}</span> : null}
+    </div>
   )
 }
 

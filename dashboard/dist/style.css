@@ -2038,6 +2038,20 @@ html.at-dragging {
   color: var(--at-accent-text);
   box-shadow: inset 0 0 0 1px rgba(110, 120, 255, .3);
 }
+.at-research-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 14px;
+}
+.at-research-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--at-accent-text);
+}
 .at-banner {
   display: flex;
   align-items: center;
