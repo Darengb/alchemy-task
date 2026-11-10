@@ -77,6 +77,9 @@ LAUNCH_MARGIN = 15
 # Calls during which a timed-out child's landing cancellation still counts as
 # research in progress before it is reported as unknown.
 SETTLE_CALLS = 2
+# Slack after an orphaned child's saved deadline (its owner session changed and
+# the host no longer shows its handle) before it is treated as a timeout.
+ORPHAN_MARGIN = 120
 
 
 @dataclasses.dataclass(frozen=True)
@@ -396,7 +399,8 @@ class DiscoveryRunner:
             old_parent = state.get('parent_session', ledger['origin'].get('session_id'))
         if old_parent != session_id and (not adopt or not self.recovery_authorizer or not self.recovery_authorizer(run_id, old_parent, session_id)):
             raise UserError('new parent requires integration-verified recovery approval, never model identity assertion')
-        fenced = self.store.recover_owner(run_id, owner_session=session_id, owner_restarted=owner_restarted)
+        fenced = self.store.recover_owner(run_id, owner_session=session_id, owner_restarted=owner_restarted,
+                                          orphan_seconds=self.policy.pending_seconds + self.policy.running_seconds)
         # Plugin host restart alone may reconnect same owner while actual host
         # lives. Missing in-process timer requires conservative persisted budget.
         with self._state(run_id) as state:
@@ -419,7 +423,11 @@ class DiscoveryRunner:
                     # never a fresh1800. Wall expiry immediately fences.
                     remaining = dt.datetime.fromisoformat(a['deadline_utc']).timestamp() - self.clock.time()
                     self._deadlines[(run_id, a['token'])] = self.clock.monotonic() + max(0, remaining)
-        return {'fenced': fenced, 'same_parent': old_parent == session_id, 'owner_restarted': owner_restarted}
+        attempts = self.store.get_run(run_id)['attempts'].values()
+        recovered = [a['token'] for a in attempts if (a['terminal'] or {}).get('receipt', {}).get('basis') == 'committed_spool_after_owner_change' and a['state'] == 'terminal_observed']
+        orphaned = [a['token'] for a in attempts if a.get('owner_lost') and not a['terminal'] and not a['fenced']]
+        return {'fenced': fenced, 'recovered': recovered, 'orphaned': orphaned,
+                'same_parent': old_parent == session_id, 'owner_restarted': owner_restarted}
 
     def release_hold(self, run_id, reason, *, session_id=''):
         self._parent(run_id, session_id)
@@ -464,7 +472,15 @@ class DiscoveryRunner:
         deferred = []
         cancelling = {}
         launched = set()
+        orphans = set()
         lifecycle = self.ctx.subagent_lifecycle
+
+        def settle_orphans():
+            # Children of an earlier owner session: invisible to this session's
+            # lifecycle, still holding their slot until they commit or time out.
+            outcomes = self.store.settle_orphans(run_id, now_epoch=self.clock.time(), margin=ORPHAN_MARGIN)
+            orphans.clear()
+            orphans.update(t for t, outcome in outcomes.items() if outcome == 'waiting')
 
         def launch_worker(token, request, context):
             # Only this invocation launches, under its copied active call context.
@@ -475,8 +491,9 @@ class DiscoveryRunner:
         try:
             self.store.recover_spools(run_id)
             self.store.recover_bundles(run_id)
+            settle_orphans()
             for a in self.store.get_run(run_id)['attempts'].values():
-                if a['terminal']:
+                if a['terminal'] or a['token'] in orphans:
                     continue
                 if a['fenced'] and a.get('fence_reason') in {'execution_timeout', 'admission_timeout'} and a['handle'] and a['owner_session'] == session_id:
                     # A timed-out child whose cancellation has since landed is a
@@ -570,8 +587,10 @@ class DiscoveryRunner:
                             self._terminal(run_id, token, handle)
                     except Exception:
                         cancelling.pop(token, None)
+                if orphans:
+                    settle_orphans()
                 eligible = [c for c in self._eligible(run_id) if c not in deferred]
-                while self.clock.monotonic() < admit_until and len(active) < policy.slots and eligible:
+                while self.clock.monotonic() < admit_until and len(active) + len(orphans) < policy.slots and eligible:
                     cid = eligible.pop(0)
                     try:
                         a = self.store.reserve_attempt(run_id, cid, owner_session=session_id, daily_limit=ledger['config'].get('research_cap', policy.daily_limit))
@@ -587,7 +606,7 @@ class DiscoveryRunner:
                     context = contextvars.copy_context()
                     threading.Thread(target=launch_worker, args=(a['token'], request, context), daemon=True, name='discovery-launch-' + a['token'][:8]).start()
                     maximum = max(maximum, len(active))
-                if not active:
+                if not active and not orphans:
                     if not cancelling and (not [c for c in self._eligible(run_id) if c not in deferred] or self.clock.monotonic() >= admit_until):
                         break
                 remaining = call_end - self.clock.monotonic()
@@ -606,7 +625,7 @@ class DiscoveryRunner:
                     if left > 0:
                         self.clock.sleep(min(.01, left))
                 else:
-                    self.clock.sleep(min(.05, timeout))
+                    self.clock.sleep(timeout if orphans else min(.05, timeout))
         except BaseException:
             failed = True
             raise
