@@ -20,6 +20,7 @@ from .core import research as rs
 from .core import taskfile as tf
 from .core.locks import task_lock
 from .core.store import NeedsInput
+from . import research_git
 from .runtime import Runtime
 
 RESEARCH_TOOLSET = "alchemy-task-research"
@@ -599,26 +600,71 @@ def request_again(rt: Runtime, ref: str, origin_session: str = "") -> dict[str, 
 
 # ------------------------------------------------------------------ research-agent tools
 
+_ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
+_ENV_IN_TEXT = re.compile(r"\b[A-Z][A-Z0-9]*_(?:[A-Z0-9]+_)*(?:API_KEY|KEY|TOKEN|SECRET|PASSWORD|PAT|ID|"
+                          r"CREDENTIALS?)\b")
+_ACCESS_WORDS = re.compile(r"\b(api[ -]?keys?|tokens?|credentials?|oauth|log ?in|sign ?in|password|"
+                           r"service account|access key|secret key|env(?:ironment)? var(?:iable)?s?)\b", re.I)
+
+
+def _env_names(requirements: Any) -> list[str]:
+    """Environment variable NAMES from Hermes's registry metadata. Anything not shaped like a name is dropped,
+    so a value can never be echoed even if a registry entry is malformed."""
+    items = requirements if isinstance(requirements, (list, tuple, set)) else []
+    out: list[str] = []
+    for item in items:
+        name = item.get("name") if isinstance(item, dict) else item
+        if isinstance(name, str) and _ENV_NAME.match(name) and name not in out:
+            out.append(name)
+    return out[:20]
+
+
+def _skill_access_hints(rt: Runtime, limit: int = 60) -> list[dict[str, Any]]:
+    """Skills whose name or description mentions keys, logins or accounts (hints, from the listing text only)."""
+    try:
+        skills = json.loads(str(rt.ctx.dispatch_tool("skills_list", {})))["skills"]
+    except Exception:  # noqa: BLE001 - hints are optional
+        return []
+    hints = []
+    for s in skills if isinstance(skills, list) else []:
+        if not isinstance(s, dict) or not s.get("name"):
+            continue
+        text = f"{s.get('name')} {s.get('description') or ''}"
+        mentions = list(dict.fromkeys(_ENV_IN_TEXT.findall(text) + [m.lower() for m in _ACCESS_WORDS.findall(text)]))
+        if mentions:
+            hints.append({"skill": str(s["name"]), "mentions": mentions[:8]})
+        if len(hints) >= limit:
+            break
+    return hints
+
+
 def _inventory(rt: Runtime, refresh: bool) -> dict[str, Any]:
     cached = None if refresh else rt.ctx.state.get("inventory", default=None)
     if cached and time.time() - float(cached.get("at") or 0) < INVENTORY_TTL:
         return {**cached["data"], "cached_minutes_ago": int((time.time() - cached["at"]) / 60)}
     toolsets = _registry_toolsets()
     skip = {RESEARCH_TOOLSET}
-    out_sets, mcp = [], []
+    out_sets, mcp, missing = [], [], []
     for name, meta in sorted(toolsets.items()):
         if name in skip:
             continue
         tools = sorted(meta.get("tools") or [])
         entry = {"toolset": name, "available": bool(meta.get("available")), "tools": tools[:25]}
-        if not meta.get("available") and meta.get("requirements"):
-            entry["needs_env"] = sorted(meta["requirements"])[:5] if isinstance(meta["requirements"], (list, set,
-                                                                                              tuple)) else []
+        if not meta.get("available"):
+            needs = _env_names(meta.get("requirements"))
+            if needs:
+                entry["needs_env"] = needs
+            missing.append({"toolset": name, **({"needs_env": needs} if needs else {})})
         (mcp if name.startswith("mcp-") else out_sets).append(entry)
-    data = {"toolsets": out_sets, "mcp_servers": [{"server": m["toolset"][4:], "available": m["available"],
-                                                   "tools": m["tools"]} for m in mcp],
-            "note": "Names only. Hosted connectors, API keys and browser profiles are not listed here; "
-                    "check skills for how the user reaches those systems."}
+    data = {"toolsets": out_sets,
+            "mcp_servers": [{"server": m["toolset"][4:], "available": m["available"], "tools": m["tools"],
+                             **({"needs_env": m["needs_env"]} if m.get("needs_env") else {})} for m in mcp],
+            "missing_access": missing,
+            "skill_access_hints": _skill_access_hints(rt),
+            "note": "Names only, never values. missing_access lists toolsets Hermes reports as unusable and the "
+                    "environment variable names Hermes says they need. skill_access_hints are skills whose text "
+                    "mentions keys, logins or accounts; read them with research_skill_view to learn how the user "
+                    "reaches those systems. Hosted connectors and browser profiles are not listed here."}
     rt.ctx.state.set("inventory", {"at": time.time(), "data": data})
     return {**data, "cached_minutes_ago": 0}
 
@@ -627,9 +673,68 @@ def _json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, default=str)
 
 
+SKILLS_PAGE_CHARS = 12000      # JSON budget per page, well under the tool-result cap
+SKILL_DESC_CHARS = 1500        # longer descriptions are shortened (marked) so one entry always fits a page
+SKILL_VIEW_CHARS = 30000       # longer skill_view results are paged by offset, never cut silently
+
+
+def _page_arg(args: dict[str, Any]) -> int:
+    try:
+        return max(1, int(args.get("page") or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _skill_pages(skills: list[Any]) -> list[list[dict[str, str]]]:
+    """Pack compact entries into pages by size; an entry is never split across pages."""
+    pages: list[list[dict[str, str]]] = [[]]
+    used = 0
+    for s in skills:
+        if not isinstance(s, dict) or not s.get("name"):
+            continue
+        desc = str(s.get("description") or "")
+        if len(desc) > SKILL_DESC_CHARS:
+            desc = desc[:SKILL_DESC_CHARS] + " [shortened; skill_view has the full text]"
+        entry = {"name": str(s["name"]), "category": str(s.get("category") or ""), "description": desc}
+        size = len(_json(entry)) + 2
+        if pages[-1] and used + size > SKILLS_PAGE_CHARS:
+            pages.append([])
+            used = 0
+        pages[-1].append(entry)
+        used += size
+    return pages
+
+
 def t_skills_list(args: dict[str, Any] | None = None, **_: Any) -> str:
+    """The user's complete skills listing, paged. Every skill appears on exactly one page."""
+    args = args or {}
     rt = Runtime()
-    return str(rt.ctx.dispatch_tool("skills_list", {}))[:20000]
+    page = _page_arg(args)
+    call = {"category": str(args["category"])} if args.get("category") else {}
+    raw = str(rt.ctx.dispatch_tool("skills_list", call))
+    try:
+        listing = json.loads(raw)
+        skills = listing["skills"]
+        assert isinstance(skills, list)
+    except Exception:  # noqa: BLE001 - not the expected JSON; page the raw text instead of cutting it
+        size = SKILLS_PAGE_CHARS
+        pages = max(1, -(-len(raw) // size))
+        return _json({"ok": True, "page": page, "pages": pages, "raw": raw[(page - 1) * size:page * size],
+                      "next_page": page + 1 if page < pages else None,
+                      "hint": "Listing was not in the usual format; call again with next_page until it is null."})
+    pages = _skill_pages(skills)
+    total = sum(len(p) for p in pages)
+    out = {"ok": True, "page": page, "pages": len(pages), "total": total,
+           "skills": pages[page - 1] if page <= len(pages) else [],
+           "next_page": page + 1 if page < len(pages) else None}
+    if page == 1 and isinstance(listing.get("categories"), list):
+        out["categories"] = listing["categories"]
+    out["hint"] = (f"Page {page} of {len(pages)}. Call again with page={page + 1} until next_page is null; "
+                   "then use research_skill_view for full skills and their reference files."
+                   if out["next_page"] else
+                   f"Last page ({len(pages)} pages, {total} skills). Use research_skill_view to read skills and "
+                   "their reference files.")
+    return _json(out)
 
 
 def t_skill_view(args: dict[str, Any] | None = None, **_: Any) -> str:
@@ -638,7 +743,17 @@ def t_skill_view(args: dict[str, Any] | None = None, **_: Any) -> str:
     call = {"name": str(args.get("name") or "")}
     if args.get("file_path"):
         call["file_path"] = str(args["file_path"])
-    return str(rt.ctx.dispatch_tool("skill_view", call))[:30000]
+    raw = str(rt.ctx.dispatch_tool("skill_view", call))
+    if len(raw) <= SKILL_VIEW_CHARS and not args.get("offset"):
+        return raw
+    try:
+        offset = max(0, int(args.get("offset") or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    end = offset + SKILL_VIEW_CHARS
+    return _json({"ok": True, "total_chars": len(raw), "offset": offset, "content": raw[offset:end],
+                  "next_offset": end if end < len(raw) else None,
+                  "hint": "Long result: call again with offset=next_offset until it is null."})
 
 
 def t_capabilities(args: dict[str, Any] | None = None, **_: Any) -> str:
@@ -663,14 +778,25 @@ def t_submit(args: dict[str, Any] | None = None, task_id: str = "", **_: Any) ->
 
 _STRS = {"type": "array", "items": {"type": "string"}}
 RESEARCH_TOOLS = (
-    ({"name": "research_skills_list", "description": "Alchemy Task research agents only: list the user's skills "
-      "(read-only).", "parameters": {"type": "object", "properties": {}}}, t_skills_list),
-    ({"name": "research_skill_view", "description": "Alchemy Task research agents only: read one skill or one of "
-      "its files (read-only).", "parameters": {"type": "object", "properties": {
-          "name": {"type": "string"}, "file_path": {"type": "string"}}, "required": ["name"]}}, t_skill_view),
+    ({"name": "research_skills_list", "description": "Alchemy Task research agents only: the user's complete "
+      "skills listing (name, category, description), read-only and paged. Returns page, pages, total and "
+      "next_page; keep calling with page=next_page until next_page is null so you see every skill.",
+      "parameters": {"type": "object", "properties": {
+          "page": {"type": "integer", "minimum": 1, "description": "Page to read, starting at 1."},
+          "category": {"type": "string", "description": "Optional: only skills in this category."}}}},
+     t_skills_list),
+    ({"name": "research_skill_view", "description": "Alchemy Task research agents only: read one skill, or one of "
+      "its linked reference files with file_path (read-only).", "parameters": {"type": "object", "properties": {
+          "name": {"type": "string"},
+          "file_path": {"type": "string", "description": "Optional linked file inside the skill, for example "
+                                                         "references/api.md, as listed in the skill's linked files."},
+          "offset": {"type": "integer", "minimum": 0, "description": "Only for long results: continue from "
+                                                                     "the next_offset you were given."}},
+          "required": ["name"]}}, t_skill_view),
     ({"name": "research_capabilities", "description": "Alchemy Task research agents only: names of the toolsets, "
-      "tools and MCP servers this Hermes has, and whether each is usable. Cached for an hour; pass refresh=true "
-      "before reporting anything as missing.", "parameters": {"type": "object", "properties": {
+      "tools and MCP servers this Hermes has, whether each is usable, missing_access (unusable toolsets with the "
+      "environment variable names they need, never values) and skill_access_hints (skills that mention keys or "
+      "logins). Cached for an hour; pass refresh=true before reporting anything as missing.", "parameters": {"type": "object", "properties": {
           "refresh": {"type": "boolean"}}}}, t_capabilities),
     ({"name": "research_submit", "description": "Alchemy Task research agents only: submit the research result "
       "once, then stop.", "parameters": {"type": "object", "properties": {
@@ -693,7 +819,7 @@ RESEARCH_TOOLS = (
               "title": {"type": "string"}, "url": {"type": "string"}, "relevance": {"type": "string"}},
               "required": ["url"]}}},
           "required": ["run_id", "execution", "recommended_approach"]}}, t_submit),
-)
+) + research_git.TOOLS
 
 
 def register(ctx: Any) -> None:
