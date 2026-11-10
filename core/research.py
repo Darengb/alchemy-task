@@ -264,10 +264,10 @@ def summary_line(normalized: Mapping[str, Any]) -> str:
 FILL_SECTIONS = ("summary", "notes", "plan", "subtasks")
 _HEADINGS = {"notes": "Notes", "plan": "Plan", "subtasks": "Subtasks"}
 _ORDER = ("Notes", "Plan", "Subtasks", "Log")
-_CHECK_RE = re.compile(r"^\s*[-*+]\s+\[[ xX]\]\s+\S")
 _FILL_MARK_RE = re.compile(r"^\*\(from research, [A-Za-z]{3} \d{1,2}\)\*$")
 _DOSSIER_START_RE = re.compile(r"^<!-- (task-research-dossier|discovery-dossier):start\b")
-_LEAD_RE = re.compile(r"^(?:\d+[.)]|[-*+](?:\s+\[[ xX]\])?)\s+")
+_LEAD_RE = re.compile(r"^(?:[#\s]+|\d+[.)]\s+|[-*+](?:\s+\[[ xX]\])?(?:\s+|$)|(?:`{3,}|~{3,})\S*\s*)+")
+_EMPTY_CHECK_RE = re.compile(r"[-*+]\s+\[[ xX]\]\s*")
 PLAN_MIN, PLAN_MAX, SUBTASKS_MAX = 3, 7, 20
 
 
@@ -310,7 +310,8 @@ def _current(fm: Mapping[str, Any], lines: list[str], key: str) -> str | None:
 def _is_blank(key: str, text: str | None) -> bool:
     if not text:
         return True
-    return key == "subtasks" and not any(_CHECK_RE.match(ln) for ln in text.split("\n"))
+    # Subtasks is blank only when every line is an empty checkbox; prose, bullets or numbers are the user's
+    return key == "subtasks" and all(_EMPTY_CHECK_RE.fullmatch(ln.strip()) for ln in text.split("\n") if ln.strip())
 
 
 def _owned(key: str, text: str | None, prior: Mapping[str, Any]) -> bool:
@@ -345,8 +346,9 @@ def blank_sections(fm: Mapping[str, Any], body: str) -> list[str]:
 
 
 def _fill_line(text: Any) -> str:
-    line = _MARKER_RE.sub(lambda m: "&lt;!--" + m.group(0)[4:], " ".join(str(text).split()))
-    return _LEAD_RE.sub("", line).lstrip("#").strip()
+    line = " ".join(str(text).split()).replace("<!--", "&lt;!--").replace("-->", "--&gt;")
+    # one pass strips any run of '#', list leads and code fences, so text can never start a heading or fence
+    return _LEAD_RE.sub("", line).strip()
 
 
 def normalize_fill(raw: Any) -> tuple[dict[str, Any], list[str]]:
@@ -409,7 +411,7 @@ def apply_fill(fm: Mapping[str, Any], body: str, fill: Mapping[str, Any], *, day
     prior = dict(prior) if isinstance(prior, Mapping) else {}
     # keep fingerprints only for research-written sections that are still unedited
     prints = {k: v for k, v in prior.items() if targets.get(k) == "refresh"}
-    report: dict[str, Any] = {"filled": [], "refreshed": [], "skipped_reason": ""}
+    report: dict[str, Any] = {"filled": [], "refreshed": [], "skipped_reason": "", "targets": list(targets)}
     summary = None
     if "summary" in targets and fill.get("summary"):
         summary = fill["summary"]
@@ -437,7 +439,8 @@ def apply_fill(fm: Mapping[str, Any], body: str, fill: Mapping[str, Any], *, day
         body = "\n".join(lines)
         prints[key] = fingerprint(text)
         report["filled" if targets[key] == "blank" else "refreshed"].append(key)
-    if fill.get("subtasks_skipped_reason") and "subtasks" not in report["filled"] + report["refreshed"]:
+    if (fill.get("subtasks_skipped_reason") and "subtasks" in targets
+            and "subtasks" not in report["filled"] + report["refreshed"]):
         report["skipped_reason"] = fill["subtasks_skipped_reason"]
     return body, summary, prints, report
 
@@ -454,6 +457,9 @@ def fill_log(report: Mapping[str, Any], problems: list[str]) -> str:
         parts.append("Research refreshed " + _names(report["refreshed"]) + ".")
     if report.get("skipped_reason"):
         parts.append(f"Subtasks skipped: {report['skipped_reason']}.")
+    if "targets" in report:   # only mention problems in sections research was allowed to write
+        targets = set(report["targets"])
+        problems = [p for p in problems if p.split(" ", 1)[0] not in FILL_SECTIONS or p.split(" ", 1)[0] in targets]
     if problems:
         parts.append("Part of the research fill was dropped: " + "; ".join(problems)[:200] + ".")
     return " ".join(parts)

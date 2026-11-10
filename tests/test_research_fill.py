@@ -176,6 +176,8 @@ def test_blank_sections_helper():
     body = "## Notes\n\nHi.\n\n## Plan\n\n1. a\n\n## Subtasks\n\n- [ ] x\n"
     assert rs.blank_sections({"summary": "s"}, body) == []
     assert rs.blank_sections({"summary": "s"}, "## Notes\n\n## Subtasks\n\nno checklist here\n") == [
+        "notes", "plan"]   # prose under Subtasks is the user's
+    assert rs.blank_sections({"summary": "s"}, "## Notes\n\n## Subtasks\n\n- [ ]\n") == [
         "notes", "plan", "subtasks"]
 
 
