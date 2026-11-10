@@ -2838,6 +2838,20 @@ html.at-dragging {
   outline: 2px solid var(--at-accent-text);
   outline-offset: 4px;
 }
+.at-setup-prompt-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: 700;
+  font-variant: small-caps;
+  text-transform: lowercase;
+  letter-spacing: .06em;
+  color: #c9ccff;
+}
+.at-setup-prompt-label .at-icon {
+  color: var(--at-accent-text);
+}
 .at-setup-prompt-text {
   font-family: var(--at-display);
   font-size: 34px;
