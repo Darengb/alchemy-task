@@ -2,6 +2,7 @@
 // phone "scroll of days", plus the toolbar that switches between them.
 import React from 'react'
 import * as D from './lib/dates.js'
+import { fittingRows } from './lib/month.js'
 import { useDrag } from './lib/dnd.js'
 import { useApp, useStore } from './store.js'
 import { AreaDot, Button, Check, DatePicker, Disclosure, Icon, IconButton, Menu, Segmented, Spinner, cx, quickDates, useOverlay } from './ui.jsx'
@@ -206,35 +207,35 @@ export function MonthView({ anchor, narrow }) {
       </div>
     )
   }
-  const expand = (date, el) => overlay.open(el, (close) => <DayPopover date={date} close={close} />, { width: 360 })
+  return <DesktopMonth weeks={weeks} month={month} days={days} overdue={overdue} today={today} selectedId={selectedId} drag={drag} overlay={overlay} />
+}
+
+function DesktopMonth({ weeks, month, days, overdue, today, selectedId, drag, overlay, picked, onPick }) {
+  const expand = (date, el) => onPick ? onPick(date) : overlay.open(el, (close) => <DayPopover date={date} close={close} />, { width: 360 })
   const gridRef = React.useRef(null)
-  const [cellH, setCellH] = React.useState(110)
   const [cellW, setCellW] = React.useState(160)
   React.useLayoutEffect(() => {
     const el = gridRef.current
     if (!el) return undefined
-    const ro = new ResizeObserver(() => { setCellH(el.clientHeight / weeks.length); setCellW(el.clientWidth / 7) })
+    const ro = new ResizeObserver(() => setCellW(el.clientWidth / 7))
     ro.observe(el)
     return () => ro.disconnect()
   }, [weeks.length])
-  // Room for rows below the day number. Busy days switch to one-line titles so more of them fit.
-  const avail = cellH - 34
   return (
-    <div className="at-month">
+    <div className={cx("at-month", onPick && "at-week-strip")}>
       <div className="at-month-dows">{weeks[0].map((d) => <div key={d}>{D.dayName(d)}</div>)}</div>
-      <div ref={gridRef} className="at-month-grid" style={{ gridTemplateRows: `repeat(${weeks.length}, minmax(0, 1fr))` }}>
+      <div ref={gridRef} className="at-month-grid">
         {weeks.flat().map((d) => {
           const list = days[d] || []
-          const roomy = list.length * 37 <= avail
-          const fit = roomy ? list.length : Math.max(1, Math.floor(avail / 23))
-          const shown = list.length > fit ? list.slice(0, Math.max(1, fit - 1)) : list
-          const more = list.length - shown.length
           const isToday = d === today
           return (
             <div key={d} data-at-drop={d}
-                 className={cx('at-cell', d.slice(0, 7) !== month && 'is-out', isToday && 'is-today', d < today && 'is-past',
-                   drag && drag.over === d && 'is-over')}
-                 onClick={(e) => { if (!e.target.closest('.at-row')) expand(d, e.currentTarget) }}>
+                 className={cx('at-cell', month && d.slice(0, 7) !== month && 'is-out', isToday && 'is-today', d < today && 'is-past',
+                   drag && drag.over === d && 'is-over', picked === d && 'is-picked')}
+                 tabIndex={onPick ? 0 : undefined} role={onPick ? 'button' : undefined}
+                 aria-label={onPick ? `Select ${D.longDate(d)}` : undefined} aria-pressed={onPick ? picked === d : undefined}
+                 onKeyDown={(e) => { if (onPick && e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onPick(d) } }}
+                 onClick={(e) => { if (!e.target.closest('.at-row')) { if (onPick) onPick(d); else expand(d, e.currentTarget) } }}>
               <div className="at-cell-head">
                 <span className="at-cell-num">{D.dayNum(d) === 1 ? `${D.monthName(d, 'short')} 1` : D.dayNum(d)}</span>
                 {isToday && overdue.length ? (
@@ -244,17 +245,40 @@ export function MonthView({ anchor, narrow }) {
                   </button>
                 ) : null}
               </div>
-              <div className={cx('at-cell-list', !roomy && 'is-tight')}>
-                {shown.map((t) => <TaskRow key={t.task_id} task={t} from={d} compact selected={selectedId === t.task_id} />)}
-                {more > 0 ? <button type="button" className="at-cell-more" data-no-drag=""
-                                    onClick={(e) => { e.stopPropagation(); expand(d, e.currentTarget.closest('.at-cell')) }}>+{more} more</button> : null}
-              </div>
+              <MonthTasks tasks={list} date={d} selectedId={selectedId} expand={expand} />
             </div>
           )
         })}
       </div>
     </div>
   )
+}
+
+// Measure the actual list box and rendered controls, including when a sidebar changes its width.
+function MonthTasks({ tasks, date, selectedId, expand }) {
+  const ref = React.useRef(null)
+  const [fit, setFit] = React.useState(1)
+  React.useLayoutEffect(() => {
+    const el = ref.current
+    const measure = () => {
+      const row = el.querySelector('.at-row')
+      const more = el.querySelector('.at-cell-more')
+      const gap = parseFloat(getComputedStyle(el).rowGap) || 0
+      setFit(fittingRows(tasks.length, el.getBoundingClientRect().height, row?.getBoundingClientRect().height || 24,
+        more.getBoundingClientRect().height, gap))
+    }
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    measure()
+    return () => ro.disconnect()
+  }, [tasks.length])
+  const more = Math.max(0, tasks.length - fit)
+  return <div ref={ref} className="at-cell-list is-tight">
+    {tasks.slice(0, fit).map((t) => <TaskRow key={t.task_id} task={t} from={date} compact selected={selectedId === t.task_id} />)}
+    <button type="button" className="at-cell-more" data-no-drag="" style={{ visibility: more ? 'visible' : 'hidden' }}
+      tabIndex={more ? 0 : -1} aria-hidden={!more}
+      onClick={(e) => { e.stopPropagation(); expand(date, e.currentTarget.closest('.at-cell')) }}>+{more} more</button>
+  </div>
 }
 
 function DayPopover({ date, close }) {
@@ -286,21 +310,20 @@ export function WeekView({ anchor, narrow, onStep }) {
   if (narrow) {
     return <PhoneWeek dates={dates} days={days} overdue={overdue} today={today} onStep={onStep} />
   }
-  return (
-    <div className="at-week">
-      {dates.map((d) => (
-        <div key={d} className={cx('at-week-col', d === today && 'is-today', d < today && 'is-past')}>
-          <div className="at-week-head">
-            <span className="at-week-dow">{D.dayName(d)}</span>
-            <span className="at-week-num">{D.dayNum(d)}</span>
-          </div>
-          <div className="at-week-body at-scroll">
-            <DayList date={d} tasks={days[d] || []} overdue={d === today ? overdue : []} showAdd />
-          </div>
-        </div>
-      ))}
-    </div>
-  )
+  return <DesktopWeek dates={dates} days={days} overdue={overdue} today={today} />
+}
+
+function DesktopWeek({ dates, days, overdue, today }) {
+  const { selectedId } = useApp()
+  const { drag } = useDrag()
+  const overlay = useOverlay()
+  const [picked, setPicked] = React.useState(null)
+  const sel = picked && dates.includes(picked) ? picked : (dates.includes(today) ? today : dates[0])
+  return <div className="at-desktop-week at-scroll">
+    <DesktopMonth weeks={[dates]} month={null} days={days} overdue={overdue} today={today}
+      selectedId={selectedId} drag={drag} overlay={overlay} picked={sel} onPick={setPicked} />
+    <DayView anchor={sel} />
+  </div>
 }
 
 // Phone week: a strip of 7 day tiles (the phone month's tiles), the picked day's tasks below. Swipe the
@@ -402,7 +425,7 @@ export function DayScroll({ anchor, onReachEnd, length }) {
 export function TasksView({ narrow }) {
   const { store, prefs, setPrefs, meta, today } = useApp()
   const overlay = useOverlay()
-  const view = prefs.view || (narrow ? 'day' : 'month')
+  const view = prefs.view || (narrow ? 'day' : 'week')
   const [anchor, setAnchor] = React.useState(today)
   const [scrollLen, setScrollLen] = React.useState(21)
   const growScroll = React.useCallback(() => setScrollLen((n) => Math.min(n + 14, 120)), [])

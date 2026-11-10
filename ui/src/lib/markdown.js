@@ -40,6 +40,12 @@ function inline(text, keyBase = 'i') {
   return out
 }
 
+// Apply special wrapping only to columns whose headers identify time values.
+export function tableColumnClass(header) {
+  const label = String(header).replace(/[*_`]/g, '').trim()
+  return /^(time|duration|estimate|estimated time|time estimate)$/i.test(label) ? 'at-md-time' : undefined
+}
+
 function shortUrl(url) {
   try {
     const u = new URL(url)
@@ -128,8 +134,8 @@ export function renderBlocks(blocks, { onToggle } = {}) {
       case 'table':
         return h('div', { key, className: 'at-md-table' },
           h('table', null,
-            h('thead', null, h('tr', null, b.head.map((c, j) => h('th', { key: j }, inline(c, `${key}h${j}`))))),
-            h('tbody', null, b.rows.map((r, j) => h('tr', { key: j }, r.map((c, x) => h('td', { key: x }, inline(c, `${key}r${j}${x}`))))))))
+            h('thead', null, h('tr', null, b.head.map((c, j) => h('th', { key: j, className: tableColumnClass(c) }, inline(c, `${key}h${j}`))))),
+            h('tbody', null, b.rows.map((r, j) => h('tr', { key: j }, r.map((c, x) => h('td', { key: x, className: tableColumnClass(b.head[x]) }, inline(c, `${key}r${j}${x}`))))))))
       case 'list': {
         const ordered = b.items[0] && b.items[0].ordered
         return h(ordered ? 'ol' : 'ul', { key, className: 'at-md-list' }, b.items.map((it, j) => {
