@@ -39,7 +39,7 @@ JOBS: dict[str, dict[str, Any]] = {
         "stub": "alchemy_task_research_sweep.py",
         "body": "print(json.dumps(precheck.research_wake(data_dir={data_dir!r})))",
         "missing": 'print(json.dumps({{"wakeAgent": False}}))',
-        "toolsets": ["alchemy-task-sweep", "alchemy-task-research", "web"],
+        "toolsets": ["alchemy-task-sweep", "alchemy-task-research", "web", "file", "session_search"],
         "deliver": "local",
         "prompt": ("Alchemy Task research sweep. Call task_research_sweep to research tasks that are waiting or whose "
                    "research stalled. Reply with one short line saying how many were started and finished. Do "
@@ -69,8 +69,23 @@ def stub_text(job: str, *, plugin_dir: str, data_dir: str) -> str:
     return head + spec["body"].format(data_dir=str(data_dir)) + "\n"
 
 
-def spec_hash(job: str) -> str:
+def job_toolsets(job: str, state: Any = None) -> list[str]:
+    """Toolsets an agent job enables. The research sweep is the research workers' parent, so it also
+    enables every approved discovery reader (MCP ones included) for the workers to inherit."""
+    base = list(JOBS[job].get("toolsets") or [])
+    if job != "research-sweep":
+        return base
+    return list(dict.fromkeys(base + approved_reader_toolsets(state, include_mcp=True)))
+
+
+def sweep_toolsets(state: Any = None) -> list[str]:
+    return job_toolsets("research-sweep", state)
+
+
+def spec_hash(job: str, state: Any = None) -> str:
     spec = {k: v for k, v in JOBS[job].items() if k in ("schedule", "mode", "toolsets", "deliver", "prompt", "stub")}
+    if spec.get("toolsets"):
+        spec["toolsets"] = job_toolsets(job, state)
     return hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -78,7 +93,7 @@ def job_name(job: str) -> str:
     return f"{PREFIX}: {JOBS[job]['title']}"
 
 
-def create_args(job: str, *, timezone: str) -> dict[str, Any]:
+def create_args(job: str, *, timezone: str, state: Any = None) -> dict[str, Any]:
     spec = JOBS[job]
     args: dict[str, Any] = {"action": "create", "name": job_name(job), "schedule": spec["schedule"],
                             "script": spec["stub"], "deliver": spec["deliver"]}
@@ -88,7 +103,7 @@ def create_args(job: str, *, timezone: str) -> dict[str, Any]:
         args["no_agent"] = True
     else:
         args["prompt"] = spec["prompt"]
-        args["enabled_toolsets"] = spec["toolsets"]
+        args["enabled_toolsets"] = job_toolsets(job, state)
     return args
 
 
@@ -99,12 +114,12 @@ def inventory(timezone: str) -> list[dict[str, str]]:
             for key, spec in JOBS.items()]
 
 
-def approved_reader_toolsets(state: Any) -> list[str]:
+def approved_reader_toolsets(state: Any, *, include_mcp: bool = False) -> list[str]:
     """Union of reader toolsets recorded for approved discovery streams, read from plugin state.
 
     Sources of each stream, plus approved source configs that match one of its sources. Delivery
-    bindings are left out (they carry senders, not readers). MCP toolsets are left out: workers
-    inherit the parent's MCP servers from Hermes. Never raises.
+    bindings are left out (they carry senders, not readers). MCP toolsets are left out unless
+    include_mcp: workers inherit the parent's MCP servers from Hermes. Never raises.
     """
     out: list[str] = []
     try:
@@ -118,7 +133,7 @@ def approved_reader_toolsets(state: Any) -> list[str]:
                     continue
                 if any(s.get("name") == config.get("name") and s.get("scope") == config.get("scope") for s in sources):
                     names += list(config.get("toolsets") or [])
-            out += [t for t in names if isinstance(t, str) and t and not t.startswith("mcp-")]
+            out += [t for t in names if isinstance(t, str) and t and (include_mcp or not t.startswith("mcp-"))]
     except Exception:  # noqa: BLE001 - missing or odd state means no extra readers
         return list(dict.fromkeys(out))
     return list(dict.fromkeys(out))
@@ -179,7 +194,17 @@ def reconcile_discovery_job(rt, stream):
     observed = read_discovery_job(rt, stream)
     if any(observed.get(k) != desired[k] for k in ('deliver', 'prompt', 'enabled_toolsets')):
         raise ValueError('discovery reader toolsets readback mismatch')
+    reverify_sweep(rt)
     return {'state': 'verified', 'job_id': stream['job_id'], 'enabled_toolsets': observed['enabled_toolsets']}
+
+
+def reverify_sweep(rt) -> dict[str, Any]:
+    """Best effort: bring the research sweep job's toolsets in line after discovery streams change."""
+    try:
+        from .setup_flow import reconcile_sweep_job
+        return reconcile_sweep_job(rt)
+    except Exception as exc:  # noqa: BLE001 - setup status reports the job as needing an update
+        return {'state': 'error', 'error': str(exc)[:200]}
 
 
 def activate_discovery_job(rt, stream, binding=None):
@@ -216,6 +241,7 @@ def activate_discovery_job(rt, stream, binding=None):
                   job_binding={'job_id': stream['job_id'], 'origin_session': stream['origin_session'],
                                'profile': rt.ctx.profile_name, 'verified': True})
     streams = _streams(rt); streams[stream['name']] = stream; _save_streams(rt, streams)
+    reverify_sweep(rt)
     return stream
 
 
