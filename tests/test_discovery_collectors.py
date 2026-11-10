@@ -136,27 +136,30 @@ def test_standalone_transcript_full_messages_need_no_thread_expansion(tmp_path):
     assert not list((tmp_path/'cache').glob('mail-*.json'))
 
 
-def test_transcript_missing_sender_is_not_empty_success(tmp_path):
+def test_transcript_empty_sender_is_not_empty_success(tmp_path):
     from alchemy_task.discovery_collectors import make_daily_reader
     from alchemy_task.core.discovery_identity import UserError
-    with pytest.raises(UserError,match='service_sender'):
-        make_daily_reader({**CFG,'kind':'transcript'},lambda *a:None,snapshot_root=tmp_path)
+    for bad in ({'service_sender': '  '}, {'service_senders': []}):
+        with pytest.raises(UserError,match='service_senders'):
+            make_daily_reader({**CFG,'kind':'transcript',**bad},lambda *a:None,snapshot_root=tmp_path)
 
 
-def test_transcript_per_message_html_sections_and_inclusive_window(tmp_path):
+def test_transcript_per_message_html_full_body_and_inclusive_window(tmp_path):
     html = '<p>Suggested next steps</p><ul><li>Approve &amp; publish</li><li>Send proof</li></ul><p>Summary</p><p>Old action</p>'
     msgs = [message('m1','notes@service.test',text=html,mime='text/html'),
             message('m2','notes@service.test',at=AT+86400000,text=html,mime='text/html'),
             message('m3','wrong@service.test',text=html,mime='text/html'),
             message('m4','notes@service.test',at=AT+86400001,text=html,mime='text/html'),
             message('m5','notes@service.test',at=AT-1,text=html,mime='text/html'),
-            message('m6','notes@service.test',text='Suggested next steps\nSummary\nOld')]
+            message('m6','notes@service.test',subject='Invoice',text='Paid in full')]
     cfg = {**CFG,'kind':'transcript','service_sender':'notes@service.test'}
     receipt, state, _ = collect(tmp_path,cfg,lambda c,s,e,k: envelope(c,s,e,[{'id':'t1','messages':msgs,'complete':True}]))
     assert receipt['status'] == 'complete'
     candidates = [b['candidate'] for b in state['backlog']]
     assert [c['source_ids'] for c in candidates] == [['gmail:account:t1:m1'],['gmail:account:t1:m2']]
-    assert candidates[0]['messages'][0]['suggested_next_steps'] == '- Approve & publish\n\n- Send proof'
+    body = candidates[0]['messages'][0]['body']
+    assert 'suggested_next_steps' not in candidates[0]['messages'][0]
+    assert '- Approve & publish' in body and 'Old action' in body
 
 
 def test_private_durable_pass_resumes_first_page_without_dropping_admission(tmp_path):

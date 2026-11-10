@@ -103,6 +103,66 @@ def load_snapshot(path, *, account, start, end):
     return data
 
 
+# Note-taker senders shipped as transcript defaults. Confirmed in real mail:
+# gemini-notes@google.com, no-reply@zoom.us, fred@fireflies.ai and
+# notifications@mail.granola.ai. Documented by the vendor only:
+# meetings-noreply@google.com, meet-recordings-noreply@google.com (Google Meet
+# recordings and transcripts) and no-reply@otter.ai (Otter help center).
+# Microsoft Teams/Copilot recaps have no documented sender, so none ships; users
+# add one. Zoom marketing senders (e.zoom.us) are deliberately not included.
+DEFAULT_TRANSCRIPT_SENDERS = (
+    'gemini-notes@google.com', 'meetings-noreply@google.com', 'meet-recordings-noreply@google.com',
+    'no-reply@zoom.us', 'fred@fireflies.ai', 'no-reply@otter.ai', 'notifications@mail.granola.ai',
+)
+DEFAULT_TRANSCRIPT_KEYWORDS = (
+    'next steps', 'action items', 'transcript', 'notes', 'summary', 'recap',
+    'follow-up', 'follow up', 'followup', 'takeaways', 'to-do', 'todo', 'to do',
+)
+
+
+def transcript_senders(config):
+    """Sender list for a transcript source; legacy service_sender is a one-item list."""
+    if 'service_senders' in config:
+        raw = config['service_senders']
+    elif 'service_sender' in config:
+        raw = [config['service_sender']]
+    else:
+        raw = list(DEFAULT_TRANSCRIPT_SENDERS)
+    if not isinstance(raw, (list, tuple)) or any(not isinstance(x, str) for x in raw):
+        raise UserError('transcript service_senders must be a list of addresses or @domains')
+    senders = [x.strip().lower() for x in raw if x.strip()]
+    if not senders:
+        raise UserError('transcript source requires a nonempty service_senders list')
+    return senders
+
+
+def transcript_keywords(config):
+    """Admission keywords; an empty list is refused unless admit_all is explicit."""
+    raw = config.get('keywords', list(DEFAULT_TRANSCRIPT_KEYWORDS))
+    if not isinstance(raw, (list, tuple)) or any(not isinstance(x, str) for x in raw):
+        raise UserError('transcript keywords must be a list of words or phrases')
+    words = [x.strip().lower() for x in raw if x.strip()]
+    if not words:
+        if config.get('admit_all') is True:
+            return []
+        raise UserError('transcript keywords cannot be empty unless admit_all: true')
+    return words
+
+
+def sender_matches(sender, senders):
+    """Exact address, or a '@domain' entry matching that exact domain."""
+    sender = (sender or '').strip().lower()
+    if not sender:
+        return False
+    domain = '@' + sender.rsplit('@', 1)[-1]
+    return any(sender == s if not s.startswith('@') else domain == s for s in senders)
+
+
+def _has_keyword(text, keywords):
+    low = text.lower()
+    return any(re.search(r'(?<![a-z0-9])' + re.escape(k) + r'(?![a-z0-9])', low) for k in keywords)
+
+
 def normalize_mail_threads(threads, config):
     """Daily full-thread-before-sender-admission projection, no clipping.
 
@@ -130,26 +190,28 @@ def normalize_mail_threads(threads, config):
             sender = parseaddr(headers.get('from', ''))[1].lower()
             full.append({'id': msg['id'], 'from': sender, 'subject': headers.get('subject', ''), 'date': msg['internalDate'], 'body': extract_body_text(payload)})
         if config.get('kind') == 'transcript':
-            service = config.get('service_sender', '').strip().lower()
+            senders = transcript_senders(config)
+            keywords = transcript_keywords(config)
             for raw, msg in zip(ordered, full):
                 when = int(msg['date']) / 1000
-                if not service or msg['from'] != service:
+                if not sender_matches(msg['from'], senders):
                     continue
                 if config.get('window_start') and when < _date(config['window_start']).timestamp():
                     continue
                 if config.get('window_end') and when > _date(config['window_end']).timestamp():
                     continue
-                steps = extract_suggested_next_steps(msg['body'])
-                if not steps:
+                # Keyword gate only: research reads the full body, never a section.
+                if keywords and not _has_keyword(msg['subject'] + '\n' + msg['body'], keywords):
                     continue
-                msg['suggested_next_steps'] = steps
                 identity = canonical_source_id(f"gmail:{config['account_key']}:{tid}:{msg['id']}")
                 candidate = {'title': msg['subject'] or 'Meeting follow-up', 'source_ids': [identity], 'source_revision': hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest(), 'source_key': config['source_key']}
                 out.append({'candidate': candidate, 'messages': [msg], 'latest_activity': int(msg['date'])})
             continue
         allowed = {str(x).strip().lower() for x in config.get('sender_domains', [])}
         excluded = {str(x).strip().lower() for x in config.get('excluded_senders', [])}
-        relevant = any(m['from'] not in excluded and (not allowed or m['from'].rsplit('@', 1)[-1] in allowed) for m in full)
+        # Note-taker mail belongs to the mailbox's transcript source, never to both.
+        skipped = [str(x).strip().lower() for x in config.get('transcript_senders', []) if str(x).strip()]
+        relevant = any(m['from'] not in excluded and not sender_matches(m['from'], skipped) and (not allowed or m['from'].rsplit('@', 1)[-1] in allowed) for m in full)
         # Source narrow one-message owner report, case-insensitive, not owner-only.
         report = config.get('owner_report_pattern')
         subject = next((m['subject'] for m in full if m['subject']), '')
@@ -345,13 +407,6 @@ def _decode_b64(data: str) -> str:
     except Exception:
         return ""
 
-NEXT_SECTION_RE = re.compile(
-    r"^\s*(?:#+\s*)?(?:Summary|Notes|Transcript|Meeting notes|Details|Participants|Action items|Suggested email|Key points|Next steps|Learn more|View in|Open in|Recording)\b",
-    re.IGNORECASE,
-)
-
-SECTION_HEADING_RE = re.compile(r"^\s*(?:#+\s*)?Suggested next steps\s*:?[\s\u00a0]*$", re.IGNORECASE)
-
 def extract_body_text(payload: dict) -> str:
     """Best-effort plaintext extraction from a Gmail message payload."""
     if not payload:
@@ -382,11 +437,20 @@ def extract_body_text(payload: dict) -> str:
             return _html_to_text(html)
     return ""
 
+def _link_text(match) -> str:
+    url, label = match.group(1).strip(), re.sub(r"<[^>]+>", "", match.group(2)).strip()
+    if not url.lower().startswith(("http://", "https://")):
+        return label
+    return f"{label} ({url})" if label and html.unescape(label) != html.unescape(url) else url
+
+
 def _html_to_text(raw_html: str) -> str:
     # Source block/list boundaries must precede tag stripping.
     text = re.sub(r"(?i)<\s*br\s*/?\s*>", "\n", raw_html)
     text = re.sub(r"(?i)</\s*(?:p|div|li|tr|h[1-6])\s*>", "\n", text)
     text = re.sub(r"(?i)<\s*li[^>]*>", "\n- ", text)
+    # Keep link targets (label (url)) so research can open linked transcripts.
+    text = re.sub(r"""(?is)<\s*a\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>(.*?)<\s*/\s*a\s*>""", _link_text, text)
     text = re.sub(r"<[^>]+>", "", text)
     text = html.unescape(text)
     return _normalize_text(text)
@@ -407,47 +471,3 @@ def _normalize_text(text: str) -> str:
         out.append(line)
         blank = False
     return "\n".join(out).strip()
-
-def extract_suggested_next_steps(body: str) -> str:
-    """Return the body text under the "Suggested next steps" heading.
-
-    Gemini Notes formatting has changed over time, so this uses a heading-based
-    parser first, then a looser inline fallback.
-    """
-    if not body:
-        return ""
-
-    lines = body.splitlines()
-    for i, line in enumerate(lines):
-        if not SECTION_HEADING_RE.match(line):
-            continue
-        section: list[str] = []
-        for raw in lines[i + 1 :]:
-            line = raw.strip()
-            if not line:
-                if section and section[-1] != "":
-                    section.append("")
-                continue
-            if NEXT_SECTION_RE.match(line):
-                break
-            # Gemini/Gmail footers tend to start after the useful suggested steps.
-            if re.search(
-                r"^(?:We've updated|Meeting records|Document Notes by Gemini|Is the Next Steps section|Not Useful Email|Useful Email|Google LLC|This email|You have received this email|You received this|Google Workspace|Privacy Policy|Terms of Service)\b",
-                line,
-                re.I,
-            ):
-                break
-            section.append(line)
-        text = _normalize_text("\n".join(section))
-        # An explicit empty section must not fall back across the next heading.
-        return text
-
-    # Fallback: inline/HTML-flattened section.
-    m = re.search(
-        r"Suggested next steps\s*:?(.*?)(?:\n\s*(?:Summary|Notes|Transcript|Meeting notes|Details|Participants|Action items|Suggested email|Key points|Next steps|Learn more|View in|Open in|Recording)\b|\Z)",
-        body,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    if m:
-        return _normalize_text(m.group(1))
-    return ""
