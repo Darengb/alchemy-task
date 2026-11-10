@@ -26,8 +26,7 @@ CHECKLIST = ('primary_current_full', 'task_inventory_all_statuses', 'plausible_t
              'independent_actions_accounted', 'sufficient_not_finished',
              'evidence_identity_boundaries', 'cross_cohort_reconciliation')
 BINDING_KEYS = ('config_revision', 'index_revision', 'schema_revision', 'source_revision', 'rubric_revision', 'outcome_revision')
-from .research_agent import WRITE_BLOCKED_TOOLS, is_write_like  # noqa: E402 - shared write/exec deny set
-from . import research_git  # noqa: E402
+from .core.research_guard import WRITE_BLOCKED_TOOLS, is_write_like, refuse_file_read  # noqa: E402
 
 KNOWN_MUTATORS = frozenset({'task_create', 'task_update', 'task_checkpoint', 'task_work_start', 'task_ios',
     'task_setup', 'task_research', 'task_research_sweep', 'research_submit', 'discovery_submit',
@@ -217,7 +216,7 @@ class DiscoveryRunner:
         run, attempt = found
         if tool_name in KNOWN_MUTATORS or tool_name in WRITE_BLOCKED_TOOLS or is_write_like(tool_name):
             return {'action': 'block', 'message': 'Discovery research is read-only. Submit the full discovery spool, never mutate tasks or integrations.'}
-        refused = research_git.refuse_file_read(tool_name, args)
+        refused = refuse_file_read(tool_name, args)
         if refused:
             return {'action': 'block', 'message': refused}
         if attempt:

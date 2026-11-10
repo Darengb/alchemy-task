@@ -23,6 +23,7 @@ from .core import taskfile as tf
 from .core.locks import task_lock
 from .core.store import NeedsInput
 from . import research_git
+from .core.research_guard import READ_VERBS, WRITE_BLOCKED_TOOLS, is_write_like  # noqa: F401
 from .runtime import Runtime
 
 RESEARCH_TOOLSET = "alchemy-task-research"
@@ -37,60 +38,6 @@ _started_sessions: dict[str, str] = {}      # subagent_id -> child session id (s
 _research_children: set[str] = set()        # every child session id and subagent id this plugin started
 MAX_CHILDREN = 500
 
-# Tools a research child may never call: writes, execution and side effects. Frozen, matched by
-# exact name only (no argument parsing). Everything else passes (reads, web, research tools).
-WRITE_BLOCKED_TOOLS = frozenset({
-    "write_file", "patch", "skill_manage", "terminal", "execute_code", "process_manage",
-    "memory", "send_message", "cronjob", "cronjob_manage", "delegate_task", "clarify",
-    "text_to_speech", "image_generate", "computer_use", "browser_vault",
-    "task_create", "task_update", "task_checkpoint", "task_work_start", "task_ios", "task_setup",
-    "task_research", "task_research_sweep",
-    "discovery_submit", "discovery_decide", "discovery_stream", "discovery_start", "discovery_config",
-    "discovery_research_run", "discovery_research_accept", "discovery_join", "discovery_actions",
-    "discovery_recover", "discovery_reconcile", "discovery_release_hold",
-})
-
-# MCP and hosted-connector tools are allowed for research children only when the tool part of the name starts
-# with a read verb; everything else (sends, creates, flag changes, generic "call") is refused. Browser,
-# kanban and Home Assistant tools are refused outright. Fail closed: unknown verbs are blocked.
-READ_VERBS = ("get", "list", "read", "search", "query", "fetch", "describe", "find", "view", "lookup",
-              "retrieve", "show", "count", "info", "browse", "inspect", "summarize", "summarise", "preview")
-_PREFIX_BLOCKED = ("browser", "kanban", "ha_")
-
-
-def is_write_like(tool_name: Any) -> bool:
-    """True for tool names a read-only research child must not call. Never raises."""
-    try:
-        name = str(tool_name or "")
-        if name in WRITE_BLOCKED_TOOLS:
-            return True
-        low = name.lower()
-        if low.startswith(_PREFIX_BLOCKED):
-            return True
-        if low.startswith("mcp_") or low.startswith("connectors__"):
-            tool = re.split(r"__", low)[-1] if "__" in low else low[4:]
-            raw = re.split(r"__", name)[-1] if "__" in name else name[4:]
-            words = re.findall(r"[A-Z]?[a-z0-9]+|[A-Z]+(?![a-z])", raw)
-            parts = name.split("__")
-            app = parts[1].lower() if len(parts) >= 3 else ""
-            if app and len(words) > 1 and words[0].lower() == app:
-                words = words[1:]  # connector tools often repeat the app name: GMAIL_FETCH_EMAILS
-            first = words[0].lower() if words else ""
-            if first in READ_VERBS:
-                return False
-            # noun-first read tools such as notion-search or catalog_search: allowed only when the LAST word is a
-            # read verb and no write word appears anywhere in the name.
-            low_words = [w.lower() for w in words]
-            write_words = {"create", "update", "delete", "remove", "send", "post", "set", "put", "write", "add",
-                           "edit", "move", "call", "run", "exec", "execute", "publish", "upload", "invite", "approve",
-                           "cancel", "archive", "merge", "push", "submit", "reply", "forward", "trigger", "start",
-                           "stop", "toggle", "enable", "disable", "assign", "close", "open", "reset", "pay", "charge"}
-            if low_words and low_words[-1] in READ_VERBS and not write_words.intersection(low_words):
-                return False
-            return True
-        return False
-    except Exception:  # noqa: BLE001 - a guard must never throw; fail closed
-        return True
 
 
 # ------------------------------------------------------------------ run registry

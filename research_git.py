@@ -18,6 +18,9 @@ from pathlib import Path
 from typing import Any
 
 from .runtime import Runtime
+from .core.research_guard import (  # noqa: F401 - re-exported for callers and tests
+    HOME_SECRET_DIRS, SECRET_DIRS, SECRET_NAMES, SECRET_PAIRS, _secret_text, is_secret_path, redact,
+    refuse_file_read)
 
 OUTPUT_CAP = 20000
 TIMEOUT = 20
@@ -26,20 +29,6 @@ FIND_LIMIT = 300
 FIND_SECONDS = 15
 LOG_DEFAULT, LOG_MAX = 30, 200
 
-SECRET_NAMES = (".env", ".env.*", "*.env", "auth.json", "*.pem", "*.key", "*.p12", "*.pfx", "*.keystore", "*.jks",
-                "id_rsa*", "id_ed25519*", "id_ecdsa*", "id_dsa*", ".netrc", ".npmrc", ".pypirc", ".pgpass",
-                ".git-credentials", "credentials", "credentials.json", "credentials.y*ml", "credentials.ini",
-                "credentials.toml", "credentials.db", "*credentials.json", "*secret", "*secrets", "*secret.json",
-                "*secrets.json", "secrets.*", "*.secrets", "client_secret*", "*token", "*tokens", "*token.json",
-                "*tokens.json", "*token.txt", "*.token", "*_history",
-                ".history", "cookies", "cookies-journal", "login data", "login data-journal", "web data",
-                "key4.db", "logins.json", "kubeconfig", "service-account*.json", "*.kdbx")
-SECRET_DIRS = (".ssh", ".aws", ".hermes", ".gnupg", ".supabase", ".docker", ".kube", ".azure", ".password-store",
-               ".mozilla", "keyrings")
-HOME_SECRET_DIRS = ("private",)   # top-level folders in the user's home kept out of research
-# Two-part folders: .config/gh, .config/gcloud, .config/google-chrome, .config/chromium, .git/config file
-SECRET_PAIRS = {(".config", "gh"), (".config", "gcloud"), (".config", "google-chrome"), (".config", "chromium"),
-                (".config", "hub"), (".git", "config")}
 SKIP_DIRS = {"node_modules", "venv", ".venv", "env", "site-packages", "__pycache__", "dist", "build", "target",
              "Library", "snap"}
 _EXCLUDES = tuple(f":(exclude,glob,icase)**/{n}" for n in SECRET_NAMES) + tuple(
@@ -50,78 +39,10 @@ _GIT_ENV = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_PAGER": "cat", "PAGER": "cat", "GIT
 _SAFE_CONFIG = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "diff.external=",
                 "-c", "core.pager=cat", "-c", "color.ui=false", "-c", "log.showSignature=false",
                 "-c", "gpg.program=false", "-c", "diff.noprefix=false")
-# Masks common secret formats in git output (Hermes redacts its own file tools; git output bypasses that).
-_SECRET_VALUE = re.compile(
-    r"(sk-[A-Za-z0-9_\-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}"
-    r"|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|sbp_[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_\-]{30,}|glpat-[A-Za-z0-9_\-]{20,}"
-    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)"
-    r"|eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,})")
-_SECRET_ASSIGN = re.compile(r"(?i)\b([A-Z0-9_]{0,40}(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD)[A-Z0-9_]{0,40}\s{0,5}[:=]\s{0,5})"
-                            r"(['\"]?)[^\s'\"]{8,}\2")
-
-
-def redact(text: str) -> str:
-    try:
-        text = _SECRET_VALUE.sub("[redacted]", text)
-        return _SECRET_ASSIGN.sub(lambda m: m.group(1) + "[redacted]", text)
-    except Exception:  # noqa: BLE001
-        return "[output withheld: redaction failed]"
-
-
 class Refused(Exception):
     pass
 
 
-def _secret_text(path: str) -> bool:
-    parts = [p for p in re.split(r"[\\/]+", str(path or "").strip().lower()) if p and p not in (".", "~")]
-    for i, part in enumerate(parts):
-        if part in SECRET_DIRS or (i + 1 < len(parts) and (part, parts[i + 1]) in SECRET_PAIRS):
-            return True
-        if any(fnmatch.fnmatchcase(part, pat) for pat in SECRET_NAMES):
-            return True
-    return False
-
-
-def is_secret_path(path: str) -> bool:
-    """True if *path*, or the file it really points to (symlinks, '..', '~'), names a credential file or folder."""
-    try:
-        if _secret_text(path):
-            return True
-        expanded = os.path.expanduser(str(path or ""))
-        if not os.path.isabs(expanded):
-            # Relative paths resolve against the tool's working directory, not ours (the gateway runs inside
-            # ~/.hermes): judge them by their text only.
-            return False
-        real = os.path.realpath(expanded)
-        if _secret_text(real):
-            return True
-        home = os.path.realpath(os.path.expanduser("~"))
-        rel = os.path.relpath(real, home) if real.startswith(home + os.sep) else ""
-        return bool(rel) and rel.split(os.sep, 1)[0].lower() in HOME_SECRET_DIRS
-    except Exception:  # noqa: BLE001 - cannot tell: treat as secret
-        return True
-
-
-def refuse_file_read(tool_name: str, args: Any) -> str | None:
-    """Guard for Hermes's own file tools in research children: a refusal message, or None to allow.
-
-    Meant to be called from the research ``pre_tool_call`` hook for ``read_file`` and ``search_files``. Never
-    raises. Hermes's search already skips hidden and gitignored files by default.
-    """
-    try:
-        if tool_name not in ("read_file", "search_files") or not isinstance(args, dict):
-            return None
-        refusal = "Refused: research workers do not read credential files or folders (keys, tokens, .env)."
-        if args.get("path") and is_secret_path(str(args["path"])):
-            return refusal
-        globs = [args.get("file_glob")]
-        if tool_name == "search_files" and args.get("target") == "files":
-            globs.append(args.get("pattern"))
-        if any(g and _secret_text(str(g)) for g in globs):
-            return refusal
-        return None
-    except Exception:  # noqa: BLE001 - a guard must never throw
-        return "Refused: could not check this path."
 
 
 # ------------------------------------------------------------------ roots and repos
