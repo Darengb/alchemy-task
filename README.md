@@ -183,8 +183,15 @@ Setup fills them in for you.
   discovery streams, the MCP servers your agent has (Hermes passes them on), and the plugin's read-only
   research tools. It spends your model tokens and sends search queries derived from the task text to your
   configured web search provider. A `pre_tool_call` hook refuses write, edit, shell and code-execution tools
-  (`write_file`, `patch`, `skill_manage`, `terminal`, `execute_code`, `process_manage`) and credential-file
-  reads for these agents only; your own chats are unaffected.
+  (`write_file`, `patch`, `skill_manage`, `terminal`, `execute_code`, `process_manage` and similar), browser,
+  kanban and Home Assistant tools, and any MCP or hosted-connector tool whose name does not start with a read
+  verb (get, list, read, search, query, fetch and similar), so research cannot send, post or change settings
+  through an integration. It also refuses reads of credential files and folders, following symlinks, and masks
+  common key formats in Git output. All of this applies to research agents only; your own chats are
+  unaffected. If the agent that starts research lacks the read toolsets (for example a research sweep job
+  created by an older version), research falls back to web and the research tools for that run. Running setup's
+  job step, or any change to a discovery stream, updates the sweep job to the same read toolsets as your
+  approved discovery readers.
 - **Reads outside plugin data:** research agents read your skills (including reference files) through
   Hermes's skill tools; the names and availability of your toolsets, tools and MCP servers, and the names of
   environment variables Hermes reports as missing (never values, keys or credentials); Markdown notes the task

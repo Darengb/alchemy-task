@@ -26,8 +26,10 @@ def test_approved_reader_toolsets_come_from_plugin_state(ctx):
     assert jobs.approved_reader_toolsets(None) == []
 
 
-def test_launch_requests_read_toolsets_and_discovery_readers(ctx, settings, data_dir):
+def test_launch_requests_read_toolsets_and_discovery_readers(ctx, settings, data_dir, monkeypatch):
     _streams(ctx)
+    monkeypatch.setattr(ra, "_registry_toolsets", lambda: {t: {"available": True} for t in (
+        "web", "file", "session_search", "mail-reader", "chat-reader", "mail-thread-reader")})
     doc = create(settings, data_dir)
     ra.launch(runtime.Runtime(), doc.task_id)
     req = ctx.subagent_lifecycle.launched[0]
@@ -41,9 +43,10 @@ def test_toolsets_the_host_lacks_are_recorded_not_dropped(ctx, settings, data_di
     doc = create(settings, data_dir)
     ra.launch(runtime.Runtime(), doc.task_id)
     req = ctx.subagent_lifecycle.launched[0]
-    assert "chat-reader" in req.allowed_toolsets  # still requested
+    # Missing reader toolsets are dropped (an unknown toolset fails the whole launch); core reads stay requested.
+    assert "chat-reader" not in req.allowed_toolsets and "file" in req.allowed_toolsets
     run = next(iter(ra._runs.values()))
-    assert run["toolsets"]["requested"] == list(req.allowed_toolsets)
+    assert "chat-reader" in run["toolsets"]["dropped"]
     missing = run["toolsets"]["not_available_to_worker"]
     assert {"file", "session_search", "mail-reader", "chat-reader", "mail-thread-reader"} <= set(missing)
     assert "web" not in missing and ra.RESEARCH_TOOLSET not in missing

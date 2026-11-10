@@ -2,9 +2,11 @@
 recovery and the "research finished" notice.
 
 Research runs as a Hermes subagent started through the public
-``ctx.subagent_lifecycle`` API, restricted to the ``web`` toolset plus this
-plugin's read-only research toolset. Only ``research_submit`` writes, and it
-writes only the plugin's own dossier block and enrichment state.
+``ctx.subagent_lifecycle`` API with read toolsets (web, file, session_search,
+approved discovery readers, inherited MCP) plus this plugin's read-only research
+toolset. A pre_tool_call guard refuses write, execution and side-effect tools and
+credential-file reads for research children. Only ``research_submit`` writes, and
+it writes only the plugin's own dossier block and enrichment state.
 """
 from __future__ import annotations
 
@@ -47,6 +49,32 @@ WRITE_BLOCKED_TOOLS = frozenset({
     "discovery_research_run", "discovery_research_accept", "discovery_join", "discovery_actions",
     "discovery_recover", "discovery_reconcile", "discovery_release_hold",
 })
+
+# MCP and hosted-connector tools are allowed for research children only when the tool part of the name starts
+# with a read verb; everything else (sends, creates, flag changes, generic "call") is refused. Browser,
+# kanban and Home Assistant tools are refused outright. Fail closed: unknown verbs are blocked.
+READ_VERBS = ("get", "list", "read", "search", "query", "fetch", "describe", "find", "view", "lookup",
+              "retrieve", "show", "count", "check", "status", "info", "browse", "inspect", "summarize",
+              "summarise", "export", "download", "preview")
+_PREFIX_BLOCKED = ("browser", "kanban", "ha_")
+
+
+def is_write_like(tool_name: Any) -> bool:
+    """True for tool names a read-only research child must not call. Never raises."""
+    try:
+        name = str(tool_name or "")
+        if name in WRITE_BLOCKED_TOOLS:
+            return True
+        low = name.lower()
+        if low.startswith(_PREFIX_BLOCKED):
+            return True
+        if low.startswith("mcp_") or low.startswith("connectors__"):
+            tool = re.split(r"__", low)[-1] if "__" in low else low[4:]
+            first = re.split(r"[_\-.]", tool, maxsplit=1)[0]
+            return first not in READ_VERBS
+        return False
+    except Exception:  # noqa: BLE001 - a guard must never throw; fail closed
+        return True
 
 
 # ------------------------------------------------------------------ run registry
@@ -99,10 +127,7 @@ def reload_children(ctx: Any) -> None:
 
 def write_block(tool_name: Any = "", session_id: Any = "", task_id: Any = "") -> dict[str, str] | None:
     """Refuse write/exec tools for research children. Never raises; fails closed for blocked names."""
-    try:
-        if tool_name not in WRITE_BLOCKED_TOOLS:
-            return None
-    except Exception:  # noqa: BLE001 - unhashable name cannot be a blocked tool
+    if not is_write_like(tool_name):
         return None
     message = (f"Research agents are read-only: {tool_name} is not available to you. Use read tools "
                "(files, sessions, skills, web) and report through research_submit.")
@@ -297,6 +322,7 @@ def build_context(rt: Runtime, doc: Any, base: str, *, created_in: str = "", req
 
 
 BASE_TOOLSETS = ("web", "file", "session_search", RESEARCH_TOOLSET)
+FALLBACK_TOOLSETS = ("web", RESEARCH_TOOLSET)
 
 
 def worker_toolsets(rt: Runtime) -> tuple[str, ...]:
@@ -343,12 +369,37 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
     notice_to = origin_session or created_in
     toolsets = worker_toolsets(rt)
     report = _toolset_report(toolsets)
+    if report.get("not_available_to_worker"):
+        # Approved reader toolsets that no longer exist would make every launch fail ("Unknown toolsets"):
+        # drop them. Core read toolsets stay requested; a parent that lacks them triggers the fallback below.
+        dropped = [t for t in report["not_available_to_worker"] if t not in BASE_TOOLSETS]
+        if dropped:
+            report["dropped"] = dropped
+            toolsets = tuple(t for t in toolsets if t not in dropped)
     context = build_context(rt, doc, context, created_in=created_in, requested_in=origin_session,
                             toolset_note=_toolset_note(report))
     try:
-        handle = rt.ctx.subagent_lifecycle.launch(_make_request(
-            goal=goal, context=context, role="leaf", allowed_toolsets=toolsets,
-            correlation_id=f"alchemy-task:{doc.task_id}:{run_id}"))
+        try:
+            handle = rt.ctx.subagent_lifecycle.launch(_make_request(
+                goal=goal, context=context, role="leaf", allowed_toolsets=toolsets,
+                correlation_id=f"alchemy-task:{doc.task_id}:{run_id}"))
+        except Exception as first:  # noqa: BLE001
+            text = str(first).lower()
+            if "toolset" not in text and "broaden" not in text:
+                raise
+            # The parent (for example an older sweep job) lacks some read toolsets: research with what it has.
+            report["fallback"] = {"error": str(first)[:300], "toolsets": list(FALLBACK_TOOLSETS)}
+            toolsets = FALLBACK_TOOLSETS
+            context = build_context(rt, doc, rs.goal_text(run_id=run_id, title=doc.title, fields=fields,
+                                                          body=rs.strip_managed(doc.body),
+                                                          linked=_linked_notes(rt, doc.body),
+                                                          today=rt.settings.today())[1],
+                                    created_in=created_in, requested_in=origin_session,
+                                    toolset_note=("Only web and research tools are available to you in this "
+                                                  "run; report local access you could not check as unverified."))
+            handle = rt.ctx.subagent_lifecycle.launch(_make_request(
+                goal=goal, context=context, role="leaf", allowed_toolsets=toolsets,
+                correlation_id=f"alchemy-task:{doc.task_id}:{run_id}:fallback"))
         handle = dict(handle) if not hasattr(handle, "to_dict") else handle.to_dict()
     except Exception as exc:  # noqa: BLE001 - recovery retries later
         _finish_failure(rt, doc.task_id, run_id, f"could not start research: {exc}")
