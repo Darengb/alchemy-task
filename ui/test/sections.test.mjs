@@ -71,3 +71,11 @@ test('a discovery context block inside Notes keeps its place through an edit; do
   assert.ok(managed.some((m) => m.name === 'discovery-context'))
   assert.doesNotMatch(sections.find((x) => x.title === 'Notes').text, /discovery-context|new fact/)
 })
+
+test('research display hides the content-revision line', () => {
+  const text = '## Research dossier\n\n**Content revision:** `sha256:abc`\n\n*Researched 2026-11-10.*\n\n### Recommended approach\n\n- Do it.'
+  const [g] = groupManaged([{ name: 'task-research-dossier', text }])
+  assert.ok(!g.text.includes('sha256'))
+  assert.ok(g.text.includes('*Researched 2026-11-10.*'))
+  assert.ok(g.text.includes('### Recommended approach'))
+})

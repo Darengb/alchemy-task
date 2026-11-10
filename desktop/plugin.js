@@ -1606,6 +1606,7 @@ function rebuildBody(editable, top, bottom) {
   if (bottom.length) parts.push(bottom.join("\n\n"));
   return "\n" + parts.filter((x) => x.trim()).join("\n\n") + "\n";
 }
+var REVISION_LINE_RE = /^\*\*Content revision:\*\*.*(?:\r?\n)+/gm;
 function groupManaged(managed) {
   const out = [];
   let research = null;
@@ -1615,12 +1616,13 @@ function groupManaged(managed) {
       out.push({ title, text: m.text, names: [m.name] });
       continue;
     }
+    const text = String(m.text || "").replace(REVISION_LINE_RE, "");
     if (!research) {
-      research = { title, text: m.text, names: [m.name] };
+      research = { title, text, names: [m.name] };
       out.push(research);
       continue;
     }
-    research.text = [research.text, m.text].filter((x) => x).join("\n\n---\n\n");
+    research.text = [research.text, text].filter((x) => x).join("\n\n---\n\n");
     research.names.push(m.name);
   }
   return out;

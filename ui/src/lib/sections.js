@@ -95,14 +95,18 @@ export function rebuildBody(editable, top, bottom) {
 
 /** Managed blocks for display: every Research block (task research dossier and discovery dossiers) merged into
  *  one entry in body order, each other block kept as its own entry. */
+// The dossier's content-revision hash is bookkeeping for the plugin, not something a reader needs.
+const REVISION_LINE_RE = /^\*\*Content revision:\*\*.*(?:\r?\n)+/gm
+
 export function groupManaged(managed) {
   const out = []
   let research = null
   for (const m of managed || []) {
     const title = managedTitle(m.name)
     if (title !== 'Research') { out.push({ title, text: m.text, names: [m.name] }); continue }
-    if (!research) { research = { title, text: m.text, names: [m.name] }; out.push(research); continue }
-    research.text = [research.text, m.text].filter((x) => x).join('\n\n---\n\n')
+    const text = String(m.text || '').replace(REVISION_LINE_RE, '')
+    if (!research) { research = { title, text, names: [m.name] }; out.push(research); continue }
+    research.text = [research.text, text].filter((x) => x).join('\n\n---\n\n')
     research.names.push(m.name)
   }
   return out
