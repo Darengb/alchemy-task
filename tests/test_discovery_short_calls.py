@@ -240,6 +240,53 @@ def test_running_deadline_passing_between_calls_is_handled_at_the_next_call_star
     assert report['counts']['repairing'] >= 1
 
 
+def test_fresh_supervisor_honours_the_saved_running_deadline_after_it_passed_between_calls(tmp_path):
+    from alchemy_task.discovery_runner import DiscoveryRunner
+    runner, store, pool, run = build(tmp_path, 1, behaviours={0: ['hang', 'valid']})
+    status = pool.status
+
+    def heartbeat(handle):
+        # The host's updated_at moves while a child runs; only the saved start counts.
+        out = status(handle)
+        return Status(out.state, pool.clock.time()) if out.state == 'RUNNING' else out
+    timed_call(runner, run)
+    pool.status = heartbeat
+    a = next(iter(store.get_run(run)['attempts'].values()))
+    assert a['deadline_utc']
+    runner.clock.sleep(2000)
+    fresh = DiscoveryRunner(SimpleNamespace(subagent_lifecycle=pool), SimpleNamespace(data_dir=tmp_path),
+                            store=DiscoveryStore(tmp_path / 'discovery'), clock=runner.clock)
+    pool.runner = fresh
+    fresh.run(run, session_id='parent')
+    first = store.get_attempt(run, a['token'])
+    assert first['fence_reason'] == 'execution_timeout' and first['state'] == 'rejected_retryable'
+    assert [json.loads(r['context'])['ordinal'] for r in pool.requests] == [1, 2]
+
+
+def test_cancellation_landing_during_the_next_call_is_observed_in_that_call(tmp_path):
+    runner, store, pool, run = build(tmp_path, 1, behaviours={0: ['hang', 'valid']})
+    landed = {'at': None}
+    status = pool.status
+
+    def slow_cancel(handle, *, reason):
+        pool.cancelled.append((handle, reason, pool.clock.monotonic()))
+        return {'accepted': True, 'state': 'CANCEL_REQUESTED'}
+    pool.cancel = slow_cancel
+
+    def unwinding(handle):
+        if landed['at'] is not None and pool.clock.monotonic() >= landed['at']:
+            pool.cancel_accepted.add(handle['subagent_id'])
+        return status(handle)
+    pool.status = unwinding
+    while not pool.cancelled:
+        report, _ = timed_call(runner, run)
+    assert report['status'] == 'running' and report['unknown_candidates'] == []
+    landed['at'] = runner.clock.monotonic() + 30  # lands 30 s into the next call
+    report, _ = timed_call(runner, run)
+    assert [json.loads(r['context'])['ordinal'] for r in pool.requests] == [1, 2]
+    assert report['unknown_candidates'] == [] and report['status'] == 'running'
+
+
 def test_pending_deadline_passing_between_calls_is_fenced_at_the_next_call_start(tmp_path):
     runner, store, pool, run = build(tmp_path, 1)
     pending = {'on': True}

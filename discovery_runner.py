@@ -588,7 +588,7 @@ class DiscoveryRunner:
                     threading.Thread(target=launch_worker, args=(a['token'], request, context), daemon=True, name='discovery-launch-' + a['token'][:8]).start()
                     maximum = max(maximum, len(active))
                 if not active:
-                    if not [c for c in self._eligible(run_id) if c not in deferred] or self.clock.monotonic() >= admit_until:
+                    if not cancelling and (not [c for c in self._eligible(run_id) if c not in deferred] or self.clock.monotonic() >= admit_until):
                         break
                 remaining = call_end - self.clock.monotonic()
                 if remaining <= 0 and all(slot.get('handle') for slot in active.values()):
@@ -596,7 +596,8 @@ class DiscoveryRunner:
                 # Wait for change, bounded by the poll interval and the call budget.
                 # A short wait is observation, NOT the execution deadline.
                 timeout = min(policy.poll_seconds, max(remaining, 0.01))
-                handles = [s['handle'] for s in active.values() if s.get('handle')]
+                # A landing cancellation is change too: wait on it within the budget.
+                handles = [s['handle'] for s in active.values() if s.get('handle')] + list(cancelling.values())
                 if handles:
                     normalize(lifecycle.wait(handles[0], timeout_seconds=timeout))
                     # Already-terminal wait can return immediately; yield fairly
