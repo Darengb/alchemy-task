@@ -38,7 +38,7 @@ export function DiscoveryView({ runs, error, loading, reload }) {
   const all = runs || []
   if (!all.length) {
     return <Empty icon="spark" title="No discovery runs yet"
-                  text="Discovery reads the sources you choose and proposes tasks. To get started, send Hermes:"
+                  text="Discovery reads the sources you choose and proposes tasks. Setup takes a few minutes in chat."
                   action={<SetupPrompt />} after={<DiscoveryExplainer />} />
   }
   const needs = (r) => (r.summary ? r.summary.pending : (r.proposals || []).filter((p) => p.state === 'pending').length) > 0
@@ -78,6 +78,7 @@ function SetupPrompt() {
   const copy = async () => toast((await copyText(SETUP_PROMPT)) ? 'Copied. Paste it into a chat with Hermes.' : 'Could not copy')
   return (
     <button type="button" className="at-setup-prompt" onClick={copy} title="Copy">
+      <span className="at-setup-prompt-label"><Icon name="chat" size={17} /> Tell Hermes in chat</span>
       <span className="at-setup-prompt-text">{SETUP_PROMPT}</span>
       <span className="at-setup-prompt-copy"><Icon name="clipboard" size={15} /> Copy</span>
     </button>

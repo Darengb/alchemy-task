@@ -2325,7 +2325,7 @@
         {
           icon: "spark",
           title: "No discovery runs yet",
-          text: "Discovery reads the sources you choose and proposes tasks. To get started, send Hermes:",
+          text: "Discovery reads the sources you choose and proposes tasks. Setup takes a few minutes in chat.",
           action: /* @__PURE__ */ react_dashboard_default.createElement(SetupPrompt, null),
           after: /* @__PURE__ */ react_dashboard_default.createElement(DiscoveryExplainer, null)
         }
@@ -2348,7 +2348,7 @@
   function SetupPrompt() {
     const toast = useToast();
     const copy = async () => toast(await copyText(SETUP_PROMPT) ? "Copied. Paste it into a chat with Hermes." : "Could not copy");
-    return /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-setup-prompt", onClick: copy, title: "Copy" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-setup-prompt-text" }, SETUP_PROMPT), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-setup-prompt-copy" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "clipboard", size: 15 }), " Copy"));
+    return /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-setup-prompt", onClick: copy, title: "Copy" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-setup-prompt-label" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "chat", size: 17 }), " Tell Hermes in chat"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-setup-prompt-text" }, SETUP_PROMPT), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-setup-prompt-copy" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "clipboard", size: 15 }), " Copy"));
   }
   function Empty({ icon, title, text, action, after }) {
     return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-disco" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-emptystate" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-emptystate-icon" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: icon, size: 22 })), /* @__PURE__ */ react_dashboard_default.createElement("h2", null, title), /* @__PURE__ */ react_dashboard_default.createElement("p", null, text), action), after);
