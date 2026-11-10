@@ -1,7 +1,8 @@
 # Alchemy Task
 
-**Alchemy Task turns messy real-world work into finely researched tasks ready for your agent to do for you.** It
-determines the best approach to complete your tasks, what resources are already available to your agent, and
+**Alchemy Task turns messy real-world work into finely researched tasks ready for your agent to do for you.**
+
+It determines the best approach to complete your tasks, what resources are already available to your agent, and
 what it will need from you before it begins.
 
 When a task is created, a background research agent reads the chat it came from, your skills and runbooks,
