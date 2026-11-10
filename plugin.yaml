@@ -51,10 +51,6 @@ provides_hooks:
   - post_compaction
   - post_tool_call
 config_schema:
-  discovery_transport_receipt:
-    type: str
-    default: ""
-    description: "Operator-installed JSON evidence for supported host timeouts: sequential_call, concurrent_batch (seconds), long_canary (evidence reference). Empty blocks lifecycle dispatch. This does not set host timeouts or prove a canary ran."
   workspace_root:
     type: str
     default: ""
