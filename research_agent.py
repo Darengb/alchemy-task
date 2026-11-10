@@ -24,8 +24,8 @@ from . import research_git
 from .runtime import Runtime
 
 RESEARCH_TOOLSET = "alchemy-task-research"
-CALL_BUDGET = 30
-TIME_BUDGET = 10 * 60
+CALL_BUDGET = 45
+TIME_BUDGET = 15 * 60
 INVENTORY_TTL = 3600
 
 _lock = threading.Lock()
@@ -480,6 +480,13 @@ def pre_tool_call(tool_name: str = "", args: Any = None, task_id: str = "", sess
     blocked = write_block(tool_name, session_id, task_id)
     if blocked is not None:
         return blocked
+    try:
+        if (session_id and session_id in _research_children) or (task_id and task_id in _research_children):
+            refused = research_git.refuse_file_read(tool_name, args)
+            if refused:
+                return {"action": "block", "message": refused}
+    except Exception:  # noqa: BLE001 - a guard must never throw
+        pass
     found = _run_for(task_id=str(task_id or ""))
     if found is None:
         return None

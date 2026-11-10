@@ -102,3 +102,23 @@ def test_discovery_child_is_blocked_too(tmp_path, tool):
     assert verdict and verdict["action"] == "block"
     assert runner.pre_tool_call(tool_name=tool, session_id="unrelated", task_id="") is None
     assert runner.pre_tool_call(tool_name="read_file", session_id="child-1", task_id="sa-1") is None
+
+
+@pytest.mark.parametrize("tool,args", [
+    ("read_file", {"path": "/home/u/project/.env"}),
+    ("read_file", {"path": "/home/u/.ssh/id_ed25519"}),
+    ("read_file", {"path": "/home/u/.hermes/auth.json"}),
+    ("search_files", {"pattern": "*", "path": "/home/u/.aws"}),
+])
+def test_research_child_cannot_read_credential_files(ctx, settings, data_dir, tool, args):
+    _start_child(ctx, settings, data_dir)
+    verdict = ra.pre_tool_call(tool_name=tool, args=args, session_id="child-1", task_id="sa-1")
+    assert verdict and verdict["action"] == "block" and "credential" in verdict["message"]
+    # the same read in a normal session is untouched
+    assert ra.pre_tool_call(tool_name=tool, args=args, session_id="main-chat", task_id="") is None
+
+
+def test_research_child_ordinary_file_reads_pass(ctx, settings, data_dir):
+    _start_child(ctx, settings, data_dir)
+    assert ra.pre_tool_call(tool_name="read_file", args={"path": "/home/u/project/README.md"},
+                            session_id="child-1", task_id="sa-1") is None
