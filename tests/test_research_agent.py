@@ -83,7 +83,7 @@ def test_launch_submit_notice(ctx, settings, data_dir):
     rt = runtime.Runtime()
     out = ra.launch(rt, doc.task_id, origin_session="chat-1")
     req = ctx.subagent_lifecycle.launched[0]
-    assert out["started"] and req.allowed_toolsets == ("web", ra.RESEARCH_TOOLSET)
+    assert out["started"] and req.allowed_toolsets[:4] == ("web", "file", "session_search", ra.RESEARCH_TOOLSET)
     assert out["run_id"] in req.goal and "Order cafe chairs" in req.context
     assert tf.parse_file(doc.path).fm["enrichment"]["status"] == "running"
     # wrong agent cannot submit someone else's run

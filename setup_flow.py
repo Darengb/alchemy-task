@@ -326,7 +326,8 @@ def jobs_preview(rt: Runtime) -> dict[str, Any]:
     for item in items:
         reg = registry.get(item["key"])
         stub = _hermes_home() / "scripts" / jobs.JOBS[item["key"]]["stub"]
-        current = reg and reg.get("job_id") and reg.get("hash") == jobs.spec_hash(item["key"]) and stub.exists() \
+        current = reg and reg.get("job_id") and reg.get("hash") == jobs.spec_hash(item["key"], rt.ctx.state) \
+            and stub.exists() \
             and str(_plugin_dir()) in stub.read_text(errors="ignore")
         item["status"] = "created" if current else ("needs update" if reg and reg.get("job_id") else "not created")
     return {"jobs": items, "approval_needed": any(i["status"] != "created" for i in items),
@@ -351,23 +352,64 @@ def jobs_create(rt: Runtime, *, user_approved: bool, session_id: str = "") -> di
     for key in jobs.JOBS:
         jobs.write_stub(scripts, key, plugin_dir=str(_plugin_dir()), data_dir=str(rt.data_dir))
         reg = registry.get(key) or {}
-        if reg.get("job_id") and reg.get("hash") == jobs.spec_hash(key) and _job_exists(rt, reg["job_id"]):
+        want = jobs.spec_hash(key, rt.ctx.state)
+        if reg.get("job_id") and reg.get("hash") == want and _job_matches(rt, key, reg["job_id"]):
             results.append({"job": key, "status": "already created", "job_id": reg["job_id"]})
             continue
         if reg.get("job_id"):
             _remove_job(rt, reg["job_id"])
-        raw = rt.ctx.dispatch_tool("cronjob_manage", jobs.create_args(key, timezone=tz["timezone"] or "UTC"))
+        args = jobs.create_args(key, timezone=tz["timezone"] or "UTC", state=rt.ctx.state)
+        raw = rt.ctx.dispatch_tool("cronjob_manage", args)
         job_id = jobs.parse_job_id(raw)
         if not job_id:
             results.append({"job": key, "status": "failed", "error": str(raw)[:300]})
             continue
-        registry[key] = {"job_id": job_id, "hash": jobs.spec_hash(key), "created_at": time.time(),
+        ok = _job_matches(rt, key, job_id)
+        registry[key] = {"job_id": job_id, "hash": want if ok else "", "created_at": time.time(),
                          "origin_session": session_id}
+        if not ok:
+            results.append({"job": key, "status": "failed", "job_id": job_id,
+                            "error": "scheduled job toolsets readback mismatch; run jobs_create again"})
+            continue
         results.append({"job": key, "status": "created", "job_id": job_id})
     rt.ctx.state.set("jobs", registry)
     rt.ctx.state.set("jobs_approval", {"at": time.time(), "session": session_id,
-                                       "hashes": {k: jobs.spec_hash(k) for k in jobs.JOBS}})
+                                       "hashes": {k: jobs.spec_hash(k, rt.ctx.state) for k in jobs.JOBS}})
     return {"results": results}
+
+
+def _job_matches(rt: Runtime, key: str, job_id: str) -> bool:
+    """The job exists and, for agent jobs, enables exactly the toolsets it should (public cron readback)."""
+    found = [j for j in _list_jobs(rt) if str(j.get("job_id") or j.get("id")) == job_id]
+    if len(found) != 1:
+        return False
+    if jobs.JOBS[key]["mode"] != "agent" or "enabled_toolsets" not in found[0]:
+        return True  # hosts that do not echo toolsets: existence is all we can verify
+    return list(found[0].get("enabled_toolsets") or []) == jobs.job_toolsets(key, rt.ctx.state)
+
+
+def reconcile_sweep_job(rt: Runtime) -> dict[str, Any]:
+    """Update the research sweep job's toolsets to the current approved readers and read them back."""
+    registry = rt.ctx.state.get("jobs", default={}) or {}
+    reg = registry.get("research-sweep") or {}
+    if not reg.get("job_id"):
+        return {"state": "not_configured"}
+    want = jobs.spec_hash("research-sweep", rt.ctx.state)
+    if reg.get("hash") != want or not _job_matches(rt, "research-sweep", reg["job_id"]):
+        if not _job_exists(rt, reg["job_id"]):
+            return {"state": "missing", "job_id": reg["job_id"]}
+        raw = rt.ctx.dispatch_tool("cronjob_manage", {"action": "update", "job_id": reg["job_id"],
+                                                      "enabled_toolsets": jobs.sweep_toolsets(rt.ctx.state)})
+        try:
+            result = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
+        except (TypeError, ValueError):
+            result = {"error": str(raw)[:300]}
+        if result.get("success") is False or result.get("error") or not _job_matches(rt, "research-sweep",
+                                                                                      reg["job_id"]):
+            return {"state": "mismatch", "job_id": reg["job_id"], "error": str(result.get("error") or "")[:300]}
+        registry["research-sweep"] = {**reg, "hash": want}
+        rt.ctx.state.set("jobs", registry)
+    return {"state": "verified", "job_id": reg["job_id"], "enabled_toolsets": jobs.sweep_toolsets(rt.ctx.state)}
 
 
 def _list_jobs(rt: Runtime) -> list[dict[str, Any]]:

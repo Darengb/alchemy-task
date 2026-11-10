@@ -261,6 +261,8 @@ def update_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
                   "areas": areas, "sources": sources,
                   "research_cap": cap})
         _save_streams(rt, streams)
+    from .jobs import reverify_sweep
+    reverify_sweep(rt)  # research workers' readers follow the streams
     msg = f"Updated '{s['name']}': {when} ({tz}), still posting to its own chat."
     if added:
         msg += f" Added source(s): {', '.join(added)}."
