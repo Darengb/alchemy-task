@@ -490,3 +490,14 @@ def test_integration_researches_without_receipt_and_digest_refuses_until_researc
         integration.finalize(run, session_id='parent')
     joined = integration.runner.join(run, session_id='parent')
     assert not joined['joined'] and 'discovery_research_run' in joined['next_action']
+
+
+# ---------------------------------------------------------------- scheduled prompt
+
+def test_scheduled_prompt_states_the_call_loop_and_reports_an_unfinished_run_as_unfinished():
+    from alchemy_task.jobs import discovery_job_config
+    native = discovery_job_config('work')['prompt']
+    assert 'until it returns status complete' in native and 'discovery_recover' in native
+    assert 'unfinished' in native and 'never present an unfinished run as a finished digest' in native
+    sender = discovery_job_config('work', delivery_owner='verified_sender')['prompt']
+    assert 'until it returns status complete' in sender and 'Return [SILENT]' in sender

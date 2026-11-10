@@ -108,8 +108,10 @@ def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None, 
         'prompt': (f'Run the Alchemy Task discovery stream "{stream}". Load alchemy-task:discovery. '
                    'Call discovery_start and resume its SAME saved run/window before scanning anything new. '
                    'Collect every approved source with discovery_collect; freeze complete source/task/skill context with discovery_context. '
-                   'Use discovery_research_run, fetch every full callback, perform substantive parent semantic acceptance/repair, '
-                   'reconcile all cohorts, then discovery_join. Only after global join perform serial discovery_match/discovery_decision. '
+                   'Research runs as short calls: call discovery_research_run with the SAME run_id, fetch every page of each awaiting_parent '
+                   'payload and perform substantive parent semantic acceptance/repair, and call discovery_research_run again until it returns '
+                   'status complete. If it refuses with explicit recovery required (a new session id), call discovery_recover with adopt=true '
+                   'and continue the same run. Reconcile all cohorts, then discovery_join. Only after global join perform serial discovery_match/discovery_decision. '
                    'Prepare discovery_digest. No freeform discovery_submit candidates, no task creation before approval, '
                    'no generic post-creation research replacing accepted dossiers. ' + (
                    'Call discovery_digest action=send with the approved '
@@ -119,7 +121,11 @@ def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None, 
                    'Return the exact immutable prepared digest text as the final reply for native host delivery, with no paraphrase, '
                    'prefix or extra post. discovery_digest action=send returns final_text metadata only; never use an alternate sender. '
                    'Preparation/final return is not proof of delivery; native host retry semantics apply, not universal exactly-once. '
-                   ) + 'If blocked, preserve the exact saved run rather than creating another run.')}
+                   ) + 'If blocked, preserve the exact saved run rather than creating another run. ' + (
+                   '' if delivery_owner == 'verified_sender' else
+                   'If you stop before research is complete and the digest is prepared, the final reply says the run is unfinished, '
+                   'with its run_id and the last status counts; never present an unfinished run as a finished digest. ') +
+                   'The next run continues the same saved run.')}
 
 
 def read_discovery_job(rt, stream):
