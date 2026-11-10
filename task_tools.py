@@ -457,7 +457,10 @@ DISCOVERY_DECIDE_SCHEMA = {
     "description": (
         "Act on a Task Discovery digest from any chat of this profile. Example: '1 create it, 2 skip, 3 update' "
         "means approve ['1','3'], edits {'1':{'choice':'create'},'3':{'choice':'update'}}. Supply area/due or explicit "
-        "undated for creation; update requires target_task_id when several targets exist. Skip means NO action: omit "
+        "undated for creation; update requires target_task_id when several targets exist. For create, also write from the "
+        "dossier: summary (one or two sentences), notes (2 to 4 sentences of context), plan (3 to 7 steps, a list) and "
+        "subtasks (a list), or subtasks_skipped_reason for a one-step task; the plugin fills only blank sections, marks "
+        "them '(from research, <date>)' and falls back to the research when you omit them. Skip means NO action: omit "
         "it, just like unmentioned items; both stay pending and replyable seven days. Only explicit dismiss goes in dismiss. "
         "Pass the 12-hex Review code from a replied-to or pasted digest as review. Resolution: exact proposal ID or "
         "day+number, then review, then quoted/pasted transcript digest, then named stream's newest digest or only recent "
@@ -472,7 +475,11 @@ DISCOVERY_DECIDE_SCHEMA = {
         "merge": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}, "description": "Explicit user-selected groups to merge into one task. Every member must also be approved with its choice/edits. All dossiers are retained; first member supplies combined task metadata."},
         "dismiss": {"type": "array", "items": {"type": "string"}},
         "edits": {"type": "object", "description": "{\"1\": {\"due\": \"2026-11-20\", \"area\": \"work\", "
-                                                   "\"title\": \"...\", \"undated\": false}}"}},
+                                                   "\"title\": \"...\", \"undated\": false, \"summary\": \"...\", "
+                                                   "\"notes\": \"...\", \"plan\": [\"step\", ...], \"subtasks\": [\"...\"], "
+                                                   "\"subtasks_skipped_reason\": \"...\"}}. New tasks: summary/notes/plan/"
+                                                   "subtasks fill blank sections; checklist items go to Subtasks. Updates "
+                                                   "never overwrite: summary/subtasks fill only blank ones."}},
         "required": []},
 }
 
