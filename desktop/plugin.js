@@ -1503,6 +1503,108 @@ import React6 from "react";
 
 // ui/src/lib/markdown.js
 import React5 from "react";
+
+// ui/src/lib/sections.js
+var START_RE = /^\s*<!--\s*([\w-]+):start((?:\s+[\w.:-]+)*)\s*-->\s*$/;
+var END_RE = /^\s*<!--\s*([\w-]+):end((?:\s+[\w.:-]+)*)\s*-->\s*$/;
+var ids = (s) => String(s || "").trim().split(/\s+/).join(" ");
+function blockEnd(lines, i) {
+  const m = lines[i].match(START_RE);
+  if (!m) return -1;
+  for (let j = i + 1; j < lines.length; j++) {
+    const e = lines[j].match(END_RE);
+    if (e && e[1] === m[1] && ids(e[2]) === ids(m[2])) return j;
+  }
+  return -1;
+}
+function splitSections(body) {
+  const lines = String(body || "").replace(/\r\n?/g, "\n").split("\n");
+  const visible = lines.slice();
+  const managed = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(START_RE);
+    if (!m) continue;
+    const j = blockEnd(lines, i);
+    if (j < 0) continue;
+    managed.push({ name: m[1], id: ids(m[2]), text: lines.slice(i + 1, j).join("\n").trim() });
+    for (let k = i; k <= j; k++) visible[k] = "";
+    i = j;
+  }
+  const sections = [];
+  let cur = { title: "", start: 0, lines: [] };
+  visible.forEach((l, idx) => {
+    const m = l.match(/^##\s+(.*)$/);
+    if (m) {
+      sections.push(cur);
+      cur = { title: m[1].trim(), start: idx + 1, lines: [] };
+    } else cur.lines.push(l);
+  });
+  sections.push(cur);
+  return {
+    sections: sections.filter((x) => x.title || x.lines.join("").trim()).map((x) => ({
+      title: x.title,
+      text: x.lines.join("\n"),
+      start: x.start,
+      folded: /^(log|history|activity)$/i.test(x.title)
+    })),
+    managed
+  };
+}
+function managedTitle(name) {
+  if (/dossier|research|discovery/i.test(name)) return "Research";
+  if (/state/i.test(name)) return "Current state";
+  return name.replace(/[-_]+/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+}
+function extractManaged(body) {
+  const lines = String(body || "").replace(/\r\n?/g, "\n").split("\n");
+  const keep = [];
+  const top = [];
+  const bottom = [];
+  let seenContent = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (START_RE.test(lines[i])) {
+      const j = blockEnd(lines, i);
+      if (j >= 0) {
+        ;
+        (seenContent ? bottom : top).push(lines.slice(i, j + 1).join("\n"));
+        i = j;
+        continue;
+      }
+    }
+    if (lines[i].trim()) seenContent = true;
+    keep.push(lines[i]);
+  }
+  const editable = keep.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+/, "").replace(/\s+$/, "") + "\n";
+  return { editable, top, bottom };
+}
+function rebuildBody(editable, top, bottom) {
+  const parts = [];
+  if (top.length) parts.push(top.join("\n\n"));
+  parts.push(String(editable).replace(/\s+$/, ""));
+  if (bottom.length) parts.push(bottom.join("\n\n"));
+  return "\n" + parts.filter((x) => x.trim()).join("\n\n") + "\n";
+}
+function groupManaged(managed) {
+  const out = [];
+  let research = null;
+  for (const m of managed || []) {
+    const title = managedTitle(m.name);
+    if (title !== "Research") {
+      out.push({ title, text: m.text, names: [m.name] });
+      continue;
+    }
+    if (!research) {
+      research = { title, text: m.text, names: [m.name] };
+      out.push(research);
+      continue;
+    }
+    research.text = [research.text, m.text].filter((x) => x).join("\n\n---\n\n");
+    research.names.push(m.name);
+  }
+  return out;
+}
+
+// ui/src/lib/markdown.js
 var h = React5.createElement;
 var SAFE_URL = /^(https?:|mailto:|obsidian:|#)/i;
 function inline(text, keyBase = "i") {
@@ -1685,78 +1787,6 @@ function toggleLine(src, line, checked) {
   if (!m) return src;
   lines[line] = `${m[1]}[${checked ? "x" : " "}]${m[3]}`;
   return lines.join("\n");
-}
-var START_RE = /^\s*<!--\s*([\w-]+):start\s*-->\s*$/;
-var END_RE = /^\s*<!--\s*([\w-]+):end\s*-->\s*$/;
-function splitSections(body) {
-  const lines = String(body || "").replace(/\r\n?/g, "\n").split("\n");
-  const visible = lines.slice();
-  const managed = [];
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(START_RE);
-    if (!m) continue;
-    let j = i + 1;
-    while (j < lines.length && !(END_RE.test(lines[j]) && lines[j].match(END_RE)[1] === m[1])) j++;
-    if (j >= lines.length) continue;
-    managed.push({ name: m[1], text: lines.slice(i + 1, j).join("\n").trim() });
-    for (let k = i; k <= j; k++) visible[k] = "";
-    i = j;
-  }
-  const sections = [];
-  let cur = { title: "", start: 0, lines: [] };
-  visible.forEach((l, idx) => {
-    const m = l.match(/^##\s+(.*)$/);
-    if (m) {
-      sections.push(cur);
-      cur = { title: m[1].trim(), start: idx + 1, lines: [] };
-    } else cur.lines.push(l);
-  });
-  sections.push(cur);
-  return {
-    sections: sections.filter((x) => x.title || x.lines.join("").trim()).map((x) => ({
-      title: x.title,
-      text: x.lines.join("\n"),
-      start: x.start,
-      folded: /^(log|history|activity)$/i.test(x.title)
-    })),
-    managed
-  };
-}
-function managedTitle(name) {
-  if (/dossier|research/i.test(name)) return "Research";
-  if (/state/i.test(name)) return "Current state";
-  return name.replace(/[-_]+/g, " ").replace(/^\w/, (c) => c.toUpperCase());
-}
-function extractManaged(body) {
-  const lines = String(body || "").replace(/\r\n?/g, "\n").split("\n");
-  const keep = [];
-  const top = [];
-  const bottom = [];
-  let seenContent = false;
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(START_RE);
-    if (m) {
-      let j = i + 1;
-      while (j < lines.length && !(END_RE.test(lines[j]) && lines[j].match(END_RE)[1] === m[1])) j++;
-      if (j < lines.length) {
-        ;
-        (seenContent ? bottom : top).push(lines.slice(i, j + 1).join("\n"));
-        i = j;
-        continue;
-      }
-    }
-    if (lines[i].trim()) seenContent = true;
-    keep.push(lines[i]);
-  }
-  const editable = keep.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+/, "").replace(/\s+$/, "") + "\n";
-  return { editable, top, bottom };
-}
-function rebuildBody(editable, top, bottom) {
-  const parts = [];
-  if (top.length) parts.push(top.join("\n\n"));
-  parts.push(String(editable).replace(/\s+$/, ""));
-  if (bottom.length) parts.push(bottom.join("\n\n"));
-  return "\n" + parts.filter((x) => x.trim()).join("\n\n") + "\n";
 }
 
 // ui/src/lib/research.js
@@ -2179,7 +2209,7 @@ function BodyView({ task, onEdit, onToggle }) {
   const after = logAt >= 0 ? rest.slice(logAt) : [];
   const renderSection = (s) => renderBlocks(parseBlocks(s.text), { onToggle: (line, checked) => onToggle(s.start + line, checked) });
   const hasContent = sections.some((s) => s.text.trim());
-  return /* @__PURE__ */ React6.createElement("div", { className: "at-body" }, /* @__PURE__ */ React6.createElement("div", { className: "at-body-bar" }, /* @__PURE__ */ React6.createElement("span", { className: "at-body-label" }, "Notes"), /* @__PURE__ */ React6.createElement("span", { className: "at-flex" }), /* @__PURE__ */ React6.createElement(Button, { size: "sm", variant: "ghost", icon: "edit", onClick: onEdit }, "Edit")), state && state.text.trim() ? /* @__PURE__ */ React6.createElement("div", { className: "at-state" }, /* @__PURE__ */ React6.createElement("div", { className: "at-state-label" }, "Current state"), /* @__PURE__ */ React6.createElement("div", { className: "at-md" }, state.managed ? renderBlocks(parseBlocks(state.text)) : renderSection(state))) : null, !hasContent && !managed.length ? /* @__PURE__ */ React6.createElement("button", { type: "button", className: "at-empty-notes", onClick: onEdit }, "Add notes") : null, before.map((s, i) => /* @__PURE__ */ React6.createElement(BodySection, { key: `b${i}`, s, render: renderSection })), managed.map((m, i) => /* @__PURE__ */ React6.createElement(Disclosure, { key: `m${i}`, title: managedTitle(m.name), defaultOpen: managedTitle(m.name) === "Research", className: "at-fold", right: /* @__PURE__ */ React6.createElement(Icon, { name: "spark", size: 13 }) }, /* @__PURE__ */ React6.createElement("div", { className: "at-md" }, renderBlocks(parseBlocks(m.text))))), after.map((s, i) => /* @__PURE__ */ React6.createElement(BodySection, { key: `a${i}`, s, render: renderSection })));
+  return /* @__PURE__ */ React6.createElement("div", { className: "at-body" }, /* @__PURE__ */ React6.createElement("div", { className: "at-body-bar" }, /* @__PURE__ */ React6.createElement("span", { className: "at-body-label" }, "Notes"), /* @__PURE__ */ React6.createElement("span", { className: "at-flex" }), /* @__PURE__ */ React6.createElement(Button, { size: "sm", variant: "ghost", icon: "edit", onClick: onEdit }, "Edit")), state && state.text.trim() ? /* @__PURE__ */ React6.createElement("div", { className: "at-state" }, /* @__PURE__ */ React6.createElement("div", { className: "at-state-label" }, "Current state"), /* @__PURE__ */ React6.createElement("div", { className: "at-md" }, state.managed ? renderBlocks(parseBlocks(state.text)) : renderSection(state))) : null, !hasContent && !managed.length ? /* @__PURE__ */ React6.createElement("button", { type: "button", className: "at-empty-notes", onClick: onEdit }, "Add notes") : null, before.map((s, i) => /* @__PURE__ */ React6.createElement(BodySection, { key: `b${i}`, s, render: renderSection })), groupManaged(managed).map((m, i) => /* @__PURE__ */ React6.createElement(Disclosure, { key: `m${i}`, title: m.title, defaultOpen: m.title === "Research", className: "at-fold", right: /* @__PURE__ */ React6.createElement(Icon, { name: "spark", size: 13 }) }, /* @__PURE__ */ React6.createElement("div", { className: "at-md" }, renderBlocks(parseBlocks(m.text))))), after.map((s, i) => /* @__PURE__ */ React6.createElement(BodySection, { key: `a${i}`, s, render: renderSection })));
 }
 function BodySection({ s, render }) {
   return s.folded ? /* @__PURE__ */ React6.createElement(Disclosure, { title: s.title, className: "at-fold" }, /* @__PURE__ */ React6.createElement("div", { className: "at-md" }, render(s))) : /* @__PURE__ */ React6.createElement("div", { className: "at-section" }, s.title && !/^notes$/i.test(s.title) ? /* @__PURE__ */ React6.createElement("h3", { className: "at-section-title" }, s.title) : null, /* @__PURE__ */ React6.createElement("div", { className: "at-md" }, render(s)));

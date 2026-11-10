@@ -3,7 +3,7 @@
 // never overwrites a newer version of the file.
 import React from 'react'
 import * as D from './lib/dates.js'
-import { parseBlocks, renderBlocks, splitSections, toggleLine, managedTitle, extractManaged, rebuildBody } from './lib/markdown.js'
+import { parseBlocks, renderBlocks, splitSections, toggleLine, extractManaged, rebuildBody, groupManaged } from './lib/markdown.js'
 import { describeError } from './api.js'
 import { useApp, useStore } from './store.js'
 import { AreaDot, Button, Check, DatePicker, Disclosure, Icon, IconButton, Menu, Spinner, copyText, cx, taskHandoff, useOverlay, markScrolled, useSheetDismiss, useToast } from './ui.jsx'
@@ -436,8 +436,8 @@ function BodyView({ task, onEdit, onToggle }) {
       ) : null}
       {!hasContent && !managed.length ? <button type="button" className="at-empty-notes" onClick={onEdit}>Add notes</button> : null}
       {before.map((s, i) => <BodySection key={`b${i}`} s={s} render={renderSection} />)}
-      {managed.map((m, i) => (
-        <Disclosure key={`m${i}`} title={managedTitle(m.name)} defaultOpen={managedTitle(m.name) === 'Research'} className="at-fold" right={<Icon name="spark" size={13} />}>
+      {groupManaged(managed).map((m, i) => (
+        <Disclosure key={`m${i}`} title={m.title} defaultOpen={m.title === 'Research'} className="at-fold" right={<Icon name="spark" size={13} />}>
           <div className="at-md">{renderBlocks(parseBlocks(m.text))}</div>
         </Disclosure>
       ))}
