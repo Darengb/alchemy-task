@@ -36,4 +36,4 @@ def test_discovery_skill_starts_from_areas():
     assert "**Start from the user's areas.**" in text
     assert text.index('Start from the user') < text.index('When sources are missing')
     assert 'always pass `areas`' in text and 'alchemy-task:setup' in text
-    assert 'or there is only one' in text and 'still ask' in text
+    assert 'only the default `general`' in text and 'still ask' in text
