@@ -407,7 +407,7 @@ function BodyView({ task, onEdit, onToggle }) {
       {!hasContent && !managed.length ? <button type="button" className="at-empty-notes" onClick={onEdit}>Add notes</button> : null}
       {before.map((s, i) => <BodySection key={`b${i}`} s={s} render={renderSection} />)}
       {managed.map((m, i) => (
-        <Disclosure key={`m${i}`} title={managedTitle(m.name)} className="at-fold" right={<Icon name="spark" size={13} />}>
+        <Disclosure key={`m${i}`} title={managedTitle(m.name)} defaultOpen={managedTitle(m.name) === 'Research'} className="at-fold" right={<Icon name="spark" size={13} />}>
           <div className="at-md">{renderBlocks(parseBlocks(m.text))}</div>
         </Disclosure>
       ))}
