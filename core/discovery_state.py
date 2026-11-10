@@ -1107,7 +1107,7 @@ class DiscoveryStore:
             stat_text = Path(f'/proc/{pid}/stat').read_text()
             return {'pid': pid, 'start_ticks': stat_text.rsplit(')', 1)[1].split()[19],
                     'boot_id': Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
-                    'pid_namespace': os.stat('/proc/self/ns/pid').st_ino}
+                    'pid_namespace': os.stat(f'/proc/{os.getpid()}/ns/pid').st_ino}
         except (OSError, IndexError, ValueError):
             return None  # unsupported/unknown never proves an invocation dead
 

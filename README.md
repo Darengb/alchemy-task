@@ -166,6 +166,9 @@ Setup fills them in for you.
 - **Shell commands:** runs local `git` subprocesses in the workspace (add, commit of task paths only, fetch,
   rebase, push, ls-remote) with a minimal environment and no interactive prompts. In `deploy_key` mode it
   also runs OpenSSH's key generator once, to create the deploy key described under Credentials.
+- **Process checks:** to recover discovery work after a crash, the plugin reads its own process entries under
+  `/proc` (start time, boot ID and PID namespace) and checks whether a recorded worker process still exists.
+  It only reads these values; it never signals or changes other processes.
 - **Network:** Git traffic goes only to the remote you configure.
 - **Credentials:** in `system` mode your own Git and SSH configuration authenticates the push, and the plugin
   never reads your keys or credential helpers. It refuses to push when the repository's own config names

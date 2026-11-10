@@ -1,6 +1,7 @@
 """Final bounded ordinary-flow probes, archive 4261525; no provider claims."""
 import datetime as dt
 import copy
+import os
 import pytest
 from test_discovery_integration import service
 from test_discovery_conversion import custom_joined
@@ -106,3 +107,12 @@ def test_real_dead_process_recovery_keeps_exact_attempt_deadline(data_dir):
     finally:
         if child.is_alive(): child.terminate()
         child.join(10)
+
+
+def test_process_incarnation_records_this_process_namespace():
+    from alchemy_task.core.discovery_state import DiscoveryStore
+    evidence = DiscoveryStore._process_incarnation()
+    if evidence is None:
+        pytest.skip('platform has no /proc process evidence')
+    assert evidence['pid'] == os.getpid()
+    assert evidence['pid_namespace'] == os.stat('/proc/self/ns/pid').st_ino
