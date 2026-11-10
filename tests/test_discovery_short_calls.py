@@ -410,7 +410,9 @@ def test_exception_mid_call_fences_bound_children_and_holds_the_run(tmp_path):
     wait = pool.wait
 
     def broken(handle, *, timeout_seconds):
-        if len(pool.records) == 2:
+        # Fail only once both children are bound, so the precondition below is deterministic.
+        bound = [a for a in store.get_run(run)['attempts'].values() if a.get('handle')]
+        if len(pool.records) == 2 and len(bound) == 2:
             raise RuntimeError('host lifecycle failed mid-call')
         return wait(handle, timeout_seconds=timeout_seconds)
     pool.wait = broken
