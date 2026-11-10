@@ -168,6 +168,35 @@ def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None, 
                    'The next run continues the same saved run.')}
 
 
+def _preview(text):
+    """Hermes's cron list shows only a prompt preview: the first 100 characters plus '...' when longer."""
+    text = str(text or '')
+    return text[:100] + '...' if len(text) > 100 else text
+
+
+def job_readback_problems(observed, desired, *, schedule=None, timezone=None):
+    """Compare a job read back through ``cronjob_manage list`` with what we asked for, using only fields Hermes
+    returns there. The list shows ``prompt_preview`` (not the full prompt), ``schedule`` as its display string
+    and ``enabled_toolsets`` only when set; it omits ``timezone``. A field Hermes does return must match; a
+    field it never returns is not treated as a mismatch (the create/update call itself carried it)."""
+    problems = []
+    if observed.get('deliver') != desired.get('deliver'):
+        problems.append('deliver')
+    if 'prompt' in observed:
+        if observed.get('prompt') != desired.get('prompt'):
+            problems.append('prompt')
+    elif observed.get('prompt_preview') != _preview(desired.get('prompt')):
+        problems.append('prompt')
+    want_ts = list(desired.get('enabled_toolsets') or [])
+    if want_ts and list(observed.get('enabled_toolsets') or []) != want_ts:
+        problems.append('enabled_toolsets')
+    if schedule is not None and observed.get('schedule') != schedule:
+        problems.append('schedule')
+    if timezone is not None and 'timezone' in observed and observed.get('timezone') != timezone:
+        problems.append('timezone')
+    return problems
+
+
 def read_discovery_job(rt, stream):
     """Read only the exact bound job via the public cron tool, never cron files."""
     raw = rt.ctx.dispatch_tool('cronjob_manage', {'action': 'list', 'include_disabled': True})
@@ -192,10 +221,10 @@ def reconcile_discovery_job(rt, stream):
     if result.get('error') or result.get('success') is False:
         raise ValueError('discovery job reconciliation failed: ' + str(result))
     observed = read_discovery_job(rt, stream)
-    if any(observed.get(k) != desired[k] for k in ('deliver', 'prompt', 'enabled_toolsets')):
-        raise ValueError('discovery reader toolsets readback mismatch')
+    if job_readback_problems(observed, desired):
+        raise ValueError('discovery reader toolsets readback mismatch: ' + ', '.join(job_readback_problems(observed, desired)))
     reverify_sweep(rt)
-    return {'state': 'verified', 'job_id': stream['job_id'], 'enabled_toolsets': observed['enabled_toolsets']}
+    return {'state': 'verified', 'job_id': stream['job_id'], 'enabled_toolsets': observed.get('enabled_toolsets') or desired['enabled_toolsets']}
 
 
 def reverify_sweep(rt) -> dict[str, Any]:
@@ -230,8 +259,9 @@ def activate_discovery_job(rt, stream, binding=None):
         read_discovery_job(rt, stream)
         rt.ctx.dispatch_tool('cronjob_manage', {'action': 'update', 'job_id': stream['job_id'], **desired})
     observed = read_discovery_job(rt, stream)
-    if any(observed.get(k) != desired[k] for k in ('deliver', 'prompt', 'enabled_toolsets')) or observed.get('schedule') != stream['schedule'] or observed.get('timezone') != stream['timezone']:
-        raise ValueError('delivery-ready job readback mismatch; activation incomplete')
+    problems = job_readback_problems(observed, desired, schedule=stream['schedule'], timezone=stream['timezone'])
+    if problems:
+        raise ValueError('delivery-ready job readback mismatch (' + ', '.join(problems) + '); activation incomplete')
     if observed.get('paused') is True or observed.get('enabled') is False or observed.get('state') == 'paused':
         rt.ctx.dispatch_tool('cronjob_manage', {'action': 'resume', 'job_id': stream['job_id']})
         observed = read_discovery_job(rt, stream)
