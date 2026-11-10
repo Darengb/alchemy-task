@@ -41,6 +41,11 @@ provides_tools:
   - research_skill_view
   - research_capabilities
   - research_submit
+  - research_git_find_repos
+  - research_git_log
+  - research_git_show
+  - research_git_grep
+  - research_git_ls_files
 provides_hooks:
   - pre_tool_call
   - subagent_start

@@ -19,6 +19,7 @@ from .core import research as rs
 from .core import taskfile as tf
 from .core.locks import task_lock
 from .core.store import NeedsInput
+from . import research_git
 from .runtime import Runtime
 
 RESEARCH_TOOLSET = "alchemy-task-research"
@@ -524,7 +525,7 @@ RESEARCH_TOOLS = (
               "title": {"type": "string"}, "url": {"type": "string"}, "relevance": {"type": "string"}},
               "required": ["url"]}}},
           "required": ["run_id", "execution", "recommended_approach"]}}, t_submit),
-)
+) + research_git.TOOLS
 
 
 def register(ctx: Any) -> None:
