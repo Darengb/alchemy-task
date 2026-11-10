@@ -31,6 +31,21 @@ const P = {
   chat: 'M5 5.5h14a1.5 1.5 0 011.5 1.5v8a1.5 1.5 0 01-1.5 1.5h-7.5L7 20v-3.5H5A1.5 1.5 0 013.5 15V7A1.5 1.5 0 015 5.5z M8 10h8 M8 13h5',
 }
 
+// The Alchemy Task mark: the alchemical triangle with a check for its crossbar (assets/alchemy-task-mark.svg).
+// The clip id is unique per instance so several marks on one page never share a clipPath.
+let markSeq = 0
+export function BrandMark({ size = 20, className = '' }) {
+  const id = React.useMemo(() => `at-mark-${++markSeq}`, [])
+  return (
+    <svg className={'at-brand-mark ' + className} width={size} height={size} viewBox="0 0 96 96" fill="none"
+         stroke="currentColor" strokeWidth="7.4" strokeLinejoin="miter" strokeMiterlimit="10" aria-hidden="true">
+      <clipPath id={id}><polygon points="0.59,85.70 48.00,3.60 95.41,85.70" /></clipPath>
+      <polygon points="7.00,82.00 48.00,11.00 89.00,82.00" />
+      <polyline clipPath={`url(#${id})`} strokeLinecap="butt" points="14.87,48.48 39.80,66.38 72.84,34.60" />
+    </svg>
+  )
+}
+
 export function Icon({ name, size = 16, className = '', strokeWidth = 1.8 }) {
   return (
     <svg className={'at-icon ' + className} width={size} height={size} viewBox="0 0 24 24" fill="none"

@@ -574,6 +574,28 @@
     clipboard: "M9 4.5h6a1 1 0 011 1V7H8V5.5a1 1 0 011-1z M8 6H6.5A1.5 1.5 0 005 7.5v11A1.5 1.5 0 006.5 20h11a1.5 1.5 0 001.5-1.5v-11A1.5 1.5 0 0017.5 6H16",
     chat: "M5 5.5h14a1.5 1.5 0 011.5 1.5v8a1.5 1.5 0 01-1.5 1.5h-7.5L7 20v-3.5H5A1.5 1.5 0 013.5 15V7A1.5 1.5 0 015 5.5z M8 10h8 M8 13h5"
   };
+  var markSeq = 0;
+  function BrandMark({ size = 20, className = "" }) {
+    const id = react_dashboard_default.useMemo(() => `at-mark-${++markSeq}`, []);
+    return /* @__PURE__ */ react_dashboard_default.createElement(
+      "svg",
+      {
+        className: "at-brand-mark " + className,
+        width: size,
+        height: size,
+        viewBox: "0 0 96 96",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: "7.4",
+        strokeLinejoin: "miter",
+        strokeMiterlimit: "10",
+        "aria-hidden": "true"
+      },
+      /* @__PURE__ */ react_dashboard_default.createElement("clipPath", { id }, /* @__PURE__ */ react_dashboard_default.createElement("polygon", { points: "0.59,85.70 48.00,3.60 95.41,85.70" })),
+      /* @__PURE__ */ react_dashboard_default.createElement("polygon", { points: "7.00,82.00 48.00,11.00 89.00,82.00" }),
+      /* @__PURE__ */ react_dashboard_default.createElement("polyline", { clipPath: `url(#${id})`, strokeLinecap: "butt", points: "14.87,48.48 39.80,66.38 72.84,34.60" })
+    );
+  }
   function Icon({ name, size = 16, className = "", strokeWidth = 1.8 }) {
     return /* @__PURE__ */ react_dashboard_default.createElement(
       "svg",
@@ -2848,7 +2870,7 @@
         return /* @__PURE__ */ react_dashboard_default.createElement(Centered, { icon: "list", title: "Set up your tasks", text: /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, "Alchemy Task is installed but not set up yet. In chat, ask Hermes: ", /* @__PURE__ */ react_dashboard_default.createElement("q", null, "Set up my tasks.")) });
       }
       if (settingsOnly) return /* @__PURE__ */ react_dashboard_default.createElement(SettingsPanel, { inline: true, narrow });
-      return /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("nav", { className: "at-appbar" }, narrow ? null : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-brand" }, /* @__PURE__ */ react_dashboard_default.createElement("i", { className: "at-brand-mark", "aria-hidden": "true" }), "Alchemy Task"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-tabs", role: "tablist" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", role: "tab", "aria-selected": tab === "tasks", className: cx("at-tab", tab === "tasks" && "is-on"), onClick: () => setTab("tasks") }, "Tasks"), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", role: "tab", "aria-selected": tab === "discovery", className: cx("at-tab", tab === "discovery" && "is-on"), onClick: () => setTab("discovery") }, "Discovery", pending ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-badge-dot" }, pending) : null)), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), busy ? /* @__PURE__ */ react_dashboard_default.createElement(Spinner, { size: 12 }) : null, /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "gear", label: "Settings", className: cx(settingsOpen && "is-on"), onClick: () => {
+      return /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("nav", { className: "at-appbar" }, narrow ? null : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-brand" }, /* @__PURE__ */ react_dashboard_default.createElement(BrandMark, { size: 20 }), "Alchemy Task"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-tabs", role: "tablist" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", role: "tab", "aria-selected": tab === "tasks", className: cx("at-tab", tab === "tasks" && "is-on"), onClick: () => setTab("tasks") }, "Tasks"), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", role: "tab", "aria-selected": tab === "discovery", className: cx("at-tab", tab === "discovery" && "is-on"), onClick: () => setTab("discovery") }, "Discovery", pending ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-badge-dot" }, pending) : null)), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), busy ? /* @__PURE__ */ react_dashboard_default.createElement(Spinner, { size: 12 }) : null, /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "gear", label: "Settings", className: cx(settingsOpen && "is-on"), onClick: () => {
         setSelectedId(null);
         setSettingsOpen((v) => !v);
       } })), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-main", selectedId && !narrow && "has-panel", settingsOpen && !narrow && "has-panel") }, tab === "tasks" ? /* @__PURE__ */ react_dashboard_default.createElement(TasksView, { narrow }) : /* @__PURE__ */ react_dashboard_default.createElement(DiscoveryView, { runs, streams, error: runsError, loading: runsLoading, reload: loadRuns })), selectedId ? /* @__PURE__ */ react_dashboard_default.createElement(TaskPanel, { id: selectedId, narrow, onClose: () => setSelectedId(null) }) : null, settingsOpen && !selectedId ? /* @__PURE__ */ react_dashboard_default.createElement(SettingsPanel, { narrow, onClose: () => setSettingsOpen(false) }) : null);
