@@ -1,8 +1,18 @@
 # Alchemy Task
 
-Alchemy Task turns messy operator work into tracked, researched, finished tasks. Tell your Hermes agent what
-needs doing in plain language. It files a task with a stable ID, commits and pushes it to your Git repo,
-researches it in the background, and keeps it current while you work on it.
+**Alchemy Task automatically turns messy work and ambiguous requests, from all of the inputs available on your
+agent's server, into well-researched tasks ready for agent execution.**
+
+To do that, it reads widely. When a task is created, a background research agent reads the chat it came from,
+your skills and runbooks, your past sessions, notes and files, Git repositories under your home folder, your
+connected email and chat sources, and the web. It then writes into the task what it found: the context, a
+recommended approach, and any access your agent still needs. Apart from writing its findings into the task,
+research only reads: it never sends messages or changes your files, accounts or settings.
+
+An optional discovery routine also scans the conversations you connect and approve, such as email, Slack,
+Teams and meeting transcripts in your email, for follow-ups asked of you or promised by you that should become
+tasks. You choose these sources when you set it up. You approve each new task before it is created; when a
+follow-up clearly matches a task you already have, discovery adds the new details to that task.
 
 > Status: in development for the Hermes plugin hackathon (November 2026). This README grows with each component.
 

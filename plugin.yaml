@@ -1,6 +1,6 @@
 name: alchemy-task
 version: "0.1.0"
-description: "Turns messy operator work into tracked, researched, finished tasks: Markdown tasks with stable IDs, Git delivery, background research and work-session checkpoints."
+description: "Automatically turns messy work and ambiguous requests, from all of the inputs available on your agent's server, into well-researched tasks ready for agent execution."
 author: "Daren Broxmeyer"
 license: MIT
 requires_hermes: ">=0.22.5"
