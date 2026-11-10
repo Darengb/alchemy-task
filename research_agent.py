@@ -323,8 +323,9 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
                                             keep_blank=doc.blank_keys).encode(), expect=doc.raw)
     fields = {k: tf.norm_date(doc.fm.get(k)) or doc.fm.get(k) for k in ("area", "status", "priority", "due",
                                                                        "scheduled", "project", "estimate")}
+    targets = rs.fill_targets(doc.fm, doc.body)  # sections blank (or research-owned) at launch
     goal, context = rs.goal_text(run_id=run_id, title=doc.title, fields=fields, body=rs.strip_managed(doc.body),
-                                 linked=_linked_notes(rt, doc.body), today=rt.settings.today())
+                                 linked=_linked_notes(rt, doc.body), today=rt.settings.today(), targets=targets)
     created_in = origin_for(rt, doc.task_id)
     if origin_session and not created_in:
         remember_origin(rt, doc.task_id, origin_session)
@@ -356,7 +357,7 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
             context = build_context(rt, doc, rs.goal_text(run_id=run_id, title=doc.title, fields=fields,
                                                           body=rs.strip_managed(doc.body),
                                                           linked=_linked_notes(rt, doc.body),
-                                                          today=rt.settings.today())[1],
+                                                          today=rt.settings.today(), targets=targets)[1],
                                     created_in=created_in, requested_in=origin_session,
                                     toolset_note=("Only web and research tools are available to you in this "
                                                   "run; report local access you could not check as unverified."))
@@ -428,6 +429,7 @@ def submit(rt: Runtime, run_id: str, payload: dict[str, Any], caller_task_id: st
         if caller_task_id and caller_task_id.startswith("sa-") and caller_task_id != sid:
             raise rs.ResearchError("this run_id belongs to a different research agent")
         task_id = run["task_id"]
+    fill_raw = payload.get("fill") if isinstance(payload, dict) else None
     normalized = rs.normalize(payload)
     store = rt.store()
     doc = None
@@ -448,12 +450,8 @@ def submit(rt: Runtime, run_id: str, payload: dict[str, Any], caller_task_id: st
         block = rs.render(normalized, day=rt.settings.today())
         body = tf.upsert_block(doc.body, rs.START, rs.END, block)
         rs.complete(doc.fm, run_id, normalized)
-        if not doc.fm.get("summary") and normalized.get("summary"):  # fill a missing summary, never replace one
-            if "summary" in doc.fm:
-                doc.fm["summary"] = normalized["summary"]
-            else:
-                doc.fm.insert(1, "summary", normalized["summary"])
         body = tf.append_log(body, rs.summary_line(normalized), rt.settings.today())
+        body = _apply_fill(rt, doc.fm, body, fill_raw, normalized)
         tf.atomic_write(doc.path, tf.render(doc.fm, body, seq_offset=doc.seq_offset,
                                             keep_blank=doc.blank_keys).encode(), expect=doc.raw)
     receipt = _deliver(rt, doc.path, f"task: research {doc.title[:64]}")
@@ -466,6 +464,33 @@ def submit(rt: Runtime, run_id: str, payload: dict[str, Any], caller_task_id: st
     if origin:
         _add_notice(rt, origin, doc.title, normalized)
     return {"task_id": doc.task_id, "git": receipt, "summary": rs.summary_line(normalized)}
+
+
+def _apply_fill(rt: Runtime, fm: Any, body: str, fill_raw: Any, normalized: dict[str, Any]) -> str:
+    """Fill the task's blank sections from the worker's ``fill`` (on the latest content, under the caller's task
+    lock). A fill problem never blocks the dossier: bad parts are dropped and noted in the log."""
+    try:
+        fill, problems = rs.normalize_fill(fill_raw)
+        if not fill.get("summary") and normalized.get("summary"):
+            fill["summary"] = normalized["summary"]   # the older top-level summary field still fills a blank one
+        new_body, summary, prints, report = rs.apply_fill(fm, body, fill, day=rt.settings.today())
+    except Exception as exc:  # noqa: BLE001 - the dossier must land whatever the fill holds
+        return tf.append_log(body, f"Research fill dropped ({type(exc).__name__}).", rt.settings.today())
+    if summary is not None:
+        if "summary" in fm:
+            fm["summary"] = summary
+        elif hasattr(fm, "insert"):
+            fm.insert(1, "summary", summary)
+        else:
+            fm["summary"] = summary
+    st = rs.state(fm)
+    if st is not None:
+        if prints:
+            st["fill"] = prints
+        elif "fill" in st:
+            del st["fill"]
+    line = rs.fill_log(report, problems)
+    return tf.append_log(new_body, line, rt.settings.today()) if line else new_body
 
 
 def _add_notice(rt: Runtime, session_id: str, title: str, normalized: dict[str, Any]) -> None:
@@ -836,6 +861,18 @@ RESEARCH_TOOLS = (
               "setup": {"type": "string", "description": "How to set it up, with any cost"}},
               "required": ["need", "status"]}},
           "skills_used": {**_STRS, "description": "Names of the user's skills that apply."},
+          "fill": {"type": "object", "description": "Written after the research, from its findings, only for the "
+                   "sections your context lists under Sections to fill. Plain text, no headings or markers.",
+                   "properties": {
+                       "summary": {"type": "string", "description": "One or two plain sentences."},
+                       "notes": {"type": "string", "description": "2 to 4 sentences of background context; "
+                                                                  "not a repeat of the dossier."},
+                       "plan": {**_STRS, "minItems": rs.PLAN_MIN, "maxItems": rs.PLAN_MAX,
+                                "description": "3 to 7 ordered steps."},
+                       "subtasks": {**_STRS, "description": "Checklist items, only when the task needs more "
+                                                            "than one sitting or step."},
+                       "subtasks_skipped_reason": {"type": "string", "description": "Why no subtasks (for "
+                                                                                   "example: one sitting)."}}},
           "sources": {"type": "array", "items": {"type": "object", "properties": {
               "title": {"type": "string"}, "url": {"type": "string"}, "relevance": {"type": "string"}},
               "required": ["url"]}}},
