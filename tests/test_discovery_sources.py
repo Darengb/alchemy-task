@@ -94,7 +94,7 @@ def test_stale_window_and_cross_account_identity_fail_closed(tmp_path):
 
 
 def test_source_algorithms_keep_cluster_and_mime_boundaries():
-    from alchemy_task.discovery_sources import group_slack_seeds, extract_body_text, extract_suggested_next_steps
+    from alchemy_task.discovery_sources import group_slack_seeds, extract_body_text
     messages = [{'channel': {'id': 'C1'}, 'ts': ts} for ts in ['1000.000001', '2800.000001', '4601.000001']]
     groups = group_slack_seeds(messages)
     assert [len(g['seeds']) for g in groups] == [2, 1]
@@ -102,4 +102,5 @@ def test_source_algorithms_keep_cluster_and_mime_boundaries():
     import base64
     encode = lambda s: base64.urlsafe_b64encode(s.encode()).decode()
     body = extract_body_text({'parts': [{'mimeType': 'text/html', 'body': {'data': encode('<p>Wrong</p>')}}, {'mimeType': 'text/plain', 'body': {'data': encode('Suggested next steps\n- Verify inputs\nSummary\nDo not include')}}]})
-    assert extract_suggested_next_steps(body) == '- Verify inputs'
+    # Plain text wins over HTML, and the whole body is kept (no section extraction).
+    assert body == 'Suggested next steps\n- Verify inputs\nSummary\nDo not include'
