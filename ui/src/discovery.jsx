@@ -39,7 +39,7 @@ export function DiscoveryView({ runs, error, loading, reload }) {
   if (!all.length) {
     return <Empty icon="spark" title="No discovery runs yet"
                   text="Discovery reads the sources you choose and proposes tasks. To get started, send Hermes:"
-                  action={<SetupPrompt />} />
+                  action={<SetupPrompt />} after={<DiscoveryExplainer />} />
   }
   const needs = (r) => (r.summary ? r.summary.pending : (r.proposals || []).filter((p) => p.state === 'pending').length) > 0
     || (r.conflicts || []).length || (r.failures || []).length
@@ -84,7 +84,7 @@ function SetupPrompt() {
   )
 }
 
-function Empty({ icon, title, text, action }) {
+function Empty({ icon, title, text, action, after }) {
   return (
     <div className="at-scroll at-disco">
       <div className="at-emptystate">
@@ -93,7 +93,79 @@ function Empty({ icon, title, text, action }) {
         <p>{text}</p>
         {action}
       </div>
+      {after}
     </div>
+  )
+}
+
+// Why set up discovery: what it is, how it works and what it catches. Shown only before setup.
+const DISCO_STEPS = [
+  { icon: 'inbox', title: 'It reads your sources', text: 'On the schedule you pick, it checks the email, chat, meeting transcripts and shared docs you approve.' },
+  { icon: 'spark', title: 'It researches each ask', text: 'It works out what is being asked of you, whether a task already covers it, and what doing it will take.' },
+  { icon: 'check', title: 'You decide', text: <>A short numbered digest lands in your chat. Reply <q>2 create, 4 skip</q> and the tasks appear, already researched.</> },
+]
+
+const DISCO_CATCHES = [
+  { icon: 'inbox', source: 'Email', title: 'The reply you meant to send',
+    quote: 'Could you send the updated rate sheet before Friday?', where: 'Arrived at 11:48 PM, under 40 other emails',
+    task: 'Send the updated rate sheet to Harbor Market', due: 'Friday' },
+  { icon: 'chat', source: 'Slack', title: 'Buried in a long thread',
+    quote: 'Can you check the tin dimensions before we approve the proof?', where: 'Message 63 of 90 in #packaging',
+    task: 'Check the tin dimensions before approving the proof', due: 'Today' },
+  { icon: 'list', source: 'Meeting transcript', title: 'One ask among twenty',
+    quote: ['Maya: Can someone own the vendor follow-up?', 'You: Sure, I will take it.'], where: 'From the transcript emailed after Tuesday\'s sync',
+    task: 'Follow up with the vendor about the November order', due: 'Thursday' },
+  { icon: 'edit', source: 'Shared doc', title: 'A comment that tagged you',
+    quote: 'Please confirm the launch date in this section.', where: 'Comment in the spring launch plan',
+    task: 'Confirm the launch date in the spring plan', due: 'Next week' },
+]
+
+function DiscoveryExplainer() {
+  return (
+    <section className="at-explainer" aria-label="What discovery does">
+      <div className="at-explainer-head">
+        <span className="at-explainer-kicker">Why set it up</span>
+        <h3>A safety net for the asks that slip through</h3>
+        <p>
+          Every day, small requests get buried: a reply you meant to send, a favor asked halfway through a long
+          thread, one ask among twenty in a meeting. Discovery finds the ones meant for you and offers them as tasks,
+          so nothing quietly falls through the cracks.
+        </p>
+      </div>
+
+      <ol className="at-explainer-steps">
+        {DISCO_STEPS.map((s, i) => (
+          <li key={s.title} className="at-explainer-step">
+            <span className="at-explainer-num">{i + 1}</span>
+            <span className="at-explainer-step-icon"><Icon name={s.icon} size={16} /></span>
+            <strong>{s.title}</strong>
+            <span className="at-explainer-step-text">{s.text}</span>
+          </li>
+        ))}
+      </ol>
+
+      <div className="at-explainer-sub">What it catches</div>
+      <div className="at-explainer-grid">
+        {DISCO_CATCHES.map((c) => (
+          <article key={c.source} className="at-catch">
+            <div className="at-catch-source"><Icon name={c.icon} size={14} /> {c.source}</div>
+            <h4>{c.title}</h4>
+            <blockquote>{[].concat(c.quote).map((line) => <span key={line}>{line}</span>)}</blockquote>
+            <div className="at-catch-where">{c.where}</div>
+            <div className="at-catch-task">
+              <span className="at-catch-check" aria-hidden="true" />
+              <span className="at-catch-task-text">{c.task}</span>
+              <span className="at-catch-due">{c.due}</span>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <p className="at-explainer-foot">
+        <Icon name="check" size={14} /> Nothing becomes a task until you reply. Discovery only reads your sources: it never
+        replies to anyone or changes anything in your email, chat or documents.
+      </p>
+    </section>
   )
 }
 

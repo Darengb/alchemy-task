@@ -2326,7 +2326,8 @@
           icon: "spark",
           title: "No discovery runs yet",
           text: "Discovery reads the sources you choose and proposes tasks. To get started, send Hermes:",
-          action: /* @__PURE__ */ react_dashboard_default.createElement(SetupPrompt, null)
+          action: /* @__PURE__ */ react_dashboard_default.createElement(SetupPrompt, null),
+          after: /* @__PURE__ */ react_dashboard_default.createElement(DiscoveryExplainer, null)
         }
       );
     }
@@ -2349,8 +2350,54 @@
     const copy = async () => toast(await copyText(SETUP_PROMPT) ? "Copied. Paste it into a chat with Hermes." : "Could not copy");
     return /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-setup-prompt", onClick: copy, title: "Copy" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-setup-prompt-text" }, SETUP_PROMPT), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-setup-prompt-copy" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "clipboard", size: 15 }), " Copy"));
   }
-  function Empty({ icon, title, text, action }) {
-    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-disco" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-emptystate" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-emptystate-icon" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: icon, size: 22 })), /* @__PURE__ */ react_dashboard_default.createElement("h2", null, title), /* @__PURE__ */ react_dashboard_default.createElement("p", null, text), action));
+  function Empty({ icon, title, text, action, after }) {
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-disco" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-emptystate" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-emptystate-icon" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: icon, size: 22 })), /* @__PURE__ */ react_dashboard_default.createElement("h2", null, title), /* @__PURE__ */ react_dashboard_default.createElement("p", null, text), action), after);
+  }
+  var DISCO_STEPS = [
+    { icon: "inbox", title: "It reads your sources", text: "On the schedule you pick, it checks the email, chat, meeting transcripts and shared docs you approve." },
+    { icon: "spark", title: "It researches each ask", text: "It works out what is being asked of you, whether a task already covers it, and what doing it will take." },
+    { icon: "check", title: "You decide", text: /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, "A short numbered digest lands in your chat. Reply ", /* @__PURE__ */ react_dashboard_default.createElement("q", null, "2 create, 4 skip"), " and the tasks appear, already researched.") }
+  ];
+  var DISCO_CATCHES = [
+    {
+      icon: "inbox",
+      source: "Email",
+      title: "The reply you meant to send",
+      quote: "Could you send the updated rate sheet before Friday?",
+      where: "Arrived at 11:48 PM, under 40 other emails",
+      task: "Send the updated rate sheet to Harbor Market",
+      due: "Friday"
+    },
+    {
+      icon: "chat",
+      source: "Slack",
+      title: "Buried in a long thread",
+      quote: "Can you check the tin dimensions before we approve the proof?",
+      where: "Message 63 of 90 in #packaging",
+      task: "Check the tin dimensions before approving the proof",
+      due: "Today"
+    },
+    {
+      icon: "list",
+      source: "Meeting transcript",
+      title: "One ask among twenty",
+      quote: ["Maya: Can someone own the vendor follow-up?", "You: Sure, I will take it."],
+      where: "From the transcript emailed after Tuesday's sync",
+      task: "Follow up with the vendor about the November order",
+      due: "Thursday"
+    },
+    {
+      icon: "edit",
+      source: "Shared doc",
+      title: "A comment that tagged you",
+      quote: "Please confirm the launch date in this section.",
+      where: "Comment in the spring launch plan",
+      task: "Confirm the launch date in the spring plan",
+      due: "Next week"
+    }
+  ];
+  function DiscoveryExplainer() {
+    return /* @__PURE__ */ react_dashboard_default.createElement("section", { className: "at-explainer", "aria-label": "What discovery does" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-explainer-head" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-explainer-kicker" }, "Why set it up"), /* @__PURE__ */ react_dashboard_default.createElement("h3", null, "A safety net for the asks that slip through"), /* @__PURE__ */ react_dashboard_default.createElement("p", null, "Every day, small requests get buried: a reply you meant to send, a favor asked halfway through a long thread, one ask among twenty in a meeting. Discovery finds the ones meant for you and offers them as tasks, so nothing quietly falls through the cracks.")), /* @__PURE__ */ react_dashboard_default.createElement("ol", { className: "at-explainer-steps" }, DISCO_STEPS.map((s, i) => /* @__PURE__ */ react_dashboard_default.createElement("li", { key: s.title, className: "at-explainer-step" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-explainer-num" }, i + 1), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-explainer-step-icon" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: s.icon, size: 16 })), /* @__PURE__ */ react_dashboard_default.createElement("strong", null, s.title), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-explainer-step-text" }, s.text)))), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-explainer-sub" }, "What it catches"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-explainer-grid" }, DISCO_CATCHES.map((c) => /* @__PURE__ */ react_dashboard_default.createElement("article", { key: c.source, className: "at-catch" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-catch-source" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: c.icon, size: 14 }), " ", c.source), /* @__PURE__ */ react_dashboard_default.createElement("h4", null, c.title), /* @__PURE__ */ react_dashboard_default.createElement("blockquote", null, [].concat(c.quote).map((line) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: line }, line))), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-catch-where" }, c.where), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-catch-task" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-catch-check", "aria-hidden": "true" }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-catch-task-text" }, c.task), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-catch-due" }, c.due))))), /* @__PURE__ */ react_dashboard_default.createElement("p", { className: "at-explainer-foot" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "check", size: 14 }), " Nothing becomes a task until you reply. Discovery only reads your sources: it never replies to anyone or changes anything in your email, chat or documents."));
   }
   function RunCard({ run, filter, reload }) {
     const { today } = useApp();
