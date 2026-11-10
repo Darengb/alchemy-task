@@ -21,15 +21,18 @@ researches it in the background, and keeps it current while you work on it.
   stashes, resets or force-pushes your work. If a push can't go through, the task is still saved and the push
   is retried.
 - **Background research on every new task:** right after a task is created, a research agent starts in the
-  background on your own model. It reads your skills (how you already do things), checks which tools and
-  integrations your Hermes has, researches the web, and writes a dossier into the task: the recommended
+  background on your own model. It reads all of your skills (how you already do things), checks which tools,
+  integrations and keys your Hermes has, looks at your own context first (the chat the task came from, past
+  sessions, related tasks, your files and Git repositories, your discovery sources and MCP servers), then
+  researches the web, and writes a dossier into the task: the recommended
   approach, context, risks, open questions, sources, and an **access plan**. The plan says whether Hermes can
   do the task now, what access is missing and how to set it up. When it finishes, your agent mentions it in
   the same chat and offers to set up missing access now or when you start the task. Say "no research needed"
   to skip it, or "research it again" to refresh it.
-- **Bounded and safe research:** the research agent can only search the web and read your skills and the
-  names of your tools. It cannot run commands or change files, accounts or settings. Each run is limited to
-  30 tool calls and 10 minutes, with up to 3 attempts. Results from a superseded run are discarded, and the
+- **Bounded and safe research:** the research agent is read-only. It cannot run commands, write or edit
+  files, change skills, or change accounts or settings; the plugin blocks those tools for every research agent
+  it starts, discovery research included. It never reads credential files (keys, tokens, `.env`, `.ssh`,
+  `auth.json` and similar). Each run is limited to 45 tool calls and 15 minutes, with up to 3 attempts. Results from a superseded run are discarded, and the
   dossier is written into the task's latest content, so research never overwrites edits made while it ran.
 - **Official work sessions:** say "work on X" or "continue X". The chat is linked to the task, which turns
   in progress, and the agent gets the notes, research, access plan and current state with its next step, so
@@ -176,11 +179,22 @@ Setup fills them in for you.
   written to disk.
 - **Background agents and model use:** after each task is created (and from the optional research sweep job),
   the plugin starts a Hermes research subagent through the public subagent lifecycle API. It runs on your
-  configured model, with only the `web` toolset and the plugin's read-only research tools, so it spends your
-  model tokens and sends search queries derived from the task text to your configured web search provider.
-- **Reads outside plugin data:** research agents read your skills through Hermes's skill tools, the names
-  and availability of your toolsets, tools and MCP servers (never keys or credentials), and Markdown notes the
-  task links to inside the workspace.
+  configured model with the `web`, `file` and `session_search` toolsets, the reader toolsets of your approved
+  discovery streams, the MCP servers your agent has (Hermes passes them on), and the plugin's read-only
+  research tools. It spends your model tokens and sends search queries derived from the task text to your
+  configured web search provider. A `pre_tool_call` hook refuses write, edit, shell and code-execution tools
+  (`write_file`, `patch`, `skill_manage`, `terminal`, `execute_code`, `process_manage`) and credential-file
+  reads for these agents only; your own chats are unaffected.
+- **Reads outside plugin data:** research agents read your skills (including reference files) through
+  Hermes's skill tools; the names and availability of your toolsets, tools and MCP servers, and the names of
+  environment variables Hermes reports as missing (never values, keys or credentials); Markdown notes the task
+  links to; your past sessions through `session_search`, starting with the chat that created the task; files
+  through Hermes's `read_file` and `search_files`; Git history of repositories under your home folder and the
+  workspace through fixed read-only `git log`, `show`, `grep` and `ls-files` commands (no shell, credential
+  paths refused); and whatever your approved discovery readers and MCP servers return. When research starts,
+  the plugin reads your Hermes memory files (`memories/MEMORY.md` and `USER.md` in your profile) and puts
+  them, with the originating chat's id, up to 10 related tasks and the path of your cron output folder, into
+  the research agent's starting context, because Hermes starts subagents without memory.
 - **Work-session transcripts and background thread:** for chats linked to a task, the plugin keeps a short
   digest of the last exchange, reads the chat's transcript through Hermes's session store when it writes an
   automatic checkpoint, and runs one background thread per profile that checks linked chats every 10
