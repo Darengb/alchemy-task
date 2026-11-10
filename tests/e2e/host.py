@@ -59,11 +59,41 @@ class FakeSource:
         return out
 
 
+class VirtualClock:
+    """Real time plus a virtual offset, shared by the fake lifecycle and the plugin runner.
+
+    `sleep` only advances the offset, so a scenario can model children that
+    run for minutes while the test itself takes milliseconds.
+    """
+
+    def __init__(self):
+        self.offset = 0.0
+        self._lock = threading.Lock()
+
+    def monotonic(self):
+        return time.monotonic() + self.offset
+
+    def time(self):
+        return time.time() + self.offset
+
+    def sleep(self, seconds):
+        with self._lock:
+            self.offset += max(0.0, float(seconds))
+
+
+def default_tool_deadline():
+    """The real Hermes per-call tool deadline for this profile (420 s when nothing is configured)."""
+    from agent.tool_executor import _resolve_sequential_tool_timeout
+    return _resolve_sequential_tool_timeout()
+
+
 class FakeLifecycle:
     """Public subagent lifecycle: launch/status/wait/result/reconnect/cancel.
 
     A launched child is a deterministic function (children.py) that performs
-    real registered-tool calls as the child session.
+    real registered-tool calls as the child session. With `child_seconds` set,
+    a child stays RUNNING for that many (virtual) seconds before it researches
+    and finishes, so research outlives any single parent call.
     """
 
     def __init__(self, host):
@@ -71,7 +101,20 @@ class FakeLifecycle:
         self.records: dict = {}
         self.launched: list = []
         self.n = 0
+        self.child_seconds = 0
+        # The real host shows a handle only to the ACTIVE parent session that
+        # launched it (agent/subagent_lifecycle.py _record); children keep
+        # running and can still call their own tools.
+        self.hide_foreign = False
         self._lock = threading.Lock()
+
+    def _visible(self, handle):
+        return not self.hide_foreign or handle['parent_session_id'] == self.host.current_parent
+
+    def tick(self):
+        """Children progress in the background, whichever parent session is active."""
+        for sid in list(self.records):
+            self._advance(sid)
 
     def launch(self, request):
         with self._lock:
@@ -83,7 +126,7 @@ class FakeLifecycle:
         # Real hosts may fire subagent_start before launch returns.
         self.host.fire_hook('subagent_start', parent_session_id=parent, child_session_id=child,
                             child_subagent_id=sid)
-        handle = {'subagent_id': sid, 'parent_session_id': parent, 'created_at': time.time()}
+        handle = {'subagent_id': sid, 'parent_session_id': parent, 'created_at': self.host.clock.time()}
         self.records[sid] = {'handle': handle, 'bootstrap': bootstrap, 'child': child, 'phase': 'launched',
                              'terminal': None, 'started': None}
         self.launched.append({'subagent_id': sid, 'candidate_id': bootstrap['candidate_id'],
@@ -93,7 +136,9 @@ class FakeLifecycle:
     def _advance(self, sid):
         r = self.records[sid]
         if r['phase'] == 'launched':
-            r['phase'], r['started'] = 'running', time.time()
+            r['phase'], r['started'] = 'running', self.host.clock.time()
+            return 'RUNNING'
+        if r['phase'] == 'running' and self.host.clock.time() - r['started'] < self.child_seconds:
             return 'RUNNING'
         if r['phase'] == 'running':
             from e2e.children import Child
@@ -104,20 +149,27 @@ class FakeLifecycle:
 
     def status(self, handle):
         sid = handle['subagent_id']
+        if not self._visible(handle):
+            return {'state': 'UNKNOWN', 'updated_at': self.host.clock.time()}
         state = self._advance(sid)
         r = self.records[sid]
-        return {'state': state, 'updated_at': r['started'] or time.time()}
+        return {'state': state, 'updated_at': r['started'] or self.host.clock.time()}
 
     def wait(self, handle, *, timeout_seconds=None):
-        return {'state': self.records[handle['subagent_id']]['phase']}
+        r = self.records[handle['subagent_id']]
+        if r['phase'] != 'done' and self.child_seconds and timeout_seconds:
+            self.host.clock.sleep(timeout_seconds)  # a real wait blocks until change or timeout
+        return {'state': r['phase']}
 
     def result(self, handle):
         r = self.records[handle['subagent_id']]
         return {'ready': r['phase'] == 'done', 'terminal_state': r['terminal'], 'started_at': r['started'],
-                'completed_at': time.time(), 'summary': 'Child final summary (never a payload).',
+                'completed_at': self.host.clock.time(), 'summary': 'Child final summary (never a payload).',
                 'structured_payload': None}
 
     def reconnect(self, handle):
+        if not self._visible(handle):
+            return {'connected': False, 'state': 'UNKNOWN', 'diagnostic': 'RECONNECT_UNAVAILABLE'}
         r = self.records.get(handle['subagent_id'])
         return {'connected': bool(r), 'state': r['terminal'] if r and r['phase'] == 'done' else 'RUNNING'}
 
@@ -147,6 +199,11 @@ class FakeHost:
         self.research_specs: dict = {}
         self.blocked_calls: list = []
         self.raised: list = []
+        # The host enforces its real default per-call tool deadline on every plugin tool.
+        self.clock = VirtualClock()
+        self.tool_deadline = default_tool_deadline()
+        self.call_durations: list = []
+        self.deadline_violations: list = []
 
     # ---- registration surface used by the plugin
     def register_tool(self, name, toolset=None, schema=None, handler=None, description='', emoji='', **_):
@@ -213,21 +270,26 @@ class FakeHost:
             if isinstance(verdict, dict) and verdict.get('action') == 'block':
                 self.blocked_calls.append((name, session, verdict.get('message')))
                 return {'ok': False, 'blocked': True, 'error': verdict.get('message')}
+        started = self.clock.monotonic()
         try:
             raw = self.tools[name](json.loads(json.dumps(args)), session_id=session, task_id=task_id)
         except Exception as exc:  # noqa: BLE001
             # Hermes registry dispatch turns any handler exception into {"error": ...}.
             self.raised.append((name, type(exc).__name__, str(exc)[:300]))
             raw = json.dumps({'error': f'{type(exc).__name__}: {exc}'[:1000]})
+        elapsed = self.clock.monotonic() - started
+        self.call_durations.append((name, elapsed))
+        if self.tool_deadline and elapsed > self.tool_deadline:
+            # The real host abandons the call and returns a timeout to the model.
+            self.deadline_violations.append((name, elapsed))
+            return {'ok': False, 'error': f'tool {name} timed out after {self.tool_deadline:.0f}s'}
         return json.loads(raw)
 
 
 def plugin_settings(workspace, *, timezone='America/New_York', areas=('work',)):
+    # A default install: no timeout configuration or transport receipt of any kind.
     return {'workspace_root': str(workspace), 'timezone': timezone, 'areas': list(areas),
-            'git_transport': 'system', 'git_run_hooks': True,
-            # Operator-configured transport receipt; synthetic, not live proof.
-            'discovery_transport_receipt': json.dumps(
-                {'sequential_call': 2040, 'concurrent_batch': 2040, 'long_canary': 'synthetic-e2e-not-live-proof'})}
+            'git_transport': 'system', 'git_run_hooks': True}
 
 
 def build_host(*, cron_path):

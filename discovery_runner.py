@@ -64,6 +64,24 @@ def _reader(session):
     return 'parent-' + hashlib.sha256(session.encode()).hexdigest()[:32]
 
 
+# Hermes' default per-call tool deadline (timeouts.tools.concurrent_batch; the
+# sequential deadline defaults to it). Plugin tools cannot declare a longer
+# limit, so every research call must return well inside it on a default install.
+HOST_DEFAULT_TOOL_DEADLINE = 420
+# Headroom between one call's budget and the host deadline; also the lease slack.
+CALL_DEADLINE_MARGIN = 60
+MAX_CALL_SECONDS = 300
+# No launch starts this close to the end of a call (beyond the PENDING window),
+# so every launch receipt is bound or fenced before the call returns.
+LAUNCH_MARGIN = 15
+# Calls during which a timed-out child's landing cancellation still counts as
+# research in progress before it is reported as unknown.
+SETTLE_CALLS = 2
+# Slack after an orphaned child's saved deadline (its owner session changed and
+# the host no longer shows its handle) before it is treated as a timeout.
+ORPHAN_MARGIN = 120
+
+
 @dataclasses.dataclass(frozen=True)
 class RunnerPolicy:
     slots: int = 3
@@ -71,7 +89,7 @@ class RunnerPolicy:
     pending_seconds: float = 60
     running_seconds: float = 1800
     poll_seconds: float = 1
-    transport_seconds: float = 2040
+    call_seconds: float = MAX_CALL_SECONDS
     daily_limit: int = 50
 
     def __post_init__(self):
@@ -79,21 +97,22 @@ class RunnerPolicy:
             raise UserError('logical slots must be 1..3')
         if type(self.daily_limit) is not int or self.daily_limit < 0:
             raise UserError('daily limit must be nonnegative')
-        for key in ('admission_seconds', 'pending_seconds', 'running_seconds', 'poll_seconds', 'transport_seconds'):
+        for key in ('admission_seconds', 'pending_seconds', 'running_seconds', 'poll_seconds', 'call_seconds'):
             x = getattr(self, key)
             if isinstance(x, bool) or not isinstance(x, (float, int)) or not math.isfinite(x) or x <= 0:
                 raise UserError('positive finite timer required: ' + key)
-        if self.transport_seconds < self.admission_seconds + self.pending_seconds + self.running_seconds + 60:
-            raise UserError('transport must include admission, PENDING, RUNNING and margin')
+        if self.call_seconds > MAX_CALL_SECONDS or self.call_seconds + CALL_DEADLINE_MARGIN >= HOST_DEFAULT_TOOL_DEADLINE:
+            raise UserError('per-call budget is configurable only downward from %d seconds' % MAX_CALL_SECONDS)
+        if self.call_seconds <= self.pending_seconds + LAUNCH_MARGIN:
+            raise UserError('per-call budget must exceed the PENDING window so launches settle inside the call')
 
 
 class DiscoveryRunner:
-    def __init__(self, ctx, rt, *, store=None, clock=time, policy=None, transport_receipt=None,
+    def __init__(self, ctx, rt, *, store=None, clock=time, policy=None,
                  proposal_hook=None, context_resources=None, recovery_authorizer=None):
         self.ctx, self.rt = ctx, rt
         self.store = store or DiscoveryStore(rt.data_dir / 'discovery')
         self.clock, self.policy = clock, policy or RunnerPolicy()
-        self.transport_receipt = transport_receipt or {}
         self.proposal_hook = proposal_hook
         self.recovery_authorizer = recovery_authorizer
         self.context_resources = context_resources or {}
@@ -380,7 +399,8 @@ class DiscoveryRunner:
             old_parent = state.get('parent_session', ledger['origin'].get('session_id'))
         if old_parent != session_id and (not adopt or not self.recovery_authorizer or not self.recovery_authorizer(run_id, old_parent, session_id)):
             raise UserError('new parent requires integration-verified recovery approval, never model identity assertion')
-        fenced = self.store.recover_owner(run_id, owner_session=session_id, owner_restarted=owner_restarted)
+        fenced = self.store.recover_owner(run_id, owner_session=session_id, owner_restarted=owner_restarted,
+                                          orphan_seconds=self.policy.pending_seconds + self.policy.running_seconds)
         # Plugin host restart alone may reconnect same owner while actual host
         # lives. Missing in-process timer requires conservative persisted budget.
         with self._state(run_id) as state:
@@ -403,7 +423,11 @@ class DiscoveryRunner:
                     # never a fresh1800. Wall expiry immediately fences.
                     remaining = dt.datetime.fromisoformat(a['deadline_utc']).timestamp() - self.clock.time()
                     self._deadlines[(run_id, a['token'])] = self.clock.monotonic() + max(0, remaining)
-        return {'fenced': fenced, 'same_parent': old_parent == session_id, 'owner_restarted': owner_restarted}
+        attempts = self.store.get_run(run_id)['attempts'].values()
+        recovered = [a['token'] for a in attempts if (a['terminal'] or {}).get('receipt', {}).get('basis') == 'committed_spool_after_owner_change' and a['state'] == 'terminal_observed']
+        orphaned = [a['token'] for a in attempts if a.get('owner_lost') and not a['terminal'] and not a['fenced']]
+        return {'fenced': fenced, 'recovered': recovered, 'orphaned': orphaned,
+                'same_parent': old_parent == session_id, 'owner_restarted': owner_restarted}
 
     def release_hold(self, run_id, reason, *, session_id=''):
         self._parent(run_id, session_id)
@@ -417,30 +441,46 @@ class DiscoveryRunner:
         return {'released': True, 'unknown_attempts_still_fenced': True}
 
     def run(self, run_id, *, session_id='', expected_revision=None):
+        """One short supervising call of at most `policy.call_seconds`.
+
+        Launches into free slots during the call's own admission window,
+        collects terminal children, queues repairs/retries and saves state, then
+        returns while admitted children keep running in the background. The
+        parent calls again with the same run until `status` is `complete`.
+        """
         ledger = self._parent(run_id, session_id)
         if expected_revision is not None and expected_revision != ledger['index_revision']:
             raise UserError('frozen index revision mismatch')
         if not ledger['index_revision']:
             raise UserError('freeze full selected manifest before research')
-        for key in ('sequential_call', 'concurrent_batch'):
-            if self.transport_receipt.get(key, 0) < self.policy.transport_seconds:
-                raise UserError('supported host tool timeout configuration receipt required')
         with self._state(run_id) as state:
             if state['holds']:
-                return {'status': 'pending', 'holds': state['holds'], 'next_action': 'reconcile saved unknown/hold in this run', 'run_id': run_id}
+                return {'run_id': run_id, 'status': 'held', 'holds': state['holds'],
+                        'next_action': 'Research is held (%s). Reconcile the saved unknown or hold in this run with discovery_recover or discovery_release_hold, then call discovery_research_run again with run_id %s.' % (', '.join(state['holds']), run_id)}
         invocation = uuid.uuid4().hex
-        self.store.claim_lease(run_id, owner=invocation, expires_at=_utc(self.clock.time() + self.policy.transport_seconds + 60))
+        policy = self.policy
+        self.store.claim_lease(run_id, owner=invocation, expires_at=_utc(self.clock.time() + policy.call_seconds + CALL_DEADLINE_MARGIN))
         active, replies = {}, queue.Queue()
         gate = threading.Event(); gate.set()
         start = self.clock.monotonic()
-        admit_until = start + self.policy.admission_seconds
-        hard_end = start + self.policy.transport_seconds - 30
+        call_end = start + policy.call_seconds
+        # Per-call admission: launches only in this call's first admission
+        # seconds and never so late that the PENDING window outlasts the call.
+        admit_until = start + min(policy.admission_seconds, policy.call_seconds - policy.pending_seconds - LAUNCH_MARGIN)
         maximum = 0
-        interrupted = False
+        failed = False
         deferred = []
         cancelling = {}
         launched = set()
+        orphans = set()
         lifecycle = self.ctx.subagent_lifecycle
+
+        def settle_orphans():
+            # Children of an earlier owner session: invisible to this session's
+            # lifecycle, still holding their slot until they commit or time out.
+            outcomes = self.store.settle_orphans(run_id, now_epoch=self.clock.time(), margin=ORPHAN_MARGIN)
+            orphans.clear()
+            orphans.update(t for t, outcome in outcomes.items() if outcome == 'waiting')
 
         def launch_worker(token, request, context):
             # Only this invocation launches, under its copied active call context.
@@ -451,8 +491,9 @@ class DiscoveryRunner:
         try:
             self.store.recover_spools(run_id)
             self.store.recover_bundles(run_id)
+            settle_orphans()
             for a in self.store.get_run(run_id)['attempts'].values():
-                if a['terminal']:
+                if a['terminal'] or a['token'] in orphans:
                     continue
                 if a['fenced'] and a.get('fence_reason') in {'execution_timeout', 'admission_timeout'} and a['handle'] and a['owner_session'] == session_id:
                     # A timed-out child whose cancellation has since landed is a
@@ -462,6 +503,8 @@ class DiscoveryRunner:
                         connected = normalize(lifecycle.reconnect(a['handle']))
                         if connected.get('connected') and connected.get('state') in TERMINAL:
                             self._terminal(run_id, a['token'], a['handle'])
+                        elif connected.get('connected'):
+                            cancelling[a['token']] = a['handle']
                     except Exception:
                         pass
                     continue
@@ -474,6 +517,9 @@ class DiscoveryRunner:
                 if not connected.get('connected'):
                     self.store.fence_attempt(run_id, a['token'], reason='execution_unknown')
                     continue
+                # Adopt a child admitted by an earlier call. Its PENDING and
+                # RUNNING deadlines are measured from recorded timestamps, so a
+                # deadline that passed while no call was active fires now.
                 pending_start = self.clock.monotonic() - max(0, self.clock.time() - a['handle'].get('created_at', self.clock.time()))
                 if a.get('deadline_utc') and (run_id, a['token']) not in self._deadlines:
                     self._deadlines[(run_id, a['token'])] = self.clock.monotonic() + max(0, dt.datetime.fromisoformat(a['deadline_utc']).timestamp() - self.clock.time())
@@ -504,7 +550,7 @@ class DiscoveryRunner:
                 for token, slot in list(active.items()):
                     handle = slot.get('handle')
                     if not handle:
-                        if self.clock.monotonic() - slot['launch_start'] >= self.policy.pending_seconds:
+                        if self.clock.monotonic() - slot['launch_start'] >= policy.pending_seconds:
                             self._cancel(run_id, token, None, 'launch_unknown'); active.pop(token); self._inflight(run_id, token)
                             admit_until = self.clock.monotonic()
                         continue
@@ -519,14 +565,14 @@ class DiscoveryRunner:
                             epoch = status.get('updated_at')
                             if not isinstance(epoch, (int, float)) or not math.isfinite(epoch) or epoch > self.clock.time() + 1:
                                 raise UserError('RUNNING start time not trustworthy')
-                            deadline = epoch + self.policy.running_seconds
+                            deadline = epoch + policy.running_seconds
                             self._deadlines[(run_id, token)] = self.clock.monotonic() + max(0, deadline - self.clock.time())
                             self.store.mark_running(run_id, token, started_at=_utc(epoch), deadline_utc=_utc(deadline))
                         timer = self._deadlines.get((run_id, token))
                         if timer is not None and self.clock.monotonic() >= timer:
                             self._cancel(run_id, token, handle, 'execution_timeout'); active.pop(token)
                             cancelling[token] = handle; continue
-                        if timer is None and self.clock.monotonic() - slot['pending_start'] >= self.policy.pending_seconds:
+                        if timer is None and self.clock.monotonic() - slot['pending_start'] >= policy.pending_seconds:
                             self._cancel(run_id, token, handle, 'admission_timeout'); active.pop(token)
                             cancelling[token] = handle; continue
                     except Exception as exc:
@@ -541,11 +587,13 @@ class DiscoveryRunner:
                             self._terminal(run_id, token, handle)
                     except Exception:
                         cancelling.pop(token, None)
+                if orphans:
+                    settle_orphans()
                 eligible = [c for c in self._eligible(run_id) if c not in deferred]
-                while self.clock.monotonic() < admit_until and len(active) < self.policy.slots and eligible:
+                while self.clock.monotonic() < admit_until and len(active) + len(orphans) < policy.slots and eligible:
                     cid = eligible.pop(0)
                     try:
-                        a = self.store.reserve_attempt(run_id, cid, owner_session=session_id, daily_limit=ledger['config'].get('research_cap', self.policy.daily_limit))
+                        a = self.store.reserve_attempt(run_id, cid, owner_session=session_id, daily_limit=ledger['config'].get('research_cap', policy.daily_limit))
                     except UserError as exc:
                         if 'daily research budget deferred' in str(exc):
                             # Only a NEW unit is deferred. Queued retries/repairs
@@ -558,46 +606,88 @@ class DiscoveryRunner:
                     context = contextvars.copy_context()
                     threading.Thread(target=launch_worker, args=(a['token'], request, context), daemon=True, name='discovery-launch-' + a['token'][:8]).start()
                     maximum = max(maximum, len(active))
-                if not active:
-                    if not [c for c in self._eligible(run_id) if c not in deferred] or self.clock.monotonic() >= admit_until:
+                if not active and not orphans:
+                    if not cancelling and (not [c for c in self._eligible(run_id) if c not in deferred] or self.clock.monotonic() >= admit_until):
                         break
-                if self.clock.monotonic() >= hard_end:
-                    interrupted = True; break
-                # Short public wait is observation, NOT execution timeout. Poll all
-                # handles each tick, no wave or blocking construction barrier.
-                handles = [s['handle'] for s in active.values() if s.get('handle')]
+                remaining = call_end - self.clock.monotonic()
+                if remaining <= 0 and all(slot.get('handle') for slot in active.values()):
+                    break  # budget spent; bound children keep running for the next call
+                # Wait for change, bounded by the poll interval and the call budget.
+                # A short wait is observation, NOT the execution deadline.
+                timeout = min(policy.poll_seconds, max(remaining, 0.01))
+                # A landing cancellation is change too: wait on it within the budget.
+                handles = [s['handle'] for s in active.values() if s.get('handle')] + list(cancelling.values())
                 if handles:
-                    normalize(lifecycle.wait(handles[0], timeout_seconds=self.policy.poll_seconds))
-                    # Already-terminal wait can return immediately; yield fairly.
-                    self.clock.sleep(min(.01, self.policy.poll_seconds))
+                    normalize(lifecycle.wait(handles[0], timeout_seconds=timeout))
+                    # Already-terminal wait can return immediately; yield fairly
+                    # without stepping past the call budget.
+                    left = call_end - self.clock.monotonic()
+                    if left > 0:
+                        self.clock.sleep(min(.01, left))
                 else:
-                    self.clock.sleep(min(.05, self.policy.poll_seconds))
+                    self.clock.sleep(timeout if orphans else min(.05, timeout))
         except BaseException:
-            interrupted = True
+            failed = True
             raise
         finally:
             gate.clear()
             for token in launched:
                 self._inflight(run_id, token)
-            if active:
-                interrupted = True
-                for token, slot in active.items():
+            # Bound children outlive the call and are adopted by the next one.
+            # An unresolved launch, or anything after a failure, is fenced:
+            # never relaunched and never refunded.
+            for token, slot in list(active.items()):
+                if failed or not slot.get('handle'):
                     self._cancel(run_id, token, slot.get('handle'), 'execution_unknown' if slot.get('handle') else 'launch_unknown')
-            if interrupted:
+                    active.pop(token)
+            if failed:
                 with self._state(run_id) as state:
                     state['holds'] = list(set(state['holds'] + ['interrupted']))
             self.store.release_lease(run_id, owner=invocation)
-        if deferred:
-            # Durable so join can tell a cap deferral from unfinished work.
-            with self._state(run_id) as state:
+        with self._state(run_id) as state:
+            if deferred:
+                # Durable so join can tell a cap deferral from unfinished work.
                 state['budget_deferred'] = list(dict.fromkeys(state.get('budget_deferred', []) + deferred))
+            all_deferred = set(state.get('budget_deferred', []))
+            settling = state.get('settling', {})
+            for token in cancelling:
+                settling[token] = settling.get(token, 0) + 1
+            for token in [t for t in settling if t not in cancelling]:
+                settling.pop(token)
+            if settling or 'settling' in state:
+                state['settling'] = settling
+        return self._report(run_id, maximum=maximum, deferred=deferred, all_deferred=all_deferred,
+                            settling={t for t, n in settling.items() if n < SETTLE_CALLS},
+                            elapsed=self.clock.monotonic() - start)
+
+    def _report(self, run_id, *, maximum, deferred, all_deferred, settling, elapsed):
         ledger = self.store.get_run(run_id)
-        unknowns = [a['candidate_id'] for a in ledger['attempts'].values() if a['fenced'] and not a['terminal']]
-        return {'run_id': run_id, 'status': 'pending' if unknowns or interrupted else 'needs_parent', 'max_logical_slots': maximum,
-                'awaiting_parent': [a['token'] for a in ledger['attempts'].values() if a['terminal'] and a['terminal']['state'] == 'SUCCEEDED' and a.get('payload') and not a.get('validation_error') and not a['fenced'] and a['state'] == 'terminal_observed'],
-                'unknown_candidates': unknowns, 'queued': self._eligible(run_id), 'budget_deferred': deferred,
-                'next_action': 'Fetch every full payload page and assess, or resume the SAME run; join all cohorts before writes.',
-                'long_canary': self.transport_receipt.get('long_canary', 'pending')}
+        attempts = ledger['attempts'].values()
+        live = [a for a in attempts if not a['terminal'] and not a['fenced'] and a['state'] not in {'exhausted', 'rejected_retryable', 'accepted_bundle'}]
+        awaiting = [a['token'] for a in attempts if a['terminal'] and a['terminal']['state'] == 'SUCCEEDED' and a.get('payload') and not a.get('validation_error') and not a['fenced'] and a['state'] == 'terminal_observed']
+        unknowns = [a['candidate_id'] for a in attempts if a['fenced'] and not a['terminal'] and a['token'] not in settling]
+        queued = self._eligible(run_id)
+        waiting = [c for c in queued if c not in all_deferred]
+        accepted = sum(1 for c in ledger['candidates'] if not c.get('parent_candidate_id') and self.store.accepted_bundle(run_id, c['candidate_id']))
+        exhausted = {a['candidate_id'] for a in attempts if a['state'] == 'exhausted'}
+        repairing = sum(1 for a in live if a['ordinal'] > 1) + sum(1 for c in waiting if any(a['candidate_id'] == c for a in attempts))
+        counts = {'accepted': accepted, 'running': len(live) + len(settling), 'queued': len(waiting), 'repairing': repairing,
+                  'awaiting_parent': len(awaiting), 'failed': len(exhausted), 'unknown': len(unknowns), 'deferred': len(all_deferred)}
+        complete = not live and not settling and not waiting and not awaiting
+        if complete:
+            next_action = 'Research is complete for run_id %s. Call discovery_join with run_id %s.' % (run_id, run_id)
+            if unknowns:
+                next_action += ' Unknown launches stay fenced (never relaunched); join reports them pending until explicitly acknowledged as degraded.'
+        elif awaiting:
+            next_action = ('Fetch every page of each awaiting_parent payload and call discovery_research_accept for it, '
+                           'then call discovery_research_run again with run_id %s. Do not join yet.' % run_id)
+        else:
+            next_action = ('Research is still running (%d running, %d queued). Call discovery_research_run again with run_id %s; '
+                           'do not join or prepare a digest yet.' % (counts['running'], counts['queued'], run_id))
+        return {'run_id': run_id, 'status': 'complete' if complete else 'running', 'counts': counts,
+                'next_action': next_action, 'max_logical_slots': maximum, 'awaiting_parent': awaiting,
+                'unknown_candidates': unknowns, 'queued': queued, 'budget_deferred': deferred,
+                'call_seconds': self.policy.call_seconds, 'elapsed_seconds': round(elapsed, 3)}
 
     def accept(self, run_id, token, payload_sha256, assessment, *, session_id=''):
         self._parent(run_id, session_id)
@@ -684,6 +774,12 @@ class DiscoveryRunner:
             else:
                 pending.append({'candidate_id': cid, 'reason': attempts[-1]['state'] if attempts else 'unstarted_or_budget_deferred'})
         result = {'pilot_skipped': [c['candidate_id'] for c in ledger['candidates'] if c.get('research_selection') == 'pilot_skipped'], 'run_id': run_id, 'joined': not pending, 'degraded': bool(failures), 'accepted': accepted, 'failures': failures, 'deferred': deferred, 'pending': pending, 'index_revision': ledger['index_revision']}
+        if pending:
+            # Research runs as short calls; an early stop never joins as complete.
+            result['next_action'] = ('Research is unfinished for run_id %s: call discovery_research_run again with run_id %s until it returns status complete, '
+                                     'accepting every awaiting payload, then join. Only non-live unknown or never-started work may be acknowledged with degraded reasons.' % (run_id, run_id))
+            if any('reconciliation' in p['reason'] for p in pending):
+                result['next_action'] += ' Later-cohort units also need discovery_reconcile.'
         if result['joined']:
             self.store.put_resource(run_id, 'join-record', result)
             if self.proposal_hook:

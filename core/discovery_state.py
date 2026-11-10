@@ -519,6 +519,15 @@ class DiscoveryStore:
             raise UserError('attempt deadline passed')
         return attempt
 
+    @classmethod
+    def _writable_attempt(cls, ledger: dict[str, Any], token: str) -> dict[str, Any]:
+        # A revoked child capability can never read or write again; the parent
+        # can still review and accept what that child already committed.
+        attempt = cls._live_attempt(ledger, token)
+        if attempt.get('capability_revoked'):
+            raise UserError('attempt capability revoked')
+        return attempt
+
     def record_start(self, run_id: str, *, parent_session: str, child_session: str, subagent_id: str, inflight: list[str] | None = None) -> None:
         with self._lock(self._run_lock_name(run_id)):
             ledger = self._load(run_id, open_only=True)
@@ -564,7 +573,7 @@ class DiscoveryStore:
             return attempt
 
     def authorize_attempt(self, run_id: str, token: str, *, child_session: str, subagent_id: str | None = None) -> dict[str, Any]:
-        attempt = self._live_attempt(self._load(run_id), token)
+        attempt = self._writable_attempt(self._load(run_id), token)
         if not attempt['handle'] or not attempt['child_session'] or child_session != attempt['child_session'] or subagent_id is not None and subagent_id != attempt['handle']['subagent_id']:
             raise UserError('caller identity is not exactly bound; quarantine required')
         return attempt
@@ -600,7 +609,18 @@ class DiscoveryStore:
             self._save(run_id, ledger)
             return attempt
 
-    def recover_owner(self, run_id: str, *, owner_session: str, owner_restarted: bool = False) -> list[str]:
+    def recover_owner(self, run_id: str, *, owner_session: str, owner_restarted: bool = False, orphan_seconds: float | None = None) -> list[str]:
+        """Adopt a run for a new or restarted owner; returns the fenced tokens.
+
+        The lifecycle hides a handle from every session but the one that
+        launched it, so an owner change loses sight of live children. A child
+        that already committed a valid full payload to the plugin spool is
+        finished as far as research is concerned: that payload stands in for
+        the invisible lifecycle terminal and the child's capability is revoked.
+        A bound child without one becomes an orphan that keeps its slot until
+        its saved deadline (or launch time plus `orphan_seconds`), see
+        settle_orphans. A launch without a handle stays fenced as unknown.
+        """
         with self._lock(self._run_lock_name(run_id)):
             ledger = self._load(run_id)
             fenced = []
@@ -608,10 +628,73 @@ class DiscoveryStore:
                 if attempt['terminal'] or attempt['fenced'] or attempt['state'] in {'accepted_bundle', 'rejected_retryable', 'exhausted'}:
                     continue
                 if owner_restarted or attempt['owner_session'] != owner_session:
+                    if self._committed_valid(attempt):
+                        self._terminal_from_spool(attempt)
+                        continue
+                    if attempt['handle'] and not owner_restarted and orphan_seconds is not None:
+                        if not attempt.get('deadline_utc'):
+                            created = attempt['handle'].get('created_at')
+                            start = created if isinstance(created, (int, float)) else dt.datetime.fromisoformat(attempt['created']).timestamp()
+                            attempt['deadline_utc'] = dt.datetime.fromtimestamp(start + orphan_seconds, dt.timezone.utc).isoformat()
+                        attempt.setdefault('owner_lost', {'from_session': attempt['owner_session'], 'at': now()})
+                        continue
                     attempt.update(state='execution_unknown' if attempt['handle'] else 'launch_unknown', fenced=True, fenced_at=now())
                     fenced.append(attempt['token'])
             self._save(run_id, ledger)
             return fenced
+
+    @staticmethod
+    def _committed_valid(attempt: dict[str, Any]) -> bool:
+        payload = attempt.get('payload')
+        return bool(payload and payload.get('parsed') and not attempt.get('validation_error') and attempt.get('child_session'))
+
+    @staticmethod
+    def _terminal_from_spool(attempt: dict[str, Any]) -> None:
+        # The committed spool is plugin-owned, immutable, bound to this token,
+        # binding and child session, and was deadline-checked at submit. The
+        # parent still fetches it fully and runs the checklist and helper.
+        receipt = {'basis': 'committed_spool_after_owner_change', 'payload_sha256': attempt['payload']['payload_sha256']}
+        attempt['terminal'] = {'state': 'SUCCEEDED', 'receipt': receipt, 'sha256': _hash(_json_bytes(receipt))}
+        attempt['evidence']['execution'] = 'terminal_observed'
+        attempt['state'] = 'terminal_observed'
+        attempt['capability_revoked'] = True
+
+    def settle_orphans(self, run_id: str, *, now_epoch: float, margin: float) -> dict[str, str]:
+        """Resolve children whose owner changed: {token: recovered|rejected|timed_out|waiting}.
+
+        A committed payload is recovered (or, if invalid, rejected for its one
+        repair). Once the saved deadline plus `margin` passes with no payload
+        the orphan is a timeout: its capability is revoked and it is closed as
+        retryable, so the normal two-attempt rule allows one fresh child on the
+        same budget unit.
+        """
+        with self._lock(self._run_lock_name(run_id)):
+            ledger = self._load(run_id)
+            out = {}
+            for attempt in ledger['attempts'].values():
+                if not attempt.get('owner_lost') or attempt['terminal'] or attempt['fenced'] or attempt['state'] in {'accepted_bundle', 'rejected_retryable', 'exhausted'}:
+                    continue
+                token = attempt['token']
+                retry_state = 'rejected_retryable' if attempt['ordinal'] < 2 else 'exhausted'
+                if self._committed_valid(attempt):
+                    self._terminal_from_spool(attempt)
+                    out[token] = 'recovered'
+                elif attempt.get('payload'):
+                    self._terminal_from_spool(attempt)
+                    attempt.update(state=retry_state, rejection={'reason': (attempt.get('validation_error') or 'malformed committed payload')[:500], 'retryable': True, 'semantic': False})
+                    out[token] = 'rejected'
+                elif now_epoch >= dt.datetime.fromisoformat(attempt['deadline_utc']).timestamp() + margin:
+                    receipt = {'basis': 'orphan_deadline_passed', 'deadline_utc': attempt['deadline_utc']}
+                    attempt.update(capability_revoked=True, fenced=True, fence_reason='execution_timeout', fenced_at=now(),
+                                   terminal={'state': 'CANCELLED', 'receipt': receipt, 'sha256': _hash(_json_bytes(receipt))})
+                    attempt['evidence']['execution'] = 'terminal_observed'
+                    attempt.update(state=retry_state, rejection={'reason': 'execution_timeout', 'retryable': True, 'semantic': False})
+                    out[token] = 'timed_out'
+                else:
+                    out[token] = 'waiting'
+            if any(v != 'waiting' for v in out.values()):
+                self._save(run_id, ledger)
+            return out
 
     def observe_terminal(self, run_id: str, token: str, *, state: str, receipt: dict[str, Any]) -> dict[str, Any]:
         if state not in TERMINAL:
@@ -677,7 +760,7 @@ class DiscoveryStore:
             if attempt['payload']['payload_sha256'] != digest or attempt['payload']['transport_sha256'] != _hash(transport):
                 raise UserError('committed payload is immutable')
             return attempt['payload']
-        self._live_attempt(ledger, token)
+        self._writable_attempt(ledger, token)
         if ledger['status'] == 'finalized':
             raise UserError('run is finalized; new payloads are forbidden')
         if attempt['state'] in {'rejected_retryable', 'exhausted'} or attempt['terminal'] and attempt['terminal']['state'] != 'SUCCEEDED':
@@ -799,7 +882,7 @@ class DiscoveryStore:
             raise UserError('invalid upload declaration')
         with self._lock(self._run_lock_name(run_id)):
             ledger = self._load(run_id, open_only=True)
-            attempt = self._live_attempt(ledger, token)
+            attempt = self._writable_attempt(ledger, token)
             upload = {'total_bytes': total_bytes, 'sha256': sha256, 'part_count': part_count, 'parts': {}}
             if attempt.get('upload'):
                 if any(attempt['upload'][k] != upload[k] for k in ('total_bytes', 'sha256', 'part_count')):
@@ -814,7 +897,7 @@ class DiscoveryStore:
             raise UserError('upload part must be indexed text up to 16 KiB')
         with self._lock(self._run_lock_name(run_id)):
             ledger = self._load(run_id, open_only=True)
-            attempt = self._live_attempt(ledger, token)
+            attempt = self._writable_attempt(ledger, token)
             upload = attempt.get('upload')
             if not upload or not 0 <= index < upload['part_count']:
                 raise UserError('upload part outside declaration')
@@ -834,7 +917,7 @@ class DiscoveryStore:
     def commit_upload(self, run_id: str, token: str) -> dict[str, Any]:
         with self._lock(self._run_lock_name(run_id)):
             ledger = self._load(run_id, open_only=True)
-            attempt = self._live_attempt(ledger, token)
+            attempt = self._writable_attempt(ledger, token)
             upload = attempt.get('upload')
             if not upload or set(upload['parts']) != {str(i) for i in range(upload['part_count'])}:
                 raise UserError('incomplete upload parts')

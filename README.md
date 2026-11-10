@@ -99,7 +99,8 @@ Each job's small loader script is copied into `$HERMES_HOME/scripts/` (cron only
 Each **discovery stream** is one more job, created only when you set the stream up (say "set up a
 discovery stream" in the chat that should receive it). It runs one agent turn on your model per run and reads
 only the sources and scopes you approved, with the tools you already have. Up to 50 suggestions a day per
-stream get a quick extra check (configurable).
+stream get a quick extra check (configurable). That research runs in short tool calls of at most
+five minutes each, inside Hermes' default tool deadline, so you never need to raise any timeout.
 
 ## Commands
 

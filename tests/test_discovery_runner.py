@@ -58,7 +58,7 @@ def setup_runner(tmp_path, count=4, **policy):
     run = store.init_run(origin={'session_id': 'parent'}, business_date='2026-01-01')
     store.add_candidates(run, [{'title': f'Work {i}', 'source_ids': [f'source:source:account:thread:t{i}']} for i in range(count)])
     store.freeze_index(run, rubric='Full authoritative primary then all-status task inventory, skills and decomposition. Read only.')
-    runner = DiscoveryRunner(SimpleNamespace(subagent_lifecycle=pool), rt, store=store, clock=clock, policy=RunnerPolicy(**policy), transport_receipt={'sequential_call': 2040, 'concurrent_batch': 2040, 'long_canary': 'pending'})
+    runner = DiscoveryRunner(SimpleNamespace(subagent_lifecycle=pool), rt, store=store, clock=clock, policy=RunnerPolicy(**policy))
     pool.runner = runner
     return runner, store, pool, run
 
@@ -85,18 +85,36 @@ def callback_all(runner, store, pool, run, handle, *, invalid=False):
     return result
 
 
-def accept_all(runner, store, run):
+def drive(runner, store, run, *, session='parent', max_calls=40, accept=True):
+    """The skill's loop over short calls: run, accept awaiting payloads, repeat until complete.
+
+    Every call must stay inside its per-call budget on the virtual clock.
+    """
+    reports = []
+    for _ in range(max_calls):
+        start = runner.clock.monotonic()
+        report = runner.run(run, session_id=session)
+        assert runner.clock.monotonic() - start <= runner.policy.call_seconds
+        reports.append(report)
+        if accept:
+            accept_all(runner, store, run)
+        if report['status'] == 'complete':
+            return reports
+    raise AssertionError('research did not complete: ' + json.dumps(reports[-1])[:800])
+
+
+def accept_all(runner, store, run, session='parent'):
     from alchemy_task.discovery_runner import CHECKLIST
     accepted = []
     for a in list(store.get_run(run)['attempts'].values()):
         if a['state'] != 'terminal_observed' or not a['payload'] or a.get('validation_error'): continue
         info = a['payload']; cursor = None
         while True:
-            p = runner.fetch(run, info['resource'], info['payload_sha256'], cursor=cursor, session_id='parent')
+            p = runner.fetch(run, info['resource'], info['payload_sha256'], cursor=cursor, session_id=session)
             if not p['has_more']: break
             cursor = p['next_cursor']
         assessment = {'accepted': True, 'reason': 'Current primary evidence establishes the distinct user action; all plausible tasks inspected.', 'checklist': {k: 'Reviewed against full supplied evidence; no unresolved contradiction.' for k in CHECKLIST}}
-        accepted.append(runner.accept(run, a['token'], info['payload_sha256'], assessment, session_id='parent'))
+        accepted.append(runner.accept(run, a['token'], info['payload_sha256'], assessment, session_id=session))
     return accepted
 
 
@@ -172,7 +190,7 @@ def test_fifo_rolling_three_and_missing_callback_is_not_success(tmp_path):
     assert len(pool.requests) == 16 # no full callbacks, two fresh attempts each
     assert [json.loads(r['context'])['ordinal'] for r in pool.requests[:8]] == [1] * 8
     assert report['max_logical_slots'] == 3
-    assert report['status'] == 'needs_parent'
+    assert report['status'] == 'complete' and report['counts']['failed'] == 8
     assert all(a['state'] == 'exhausted' for a in store.get_run(run)['attempts'].values() if a['ordinal'] == 2)
     assert all('allowed_toolsets' not in r and 'timeout_seconds' not in r and len(r['context']) <= 32000 for r in pool.requests)
     joined = runner.join(run, session_id='parent')
@@ -187,7 +205,11 @@ def test_pending_timeout_is_fenced_not_false_retry_or_kill(tmp_path):
     a = next(iter(store.get_run(run)['attempts'].values()))
     assert a['state'] == 'admission_timeout' and a['fenced']
     assert a['cancellation']['unsupported'] is True
-    assert report['status'] == 'pending'
+    # The cancellation may still land: the next call watches for it before
+    # the fenced attempt is reported unknown. It is never relaunched.
+    assert report['status'] == 'running' and report['unknown_candidates'] == []
+    reports = drive(runner, store, run)
+    assert reports[-1]['unknown_candidates'] == [a['candidate_id']] and len(pool.requests) == 1
     assert not runner.join(run, session_id='parent')['joined']
 
 
@@ -204,13 +226,16 @@ def test_running_deadline_uses_observed_start_not_pending_or_progress(tmp_path):
     def forever_running(handle):
         return Status('RUNNING', pool.records[handle['subagent_id']]['started'])
     pool.status = forever_running
-    result = runner.run(run, session_id='parent')
-    assert len(pool.requests) == 1
+    fenced_at = []
+    cancel = pool.cancel
+    pool.cancel = lambda handle, *, reason: fenced_at.append(runner.clock.monotonic()) or cancel(handle, reason=reason)
+    reports = drive(runner, store, run)  # several short calls, each inside its budget
+    assert len(reports) >= 7 and len(pool.requests) == 1
     a = next(iter(store.get_run(run)['attempts'].values()))
     assert a['state'] == 'execution_timeout' and a['fenced']
-    assert 1800 <= runner.clock.monotonic() < 1810
+    assert len(fenced_at) == 1 and 1800 <= fenced_at[0] < 1810
     assert a['cancellation']['unsupported']
-    assert result['status'] == 'pending'
+    assert reports[-1]['unknown_candidates'] == [a['candidate_id']]
 
 
 def test_unknown_launch_fenced_no_retry_and_unstarted_backlog_retained(tmp_path):
@@ -341,7 +366,8 @@ def test_authorized_new_parent_gets_pointer_and_deliberate_hold_release(tmp_path
     runner.recover(run, session_id='new-parent', adopt=True, owner_restarted=True)
     assert runner.pre_llm_call(session_id='new-parent')['context']
     assert runner.pre_llm_call(session_id='parent') is None
-    assert runner.run(run, session_id='new-parent')['status'] == 'pending'
+    held = runner.run(run, session_id='new-parent')
+    assert held['status'] == 'held' and 'discovery_release_hold' in held['next_action']
     with pytest.raises(UserError): runner.release_hold(run, reason='', session_id='new-parent')
     runner.release_hold(run, reason='User deliberately releases remaining unstarted work; unknown launch remains fenced', session_id='new-parent')
     assert store.get_attempt(run, a['token'])['state'] == 'launch_unknown'

@@ -172,8 +172,6 @@ def test_source_to_registered_research_join_proposal_conversion_and_next_run(set
     from alchemy_task import task_tools
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     configure(integration)
-    # Unit transport fixture, not a live runtime-duration claim.
-    integration.runner.transport_receipt = {'sequential_call': 2040, 'concurrent_batch': 2040}
     run = integration.start('work', session_id='parent')['run_id']
     window = integration.store.get_run(run)['config']['windows']['feed']
     integration.collect(run, 'feed', session_id='parent', envelope={**window, 'status': 'partial', 'account_key': 'account', 'items': [
@@ -233,13 +231,13 @@ def test_source_to_registered_research_join_proposal_conversion_and_next_run(set
     assert integration.store.source_state('work', 'feed')['backlog'][0]['status'] == 'accepted'
 
 
-def test_runtime_receipt_and_frozen_stream_budget_are_used(settings, data_dir, tmp_path):
+def test_default_runtime_without_receipt_uses_frozen_stream_budget(settings, data_dir, tmp_path):
     from alchemy_task.discovery_integration import DiscoveryIntegration
     from test_discovery_runner import Clock, Pool
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     configure(integration)
     streams = ctx.state.get('streams'); streams['work']['research_cap'] = 0; ctx.state.set('streams', streams)
-    ctx.set_config('discovery_transport_receipt', json.dumps({'sequential_call': 2040, 'concurrent_batch': 2040, 'long_canary': 'synthetic-unit-fixture-not-live-proof'}))
+    # Default install: no timeout receipt is configured, and none is needed.
     integration = DiscoveryIntegration(rt, profile_home=tmp_path / 'profile')
     run = integration.start('work', session_id='parent')['run_id']
     ledger = integration.store.get_run(run); window = ledger['config']['windows']['feed']

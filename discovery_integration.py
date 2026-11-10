@@ -132,11 +132,9 @@ class DiscoveryIntegration:
         self.store = DiscoveryStore(rt.data_dir / 'discovery')
         self.digest = DiscoveryDigest(rt.data_dir / 'discovery')
         self.conversion = DiscoveryConversion(rt, self.store)
-        configured_transport = rt.ctx.get_config('discovery_transport_receipt', '')
-        transport = json.loads(configured_transport) if configured_transport else {}
-        if not isinstance(transport, dict): raise UserError('transport receipt must be an operator-configured JSON object')
-        self.runner = DiscoveryRunner(rt.ctx, rt, store=self.store, transport_receipt=transport,
-                                      recovery_authorizer=self._authorize_recovery)
+        # Research runs as short bounded calls inside the default host tool
+        # deadline; no operator timeout configuration or receipt is needed.
+        self.runner = DiscoveryRunner(rt.ctx, rt, store=self.store, recovery_authorizer=self._authorize_recovery)
 
     def _scheduled_identity(self, stream):
         """Only the public host execution identity can grant scheduled authority."""
@@ -923,9 +921,10 @@ class DiscoveryIntegration:
             self.reconcile_endstate(run_id)
             return self.digest.get(run_id)
         info = ledger['resources'].get('join-record')
-        if not info: raise UserError('global join required before review decisions/digest')
+        unfinished = ('; call discovery_research_run with run_id %s until it returns status complete, then discovery_join' % run_id)
+        if not info: raise UserError('global join required before review decisions/digest' + unfinished)
         join = json.loads((self.store.run_dir(run_id) / 'resources' / info['sha256']).read_text())
-        if not join.get('joined'): raise UserError('global join incomplete')
+        if not join.get('joined'): raise UserError('global join incomplete' + unfinished)
         items, conflicts, outcomes = [], [], []
         for candidate in ledger['candidates']:
             if not candidate.get('parent_candidate_id') or candidate['parent_candidate_id'] not in join['accepted'] or not candidate.get('eligible_research'): continue
@@ -1192,7 +1191,7 @@ def _schema(name, description, properties, required=()):
 
 
 SCHEMAS = {
- 'discovery_research_run': _schema('discovery_research_run', 'Run/resume saved source-first research using the public bounded lifecycle. No proposals before full join.', {**RUN, 'expected_revision': STR}, ['run_id']),
+ 'discovery_research_run': _schema('discovery_research_run', 'Run/resume saved source-first research in one short bounded call (at most 300 s). Children keep running between calls; call again with the same run_id while status is running, then join. No proposals before full join.', {**RUN, 'expected_revision': STR}, ['run_id']),
  'discovery_research_fetch': _schema('discovery_research_fetch', 'Read full lossless frozen context/research pages with exact revision; continue until has_more=false.', {**RUN, 'resource': STR, 'revision': STR, 'token': STR, 'binding': BINDING, 'cursor': STR, 'limit': {'type': 'integer', 'minimum': 1, 'maximum': 16384}}, ['run_id', 'resource', 'revision']),
  'discovery_research_submit': _schema('discovery_research_submit', 'Child full callback only. Direct payload or multipart begin/part/commit. Continue until committed, then stop.', {**RUN, 'token': STR, 'binding': BINDING, 'payload': OBJ, 'upload': {'type': 'object', 'properties': {'action': {'type': 'string', 'enum': ['begin', 'part', 'commit']}, 'total_bytes': {'type': 'integer'}, 'sha256': STR, 'part_count': {'type': 'integer'}, 'index': {'type': 'integer'}, 'content': STR}, 'required': ['action']}}, ['run_id', 'token', 'binding']),
  'discovery_research_accept': _schema('discovery_research_accept', 'Parent semantic review of FULL fetched immutable payload. Never rewrite child facts. All checklist observations required.', {**RUN, 'token': STR, 'payload_sha256': STR, 'assessment': {'type': 'object', 'properties': {'accepted': BOOL, 'reason': STR, 'retryable': BOOL, 'checklist': {'type': 'object', 'properties': {k: STR for k in CHECKLIST}, 'required': list(CHECKLIST)}}, 'required': ['accepted', 'reason', 'checklist']}}, ['run_id', 'token', 'payload_sha256', 'assessment']),

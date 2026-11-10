@@ -9,7 +9,7 @@ import shutil
 import time
 from types import SimpleNamespace
 
-from test_discovery_runner import Pool, Status, accept_all, callback_all, setup_runner
+from test_discovery_runner import Pool, Status, accept_all, callback_all, drive, setup_runner
 from alchemy_task.core.discovery_state import DiscoveryStore
 
 
@@ -89,13 +89,9 @@ def charged_units(store):
 def test_timed_out_researcher_gets_its_one_fresh_retry_in_the_normal_flow(tmp_path):
     runner, store, pool, run = make(tmp_path, 2, {0: ['hang', 'valid'], 1: ['valid']})
     ids = parents(store, run)
-    first = runner.run(run, session_id='parent')
-    # The cancelled child's terminal state is observed: not left as an unknown.
-    assert first['unknown_candidates'] == []
-    assert ids[0] in first['queued']
-    accept_all(runner, store, run)
-    runner.run(run, session_id='parent')  # the skill's resume of the SAME run
-    accept_all(runner, store, run)
+    reports = drive(runner, store, run)  # the skill's short calls on the SAME run
+    # The cancelled child's terminal state is observed: never left as an unknown.
+    assert all(r['unknown_candidates'] == [] for r in reports)
     attempts = attempts_for(store, run, ids[0])
     assert [a['ordinal'] for a in attempts] == [1, 2]
     retry = json.loads(pool.requests[-1]['context'])
@@ -108,12 +104,13 @@ def test_timed_out_researcher_gets_its_one_fresh_retry_in_the_normal_flow(tmp_pa
 def test_timeout_whose_cancellation_lands_later_is_retried_on_resume(tmp_path):
     runner, store, pool, run = make(tmp_path, 1, {0: ['hang', 'valid']})
     cid = parents(store, run)[0]
-    pool.cancel_effective = False  # cancel accepted, child still unwinding when the slice ends
-    first = runner.run(run, session_id='parent')
-    assert first['status'] == 'pending' and first['unknown_candidates'] == [cid]
+    pool.cancel_effective = False  # cancel accepted, child still unwinding when the call ends
+    while not pool.cancelled:
+        first = runner.run(run, session_id='parent')
+    # The fenced timeout is still settling: research is reported running, not unknown.
+    assert first['status'] == 'running' and first['unknown_candidates'] == [] and first['counts']['running'] == 1
     pool.cancel_effective = True
-    runner.run(run, session_id='parent')
-    accept_all(runner, store, run)
+    drive(runner, store, run)
     assert [a['ordinal'] for a in attempts_for(store, run, cid)] == [1, 2]
     joined = runner.join(run, session_id='parent')
     assert joined['joined'] and joined['accepted'] == [cid] and not joined['failures']
@@ -139,10 +136,7 @@ def test_timeout_retry_runs_even_when_cap_is_exhausted(tmp_path):
     # refused first: that refusal must not drop the charged retry.
     runner, store, pool, run = make(tmp_path, 3, {0: ['hang', 'valid']}, daily_limit=2)
     ids = parents(store, run)
-    runner.run(run, session_id='parent')
-    accept_all(runner, store, run)
-    runner.run(run, session_id='parent')
-    accept_all(runner, store, run)
+    drive(runner, store, run)
     assert [a['ordinal'] for a in attempts_for(store, run, ids[0])] == [1, 2]
     assert charged_units(store) == 2
     joined = runner.join(run, session_id='parent')
@@ -186,7 +180,8 @@ def test_degraded_acknowledgement_does_not_relabel_a_cap_deferral_as_failure(tmp
 def test_ordinary_task_research_from_the_same_chat_is_not_a_discovery_child(tmp_path):
     runner, store, pool, run = make(tmp_path, 2, {})
     report = runner.run(run, session_id='parent')
-    assert report['status'] == 'needs_parent' and len(report['awaiting_parent']) == 2  # run stays open
+    assert report['status'] == 'running' and len(report['awaiting_parent']) == 2  # run stays open
+    assert 'discovery_research_accept' in report['next_action']
     runner.subagent_start(parent_session_id='parent', child_session_id='ordinary-child', child_subagent_id='sa-ordinary')
     for tool in ('research_submit', 'task_update', 'write_file', 'patch'):
         assert runner.pre_tool_call(tool_name=tool, session_id='ordinary-child', task_id='sa-ordinary') is None
@@ -337,7 +332,6 @@ def test_cap_deferral_is_a_separate_digest_line_and_stays_queued_for_the_next_ru
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     streams = ctx.state.get('streams'); streams['work']['research_cap'] = 1; ctx.state.set('streams', streams)
     configure(integration)
-    integration.runner.transport_receipt = {'sequential_call': 2040, 'concurrent_batch': 2040}
     items = [{'title': 'Review release notes', 'source_ids': ['source:feed:account:issue:one'], 'source_revision': 'v1'},
              {'title': 'Plan vendor renewal', 'source_ids': ['source:feed:account:issue:two'], 'source_revision': 'v1'}]
     feed = {'items': items}
