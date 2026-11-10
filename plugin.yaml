@@ -1,6 +1,6 @@
 name: alchemy-task
 version: "0.1.0"
-description: "Automatically turns messy work and ambiguous requests, from all of the inputs available on your agent's server, into well-researched tasks ready for agent execution."
+description: "Turns messy real-world work into finely researched tasks ready for your agent to do for you."
 author: "Daren Broxmeyer"
 license: MIT
 requires_hermes: ">=0.22.5"
