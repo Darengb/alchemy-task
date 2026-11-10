@@ -64,3 +64,11 @@ def test_log_only_mentions_targets():
     _, _, _, report = rs.apply_fill({}, blank, fill, day=DAY)
     line = rs.fill_log(report, problems)
     assert "Subtasks skipped: too small" in line and "plan needs at least 3 steps" in line
+
+
+def test_fill_line_escapes_leading_html_block_starter():
+    from alchemy_task.core import research as rs
+    assert rs._fill_line('<pre> hidden text') == '&lt;pre> hidden text'
+    assert rs._fill_line('- <script>x') == '&lt;script>x'
+    fill, _ = rs.normalize_fill({'notes': '<pre>\nhidden', 'plan': ['<style> a', 'b', 'c']})
+    assert not fill['notes'].startswith('<') and fill['plan'][0].startswith('&lt;')

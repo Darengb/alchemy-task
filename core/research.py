@@ -269,6 +269,7 @@ _DOSSIER_START_RE = re.compile(r"^<!-- (task-research-dossier|discovery-dossier)
 _LEAD_RE = re.compile(r"^(?:[#\s]+|\d+[.)]\s+|[-*+](?:\s+\[[ xX]\])?(?:\s+|$)|(?:`{3,}|~{3,})\S*\s*)+")
 _EMPTY_CHECK_RE = re.compile(r"[-*+]\s+\[[ xX]\]\s*")
 PLAN_MIN, PLAN_MAX, SUBTASKS_MAX = 3, 7, 20
+NOTES_MAX, ITEM_MAX = 1500, 300  # fill caps: notes characters, characters per plan step or subtask
 
 
 def day_label(day: str) -> str:
@@ -348,7 +349,9 @@ def blank_sections(fm: Mapping[str, Any], body: str) -> list[str]:
 def _fill_line(text: Any) -> str:
     line = " ".join(str(text).split()).replace("<!--", "&lt;!--").replace("-->", "--&gt;")
     # one pass strips any run of '#', list leads and code fences, so text can never start a heading or fence
-    return _LEAD_RE.sub("", line).strip()
+    line = _LEAD_RE.sub("", line).strip()
+    # a leading '<' could open an HTML block (pre, script, style) that hides later content
+    return "&lt;" + line[1:] if line.startswith("<") else line
 
 
 def normalize_fill(raw: Any) -> tuple[dict[str, Any], list[str]]:
@@ -367,7 +370,7 @@ def normalize_fill(raw: Any) -> tuple[dict[str, Any], list[str]]:
     if raw.get("notes") not in (None, ""):
         if isinstance(raw["notes"], str):
             paras = [_fill_line(p) for p in re.split(r"\n\s*\n", raw["notes"])]
-            text = "\n\n".join(p for p in paras if p and not _FILL_MARK_RE.match(p))[:1500].strip()
+            text = "\n\n".join(p for p in paras if p and not _FILL_MARK_RE.match(p))[:NOTES_MAX].strip()
             if text:
                 out["notes"] = text
         else:
@@ -379,7 +382,7 @@ def normalize_fill(raw: Any) -> tuple[dict[str, Any], list[str]]:
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             problems.append(f"{key} was not a list of text items")
             continue
-        items = [t[:300] for t in (_fill_line(v) for v in value) if t and not _FILL_MARK_RE.match(t)]
+        items = [t[:ITEM_MAX] for t in (_fill_line(v) for v in value) if t and not _FILL_MARK_RE.match(t)]
         if len(items) < low:
             problems.append(f"{key} needs at least {low} steps")
             continue

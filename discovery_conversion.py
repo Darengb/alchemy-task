@@ -33,6 +33,17 @@ def _steps(value):
     return [s for s in (rs._fill_line(x) for x in items) if s]
 
 
+def _whole_items(items, cap):
+    """True when the fill keeps every item verbatim: within the item count cap and the item length cap."""
+    items = [x for x in (items or []) if str(x).strip()]
+    return len(items) <= cap and all(len(rs._fill_line(x)) <= rs.ITEM_MAX for x in items)
+
+
+def _whole_notes(notes):
+    """True when the notes fill keeps the text whole: within the cap, no list or heading lines."""
+    return len(notes) <= rs.NOTES_MAX and all(rs._fill_line(x) == ' '.join(x.split()) for x in notes.split('\n'))
+
+
 def discovery_fallback_fill(research):
     """Deterministic fill from accepted discovery research when the approving agent supplied none."""
     said = _sentences(research.get('current_understanding'))
@@ -188,17 +199,21 @@ class DiscoveryConversion:
         Returns (body, keys the fill wrote, log line). A fill problem never blocks the conversion."""
         day = self.rt.settings.today()
         try:
-            raw = {'summary': summary, 'subtasks': [*(subtasks or []), *(checklist or [] if new else [])] or None,
+            # A key is offered to the fill only when the fill keeps it whole; otherwise the
+            # append path in prepare writes the approved text verbatim, so nothing is cut.
+            items = [*(subtasks or []), *(checklist or [] if new else [])]
+            whole_items = _whole_items(items, rs.SUBTASKS_MAX)
+            raw = {'summary': summary, 'subtasks': items if items and whole_items else None,
                    'subtasks_skipped_reason': skipped}
             if new:
                 steps = _steps(plan)
-                raw['notes'] = notes
-                raw['plan'] = steps if len(steps) >= rs.PLAN_MIN else None
+                raw['notes'] = notes if notes and _whole_notes(notes) else None
+                raw['plan'] = steps if rs.PLAN_MIN <= len(steps) and _whole_items(steps, rs.PLAN_MAX) else None
                 fallback = discovery_fallback_fill(research)
                 for key in ('summary', 'notes', 'plan'):
-                    if not raw.get(key) and not (key == 'plan' and plan) and fallback.get(key):
+                    if not raw.get(key) and not (key == 'plan' and plan) and not (key == 'notes' and notes) and fallback.get(key):
                         raw[key] = fallback[key]
-                if not raw['subtasks'] and not raw['subtasks_skipped_reason']:
+                if not raw['subtasks'] and not raw['subtasks_skipped_reason'] and not items:
                     raw['subtasks_skipped_reason'] = 'not supplied at approval'
             fill, problems = rs.normalize_fill(raw)
             if not new:  # never overwrite: only sections blank right now
@@ -353,6 +368,9 @@ class DiscoveryConversion:
             if plan_text and 'plan' in taken: plan_text = ''
             if notes or scope_notes: body = self._append_section(body, 'Notes', '\n\n'.join(x for x in (notes, scope_notes) if x))
             if plan_text or active_goal or execution_method: body = self._append_section(body, 'Plan', '\n\n'.join(x for x in (active_goal, plan_text, 'Execution method: ' + execution_method if execution_method else '') if x))
+            # Agent subtasks the fill could not keep whole join the checklist append path.
+            if subtasks and 'subtasks' not in taken and not _whole_items([*subtasks, *(checklist or [] if not before else [])], rs.SUBTASKS_MAX):
+                checklist = [*subtasks, *(checklist or [])]
             if checklist and not before and 'subtasks' not in taken:
                 body = self._append_section(body, 'Subtasks', '\n'.join('- [ ] ' + x for x in checklist))
             elif checklist and before:
