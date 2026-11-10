@@ -4,6 +4,7 @@ import dataclasses
 import os
 import stat
 
+from alchemy_task.core.config import Settings
 from alchemy_task.core.gitops import GitDelivery
 from alchemy_task.core.store import TaskStore
 
@@ -166,16 +167,15 @@ def test_rename_of_committed_non_ascii_filename(settings, data_dir, workspace):
     assert git(workspace, "status", "--porcelain", "--", "areas/work/tasks").stdout == ""
 
 
-def test_deploy_key_env_and_token_env(settings, data_dir):
-    dk = dataclasses.replace(settings, git_transport="deploy_key")
-    gd = GitDelivery(dk, data_dir)
-    pub = gd.ensure_deploy_key("alchemy-task@test")
-    assert pub.startswith("ssh-ed25519 ")
-    assert oct(gd.deploy_key.stat().st_mode & 0o777) == "0o600"
-    env = gd.env()
-    assert "StrictHostKeyChecking=yes" in env["GIT_SSH_COMMAND"] and "SSH_AUTH_SOCK" not in env
-    assert "github.com ssh-ed25519" in (gd.key_dir / "known_hosts").read_text()
-    tok = GitDelivery(dataclasses.replace(settings, git_transport="token"), data_dir, token="secret-value")
-    env = tok.env()
-    assert env["GIT_CONFIG_VALUE_0"] == "" and "secret-value" not in env["GIT_CONFIG_VALUE_1"]
-    assert env["ALCHEMY_TASK_GIT_TOKEN"] == "secret-value"
+def test_git_uses_the_machines_own_credentials(settings, data_dir, monkeypatch):
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
+    env = GitDelivery(settings, data_dir).env()
+    assert env["SSH_AUTH_SOCK"] == "/tmp/agent.sock" and env["HOME"]
+    assert "GIT_SSH_COMMAND" not in env and "GIT_CONFIG_COUNT" not in env
+    assert not (data_dir / "git").exists()
+
+
+def test_legacy_key_and_token_settings_fall_back_to_system_git():
+    for legacy in ("deploy_key", "token"):
+        assert Settings.load({"git_transport": legacy}.get).git_transport == "system"
+    assert Settings.load({"git_transport": "none"}.get).git_transport == "none"

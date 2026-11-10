@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from .core.config import TOKEN_ENV, Settings
+from .core.config import Settings
 from .core.gitops import GitDelivery
 from .core.store import TaskStore
 
@@ -43,14 +43,7 @@ class Runtime:
         return TaskStore(self.settings, self.data_dir)
 
     def git(self) -> GitDelivery:
-        token = None
-        if self.settings.git_transport == "token":
-            try:
-                from agent.secret_scope import get_secret
-                token = get_secret(TOKEN_ENV)
-            except Exception:  # noqa: BLE001 - missing token is reported by the push receipt
-                token = None
-        return GitDelivery(self.settings, self.data_dir, token=token)
+        return GitDelivery(self.settings, self.data_dir)
 
     def notify_research(self, doc: Any, origin_session: str = "") -> list[str]:
         errors = []

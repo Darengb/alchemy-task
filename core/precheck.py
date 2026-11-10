@@ -45,22 +45,7 @@ def research_wake(settings: Settings | None = None, data_dir: str = "") -> dict[
     return {"wakeAgent": True, "waiting": len(waiting), "examples": waiting[:3]}
 
 
-def _token(s: Settings) -> str | None:
-    if s.git_transport != "token":
-        return None
-    from .config import TOKEN_ENV
-    try:
-        from agent.secret_scope import get_secret  # public Hermes module
-    except ImportError:
-        import os
-        return os.environ.get(TOKEN_ENV)
-    try:
-        return get_secret(TOKEN_ENV)
-    except Exception:  # noqa: BLE001 - unscoped under multiplexing: report "no token" once
-        return None
-
-
-def maintenance(data_dir: str, settings: Settings | None = None, token: str | None = None) -> str:
+def maintenance(data_dir: str, settings: Settings | None = None) -> str:
     """Assign missing IDs, retry unpushed commits. Returns text to deliver, or "" when nothing changed.
 
     Every reportable condition (file problems, push state, errors) goes into one digest; a message is
@@ -75,22 +60,19 @@ def maintenance(data_dir: str, settings: Settings | None = None, token: str | No
             return ""
         store = TaskStore(s, data)
         report = validator.validate(store, apply=True)
-        git = GitDelivery(s, data, token=token if token is not None else _token(s))
+        git = GitDelivery(s, data)
         if report["changed_paths"]:
             receipt = git.deliver(report["changed_paths"], "task: assign missing task IDs")
             lines.append(f"Assigned IDs to {len(report['changed_paths'])} task(s).")
         push_state = "ok"
         if s.git_transport != "none" and git.status().get("needs_push"):
-            if s.git_transport == "token" and not git.token:
-                push_state = "no token: enter ALCHEMY_TASK_GIT_TOKEN in the plugin settings"
+            r = git.retry()
+            if r.get("pushed"):
+                lines.append("Pushed task changes that were waiting.")
             else:
-                r = git.retry()
-                if r.get("pushed"):
-                    lines.append("Pushed task changes that were waiting.")
-                else:
-                    err = str(r.get("error") or r.get("state") or "")
-                    import re
-                    push_state = re.split(r":| \(", err)[0].strip()[:80] or "not pushed"
+                err = str(r.get("error") or r.get("state") or "")
+                import re
+                push_state = re.split(r":| \(", err)[0].strip()[:80] or "not pushed"
         condition["push"] = push_state
         condition["problems"] = {k: report[k] for k in ("unsupported", "malformed", "unknown_status",
                                                          "done_without_completed", "area_mismatch",

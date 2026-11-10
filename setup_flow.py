@@ -280,18 +280,6 @@ def git_check(rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
     if s.git_transport == "none":
         out.update(ready=True, note="Local commits only. Tasks are not backed up off this machine.")
         return out
-    if s.git_transport == "deploy_key":
-        out["public_key"] = gd.ensure_deploy_key(f"alchemy-task@{rt.ctx.profile_name if hasattr(rt.ctx, 'profile_name') else 'hermes'}")
-        remote = _git(root, "remote", "get-url", s.git_remote).stdout.strip()
-        repo = _github_repo(remote)
-        if repo:
-            out["add_key_at"] = f"https://github.com/{repo}/settings/keys/new"
-        out["instructions"] = ("Add this public key as a deploy key with 'Allow write access' checked, then run "
-                               "git_check again.")
-    if s.git_transport == "token" and not gd.token:
-        out.update(ready=False, problem="No token saved. Enter ALCHEMY_TASK_GIT_TOKEN in the plugin settings (Desktop "
-                   "or dashboard). Never paste it into chat.")
-        return out
     if not gd.has_remote():
         out.update(ready=False, problem="No Git remote. Create an empty private repository and give its URL as "
                    "remote_url.")
@@ -304,17 +292,9 @@ def git_check(rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
         receipt = gd.retry()
     out["push"] = receipt
     out["ready"] = bool(receipt.get("pushed"))
-    if not out["ready"] and s.git_transport == "deploy_key":
-        out["problem"] = "The key is not accepted yet (add it on GitHub, with write access)."
-    elif not out["ready"]:
+    if not out["ready"]:
         out["problem"] = receipt.get("error") or receipt.get("state")
     return out
-
-
-def _github_repo(remote: str) -> str:
-    import re
-    m = re.search(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?$", remote or "")
-    return m.group(1) if m else ""
 
 
 # ------------------------------------------------------------------ jobs

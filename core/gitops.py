@@ -18,16 +18,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .config import TOKEN_ENV, TRANSPORTS, Settings
+from .config import TRANSPORTS, Settings
 from .locks import workspace_lock
 
 GIT_TIMEOUT = 60
-# GitHub's published SSH host keys (https://api.github.com/meta, checked 2026-11-08).
-GITHUB_HOST_KEYS = (
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
-    "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=",
-    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=",
-)
 _REPO_PROGRAM_KEYS = r"^(core\.sshcommand|core\.askpass|credential\..*helper|core\.fsmonitor|core\.hookspath)$"
 _PASSTHROUGH_ENV = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "SSH_AUTH_SOCK",
                     "XDG_CONFIG_HOME", "GIT_CONFIG_NOSYSTEM")
@@ -38,22 +32,13 @@ class GitError(RuntimeError):
 
 
 class GitDelivery:
-    def __init__(self, settings: Settings, data_dir: Path, token: str | None = None) -> None:
+    def __init__(self, settings: Settings, data_dir: Path) -> None:
         self.s = settings
         self.data_dir = data_dir
-        self.token = token
         if settings.git_transport not in TRANSPORTS:
             raise GitError(f"git_transport must be one of {', '.join(TRANSPORTS)}")
 
     # ------------------------------------------------------------ plumbing
-
-    @property
-    def key_dir(self) -> Path:
-        return self.data_dir / "git"
-
-    @property
-    def deploy_key(self) -> Path:
-        return self.key_dir / "deploy_key"
 
     def _state_path(self) -> Path:
         return self.data_dir / "git-receipts.json"
@@ -76,53 +61,7 @@ class GitDelivery:
         env.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin")
         env.update({"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "Never", "SSH_ASKPASS_REQUIRE": "never",
                     "GIT_OPTIONAL_LOCKS": "0"})
-        mode = self.s.git_transport
-        if mode == "deploy_key":
-            self._write_known_hosts()
-            env["GIT_SSH_COMMAND"] = (
-                f"ssh -F /dev/null -i {self.deploy_key} -o IdentitiesOnly=yes -o IdentityAgent=none "
-                f"-o BatchMode=yes -o StrictHostKeyChecking=yes "
-                f"-o UserKnownHostsFile={self.key_dir / 'known_hosts'} -o ConnectTimeout=15")
-            env.pop("SSH_AUTH_SOCK", None)
-        elif mode == "token" and self.token:
-            env[TOKEN_ENV] = self.token
-            helper = ('!f() { test "$1" = get || exit 0; echo username=x-access-token; '
-                      f'echo "password=${TOKEN_ENV}"; }}; f')
-            # Reset every helper that could also receive (and store) the token, then add ours.
-            pairs = [("credential.helper", ""), ("credential.helper", helper)]
-            host = self._remote_https_host()
-            if host:
-                pairs = [("credential.helper", ""), (f"credential.https://{host}.helper", ""),
-                         (f"credential.https://{host}.helper", helper)]
-            env["GIT_CONFIG_COUNT"] = str(len(pairs))
-            for i, (key, value) in enumerate(pairs):
-                env[f"GIT_CONFIG_KEY_{i}"] = key
-                env[f"GIT_CONFIG_VALUE_{i}"] = value
         return env
-
-    def _remote_https_host(self) -> str:
-        try:
-            proc = subprocess.run(["git", "remote", "get-url", self.s.git_remote], cwd=str(self.s.root()),
-                                  env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/")},
-                                  stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
-        except (OSError, subprocess.TimeoutExpired):
-            return ""
-        url = proc.stdout.strip()
-        if url.startswith("https://"):
-            return url[len("https://"):].split("/", 1)[0].split("@")[-1]
-        return ""
-
-    def _write_known_hosts(self) -> None:
-        self.key_dir.mkdir(parents=True, exist_ok=True)
-        os.chmod(self.key_dir, 0o700)
-        lines = []
-        for key in GITHUB_HOST_KEYS:
-            lines.append(f"github.com {key}")
-            lines.append(f"[ssh.github.com]:443 {key}")
-        path = self.key_dir / "known_hosts"
-        text = "\n".join(lines) + "\n"
-        if not path.exists() or path.read_text() != text:
-            path.write_text(text)
 
     def git(self, *args: str, check: bool = True, timeout: int = GIT_TIMEOUT) -> subprocess.CompletedProcess:
         cmd = ["git"]
@@ -327,21 +266,6 @@ class GitDelivery:
             and bool(out.get("remote"))
         return out
 
-    # ------------------------------------------------------------ deploy key
-
-    def ensure_deploy_key(self, comment: str) -> str:
-        """Create (once) an ed25519 deploy key in plugin data; return the public key."""
-        self.key_dir.mkdir(parents=True, exist_ok=True)
-        os.chmod(self.key_dir, 0o700)
-        if not self.deploy_key.exists():
-            proc = subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", comment, "-f",
-                                   str(self.deploy_key)], stdin=subprocess.DEVNULL, capture_output=True,
-                                  text=True, timeout=30, env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")})
-            if proc.returncode != 0:
-                raise GitError(f"ssh-keygen failed: {_short(proc.stderr)}")
-        os.chmod(self.deploy_key, 0o600)
-        self._write_known_hosts()
-        return Path(str(self.deploy_key) + ".pub").read_text().strip()
 
 
 def _rejected_non_ff(stderr: str) -> bool:

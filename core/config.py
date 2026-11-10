@@ -10,8 +10,9 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 DEFAULT_TASK_DIR = "areas/{area}/tasks"
-TRANSPORTS = ("system", "deploy_key", "token", "none")
-TOKEN_ENV = "ALCHEMY_TASK_GIT_TOKEN"
+TRANSPORTS = ("system", "none")
+# Earlier builds offered plugin-managed keys and tokens; those settings now use the system Git setup.
+_LEGACY_TRANSPORTS = {"deploy_key": "system", "token": "system"}
 _AREA_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
 
@@ -49,7 +50,7 @@ class Settings:
             default_area=str(g("default_area", "")).strip().lower(),
             timezone=str(g("timezone", "")).strip() or hermes_timezone,
             research_by_default=bool(g("research_by_default", True)),
-            git_transport=str(g("git_transport", "system")).strip() or "system",
+            git_transport=_transport(g("git_transport", "system")),
             git_remote=str(g("git_remote", "origin")).strip() or "origin",
             git_branch=str(g("git_branch", "")).strip(),
             git_run_hooks=bool(g("git_run_hooks", True)),
@@ -118,3 +119,8 @@ def validate_area_name(area: str) -> str:
     if not _AREA_RE.match(area):
         raise ConfigError(f"invalid area name {area!r}: use lowercase letters, digits and hyphens")
     return area
+
+
+def _transport(value: object) -> str:
+    name = str(value or "").strip() or "system"
+    return _LEGACY_TRANSPORTS.get(name, name)

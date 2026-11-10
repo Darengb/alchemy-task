@@ -83,8 +83,8 @@ saved by the plugin:
 2. **Workspace:** point it at an existing notes repository (an Obsidian vault works; only the task folders are
    used) or start fresh in a new Git repository.
 3. **Areas**, such as work and personal.
-4. **Git delivery:** your own Git setup if it already pushes; otherwise Alchemy Task makes a deploy key
-   for one repository and shows you where to add it on GitHub. Nothing secret goes through chat.
+4. **Git delivery:** Alchemy Task pushes with your machine's own Git setup. If that can't push yet and you
+   want backup or sync, the agent walks you through connecting GitHub first.
 5. **Scheduled jobs**, listed with what they do and what they cost, created only after you say yes.
 
 `/task status` shows the readiness of each part at any time. `/task teardown` removes the scheduled jobs
@@ -157,29 +157,23 @@ Setup fills them in for you.
 | `default_area` | | Area used when none can be inferred |
 | `timezone` | Hermes timezone | Used for dates and log lines |
 | `research_by_default` | `true` | Research every new task unless the user opts out |
-| `git_transport` | `system` | `system`, `deploy_key`, `token` or `none` |
+| `git_transport` | `system` | `system` (your own Git setup) or `none` (local commits only) |
 | `git_remote` / `git_branch` | `origin` / current | Where to push |
 | `git_run_hooks` | `true` | Run the repository's Git hooks |
-| `git_token` | | Secret (`ALCHEMY_TASK_GIT_TOKEN`), token method only |
 
 ## Disclosures
 
 - **Files outside plugin data:** reads and writes Markdown task files in the configured workspace's task
   folders only, not the rest of the repository.
 - **Shell commands:** runs local `git` subprocesses in the workspace (add, commit of task paths only, fetch,
-  rebase, push, ls-remote) with a minimal environment and no interactive prompts. In `deploy_key` mode it
-  also runs OpenSSH's key generator once, to create the deploy key described under Credentials.
+  rebase, push, ls-remote) with a minimal environment and no interactive prompts.
 - **Process checks:** to recover discovery work after a crash, the plugin reads its own process entries under
   `/proc` (start time, boot ID and PID namespace) and checks whether a recorded worker process still exists.
   It only reads these values; it never signals or changes other processes.
 - **Network:** Git traffic goes only to the remote you configure.
-- **Credentials:** in `system` mode your own Git and SSH configuration authenticates the push, and the plugin
-  never reads your keys or credential helpers. It refuses to push when the repository's own config names
-  transport programs, unless you enable `git_allow_repo_programs`. In `deploy_key` mode it generates an
-  ed25519 key (unencrypted, mode 0600) and a pinned GitHub `known_hosts` file in its plugin data directory.
-  In `token` mode it reads `ALCHEMY_TASK_GIT_TOKEN` through Hermes's secret API and passes it to git only
-  through the child process environment, after resetting other credential helpers so the token is never
-  written to disk.
+- **Credentials:** the plugin stores no Git credentials. Your own Git and SSH configuration authenticates the
+  push, and the plugin never reads your keys or credential helpers. It refuses to push when the repository's
+  own config names transport programs, unless you enable `git_allow_repo_programs`.
 - **Background agents and model use:** after each task is created (and from the optional research sweep job),
   the plugin starts a Hermes research subagent through the public subagent lifecycle API. It runs on your
   configured model with the `web`, `file` and `session_search` toolsets, the reader toolsets of your approved

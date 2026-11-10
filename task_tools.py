@@ -346,7 +346,7 @@ SETUP_SCHEMA = {
         "timezone": {"type": "string", "description": "IANA name the user confirmed, e.g. America/New_York."},
         "set_hermes_timezone": {"type": "boolean", "description": "Also set Hermes's own timezone (when it was unset)."},
         "research_by_default": {"type": "boolean"},
-        "git_transport": {"type": "string", "enum": ["system", "deploy_key", "token", "none"]},
+        "git_transport": {"type": "string", "enum": ["system", "none"]},
         "git_remote": {"type": "string"},
         "git_branch": {"type": "string"},
         "remote_url": {"type": "string", "description": "git_check: set the remote URL (an empty private repo)."},

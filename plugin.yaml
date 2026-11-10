@@ -84,10 +84,10 @@ config_schema:
     description: "Research every new task automatically unless the user says no research is needed."
   git_transport:
     type: str
-    choices: [system, deploy_key, token, none]
+    choices: [system, none]
     default: system
     label: "Git push method"
-    description: "system: your own Git/SSH setup. deploy_key: a key Alchemy Task generates. token: a fine-grained token. none: local commits only."
+    description: "system: push with this machine's own Git setup. none: local commits only."
   git_remote:
     type: str
     default: "origin"
@@ -103,8 +103,3 @@ config_schema:
     type: bool
     default: false
     description: "Allow pushing when the repository's own Git config names transport programs (off is safer)."
-  git_token:
-    type: secret
-    env: ALCHEMY_TASK_GIT_TOKEN
-    label: "Git token"
-    description: "Only for the token push method: a fine-grained token limited to the task repository (Contents read/write)."

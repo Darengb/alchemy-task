@@ -68,10 +68,10 @@ Every task change is committed and pushed so it syncs to their other devices. Ca
 - If it is ready, say so.
 - No remote yet: they create an empty **private** repository (for example at github.com/new) and give you
   the URL; pass it as `remote_url`.
-- Fresh Cloud agents have no Git login: save `git_transport: deploy_key`, call `git_check`, show the public
-  key and the link it returns, and ask them to add it with **Allow write access**. Run `git_check` again.
-- If SSH cannot work, the fallback is `git_transport: token`: they enter a fine-grained token limited to that
-  repository in the plugin settings (Desktop or the agent dashboard). Never ask them to paste a token in chat.
+- Git cannot push yet (common on a fresh Cloud agent) and they want backup or sync: walk them through
+  connecting GitHub with the `github-auth` skill. Prefer `gh auth login` in the browser, so no token is
+  pasted into chat. The plugin pushes with this machine's own Git setup, so call `git_check` again once
+  they are connected.
 - `none` keeps local history only; say clearly that tasks are then not backed up.
 
 ## 5. What happens automatically, and the scheduled jobs

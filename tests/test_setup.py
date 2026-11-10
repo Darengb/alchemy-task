@@ -170,14 +170,11 @@ def test_shared_workspace_refused(home, workspace, data_dir):
     assert call(action="save", workspace_root=str(workspace), allow_shared=True)["ok"]
 
 
-def test_deploy_key_flow(home, workspace, data_dir, tmp_path):
-    subprocess.run(["git", "remote", "set-url", "origin", "git@github.com:someone/tasks.git"], cwd=workspace,
-                   check=True)
+def test_git_check_with_a_legacy_key_setting_pushes_with_system_git(home, workspace, data_dir, tmp_path):
     make_ctx(data_dir, workspace_root=str(workspace), git_transport="deploy_key", timezone="Europe/Lisbon")
     out = call(action="git_check")
-    assert out["public_key"].startswith("ssh-ed25519 ")
-    assert out["add_key_at"] == "https://github.com/someone/tasks/settings/keys/new"
-    assert not out["ready"]
+    assert out["ready"], out
+    assert "public_key" not in out and "add_key_at" not in out
 
 
 def test_maintenance_reports_push_failure_once(home, settings, data_dir, workspace, tmp_path):
