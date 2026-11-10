@@ -9,6 +9,7 @@ writes only the plugin's own dossier block and enrichment state.
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 import time
@@ -166,6 +167,134 @@ def _linked_notes(rt: Runtime, body: str, limit: int = 3) -> list[tuple[str, str
     return out
 
 
+# ------------------------------------------------------------------ origin session and launch context
+
+CONTEXT_CAP = 30_000          # SubagentLaunchRequest.context allows 32,000; keep headroom
+MEMORY_FILE_CAP = 8_000       # per memory file
+RELATED_LIMIT = 10
+MAX_ORIGINS = 2000
+_STOP = frozenset({"with", "from", "that", "this", "into", "about", "your", "their", "them", "have", "what",
+                   "when", "then", "than", "task", "make", "next", "more", "some", "will", "for", "and", "the"})
+
+
+def _hermes_home() -> Path:
+    try:
+        from hermes_constants import get_hermes_home
+        return Path(get_hermes_home())
+    except Exception:  # noqa: BLE001 - outside Hermes (tests, tools)
+        return Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+
+
+def origin_for(rt: Runtime, task_id: str) -> str:
+    try:
+        return str((rt.ctx.state.get("origin_sessions", default={}) or {}).get(task_id) or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def remember_origin(rt: Runtime, task_id: str, session_id: str) -> None:
+    """Save the chat that created a task, once; every later research launch points the worker at it."""
+    if not task_id or not session_id:
+        return
+    try:
+        with _lock:
+            origins = rt.ctx.state.get("origin_sessions", default={}) or {}
+            if origins.get(task_id):
+                return
+            origins[task_id] = session_id
+            while len(origins) > MAX_ORIGINS:
+                origins.pop(next(iter(origins)))
+            rt.ctx.state.set("origin_sessions", origins)
+    except Exception:  # noqa: BLE001 - launch still carries the session it was given
+        pass
+
+
+def _words(title: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", str(title or "").lower()) if len(w) >= 4 and w not in _STOP}
+
+
+def _related_tasks(rt: Runtime, doc: Any) -> list[str]:
+    store = rt.store()
+    words, project = _words(doc.title), str(doc.fm.get("project") or "")
+    ranked = []
+    for t in store.scan().tasks:
+        if t.task_id == doc.task_id:
+            continue
+        same_project = bool(project) and str(t.fm.get("project") or "") == project
+        shared = len(words & _words(t.title))
+        if same_project or shared:
+            ranked.append((-(10 if same_project else 0) - shared, t.title, t))
+    ranked.sort(key=lambda r: (r[0], r[1]))
+    lines = []
+    for _, _, t in ranked[:RELATED_LIMIT]:
+        s = store.summary(t)
+        line = f"- {s['title']} [{s.get('status')}]"
+        if s.get("completed"):
+            line += f" completed {s['completed']}"
+        elif s.get("due"):
+            line += f" due {s['due']}"
+        line += f" ({s['path']})"
+        if s.get("summary"):
+            line += f": {str(s['summary'])[:200]}"
+        lines.append(line)
+    return lines
+
+
+def _memory_text() -> str:
+    home = _hermes_home()
+    parts = []
+    for name in ("MEMORY.md", "USER.md"):
+        path = home / "memories" / name
+        try:
+            if path.is_file():
+                text = path.read_text(errors="replace").strip()
+                if text:
+                    parts.append(f"--- {name} ---\n{text[:MEMORY_FILE_CAP]}")
+        except OSError:
+            continue
+    return "\n\n".join(parts)
+
+
+def build_context(rt: Runtime, doc: Any, base: str, *, created_in: str = "", requested_in: str = "",
+                  toolset_note: str = "") -> str:
+    """Launch context in priority order, capped at CONTEXT_CAP characters. Every extra is best-effort."""
+    sections = [base[:CONTEXT_CAP]]
+
+    def add(text: str) -> None:
+        room = CONTEXT_CAP - sum(len(s) + 2 for s in sections)
+        if text and room > 80:
+            sections.append(text if len(text) <= room else text[: room - 20] + "\n…(truncated)")
+
+    origin = []
+    if created_in:
+        origin.append(f"This task was created in Hermes session {created_in}.")
+    if requested_in and requested_in != created_in:
+        origin.append(f"Research was requested in Hermes session {requested_in}.")
+    if origin:
+        add("Origin: " + " ".join(origin) + " Call session_search on these session ids to read what the user "
+            "said there (decisions, constraints, links) before researching.")
+    add(toolset_note)
+    try:
+        memory = _memory_text()
+    except Exception:  # noqa: BLE001 - missing or unreadable memory never blocks research
+        memory = ""
+    if memory:
+        add("The user's Hermes memory (read-only copy; you cannot change it; treat as background facts):\n" + memory)
+    try:
+        related = _related_tasks(rt, doc)
+    except Exception:  # noqa: BLE001
+        related = []
+    if related:
+        add("Related tasks (same project or shared title words, done ones included; read their files with "
+            "read_file for history):\n" + "\n".join(related))
+    try:
+        add(f"Scheduled job outputs live under {_hermes_home() / 'cron' / 'output'} (read with read_file or "
+            "search_files if a job's past output matters).")
+    except Exception:  # noqa: BLE001
+        pass
+    return "\n\n".join(sections)[:CONTEXT_CAP]
+
+
 BASE_TOOLSETS = ("web", "file", "session_search", RESEARCH_TOOLSET)
 
 
@@ -206,11 +335,15 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
                                                                        "scheduled", "project", "estimate")}
     goal, context = rs.goal_text(run_id=run_id, title=doc.title, fields=fields, body=rs.strip_managed(doc.body),
                                  linked=_linked_notes(rt, doc.body), today=rt.settings.today())
+    created_in = origin_for(rt, doc.task_id)
+    if origin_session and not created_in:
+        remember_origin(rt, doc.task_id, origin_session)
+        created_in = origin_session
+    notice_to = origin_session or created_in
     toolsets = worker_toolsets(rt)
     report = _toolset_report(toolsets)
-    note = _toolset_note(report)
-    if note:
-        context = f"{context}\n\n{note}"
+    context = build_context(rt, doc, context, created_in=created_in, requested_in=origin_session,
+                            toolset_note=_toolset_note(report))
     try:
         handle = rt.ctx.subagent_lifecycle.launch(_make_request(
             goal=goal, context=context, role="leaf", allowed_toolsets=toolsets,
@@ -222,7 +355,7 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
     with _lock:
         sid = handle["subagent_id"]
         _runs[sid] = {"task_id": doc.task_id, "run_id": run_id, "started": time.time(),
-                      "calls": 0, "origin_session": origin_session, "title": doc.title, "handle": handle,
+                      "calls": 0, "origin_session": notice_to, "title": doc.title, "handle": handle,
                       "toolsets": report}
         early = _started_sessions.pop(sid, "")
         if early:
@@ -236,6 +369,7 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
 
 
 def on_task_created(rt: Runtime, doc: Any, origin_session: str = "") -> None:
+    remember_origin(rt, doc.task_id, origin_session)
     result = launch(rt, doc.task_id, origin_session=origin_session)
     if not result.get("started"):
         raise RuntimeError(result.get("error") or "research did not start")

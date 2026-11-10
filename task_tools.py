@@ -186,6 +186,8 @@ def task_create(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
         create_area=bool(args.get("create_area")), status=args.get("status", "open"),
         source=args.get("source", ""))
     receipt = rt.git().deliver([store.rel(doc.path)], f"task: create {doc.title[:72]}")
+    from . import research_agent
+    research_agent.remember_origin(rt, doc.task_id, session_id or "")
     research = (doc.fm.get("enrichment") or {}).get("status")
     research_errors = rt.notify_research(doc, session_id or "") if research == "pending" else []
     summary = store.summary(doc)
