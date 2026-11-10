@@ -30,6 +30,21 @@ _lock = threading.Lock()
 _runs: dict[str, dict[str, Any]] = {}      # subagent_id -> run
 _by_child_session: dict[str, str] = {}      # child session id -> subagent_id
 _started_sessions: dict[str, str] = {}      # subagent_id -> child session id (subagent_start can precede launch's return)
+_research_children: set[str] = set()        # every child session id and subagent id this plugin started
+MAX_CHILDREN = 500
+
+# Tools a research child may never call: writes, execution and side effects. Frozen, matched by
+# exact name only (no argument parsing). Everything else passes (reads, web, research tools).
+WRITE_BLOCKED_TOOLS = frozenset({
+    "write_file", "patch", "skill_manage", "terminal", "execute_code", "process_manage",
+    "memory", "send_message", "cronjob", "cronjob_manage", "delegate_task", "clarify",
+    "text_to_speech", "image_generate", "computer_use", "browser_vault",
+    "task_create", "task_update", "task_checkpoint", "task_work_start", "task_ios", "task_setup",
+    "task_research", "task_research_sweep",
+    "discovery_submit", "discovery_decide", "discovery_stream", "discovery_start", "discovery_config",
+    "discovery_research_run", "discovery_research_accept", "discovery_join", "discovery_actions",
+    "discovery_recover", "discovery_reconcile", "discovery_release_hold",
+})
 
 
 # ------------------------------------------------------------------ run registry
@@ -39,6 +54,62 @@ def _persist(rt: Runtime) -> None:
         rt.ctx.state.set("research_runs", {k: v for k, v in _runs.items() if not v.get("done")})
     except Exception:  # noqa: BLE001 - registry is an optimisation; task files hold the truth
         pass
+
+
+def _save_children() -> None:
+    try:
+        ctx = _runtime_ctx()
+        if ctx is not None:
+            ctx.state.set("research_children", sorted(_research_children))
+    except Exception:  # noqa: BLE001 - in-memory blocking still applies
+        pass
+
+
+def _runtime_ctx() -> Any:
+    from . import runtime
+    return runtime._ctx
+
+
+def _mark_children(*ids: str) -> None:
+    """Remember research child session/subagent ids; persisted so blocking survives a reload."""
+    new = False
+    with _lock:
+        for i in ids:
+            if i and isinstance(i, str) and i not in _research_children:
+                _research_children.add(i)
+                new = True
+        if len(_research_children) > MAX_CHILDREN:
+            for old in sorted(_research_children)[: len(_research_children) - MAX_CHILDREN]:
+                _research_children.discard(old)
+    if new:
+        _save_children()
+
+
+def reload_children(ctx: Any) -> None:
+    """Restore the research-child set from plugin state (called on plugin register)."""
+    try:
+        saved = ctx.state.get("research_children", default=[]) or []
+        with _lock:
+            _research_children.update(str(x) for x in saved if isinstance(x, str) and x)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def write_block(tool_name: Any = "", session_id: Any = "", task_id: Any = "") -> dict[str, str] | None:
+    """Refuse write/exec tools for research children. Never raises; fails closed for blocked names."""
+    try:
+        if tool_name not in WRITE_BLOCKED_TOOLS:
+            return None
+    except Exception:  # noqa: BLE001 - unhashable name cannot be a blocked tool
+        return None
+    message = (f"Research agents are read-only: {tool_name} is not available to you. Use read tools "
+               "(files, sessions, skills, web) and report through research_submit.")
+    try:
+        if (session_id and session_id in _research_children) or (task_id and task_id in _research_children):
+            return {"action": "block", "message": message}
+        return None
+    except Exception:  # noqa: BLE001 - registry unreadable: fail closed for the blocked set
+        return {"action": "block", "message": message}
 
 
 def _run_for(task_id: str = "", run_id: str = "", session_id: str = "") -> tuple[str, dict[str, Any]] | None:
@@ -120,10 +191,12 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
         sid = handle["subagent_id"]
         _runs[sid] = {"task_id": doc.task_id, "run_id": run_id, "started": time.time(),
                       "calls": 0, "origin_session": origin_session, "title": doc.title, "handle": handle}
-        if sid in _started_sessions:
-            _by_child_session[_started_sessions.pop(sid)] = sid
+        early = _started_sessions.pop(sid, "")
+        if early:
+            _by_child_session[early] = sid
         for old in [k for k, v in _runs.items() if v.get("done") and time.time() - v["started"] > 3600]:
             _runs.pop(old, None)
+    _mark_children(sid, early)
     _persist(rt)
     return {"started": True, "task_id": doc.task_id, "run_id": run_id, "subagent_id": handle["subagent_id"],
             "handle": handle}
@@ -236,10 +309,15 @@ def _add_notice(rt: Runtime, session_id: str, title: str, normalized: dict[str, 
 # ------------------------------------------------------------------ hooks
 
 def pre_tool_call(tool_name: str = "", args: Any = None, task_id: str = "", session_id: str = "", **_: Any):
+    blocked = write_block(tool_name, session_id, task_id)
+    if blocked is not None:
+        return blocked
     found = _run_for(task_id=str(task_id or ""))
     if found is None:
         return None
     sid, run = found
+    if session_id and session_id not in _research_children:
+        _mark_children(session_id)
     with _lock:
         if session_id:
             _by_child_session[session_id] = sid
@@ -255,12 +333,15 @@ def subagent_start(child_session_id: str = "", child_subagent_id: str = "", **_:
     if not child_session_id or not child_subagent_id:
         return
     with _lock:
-        if child_subagent_id in _runs:
+        ours = child_subagent_id in _runs
+        if ours:
             _by_child_session[child_session_id] = child_subagent_id
         else:
             _started_sessions[child_subagent_id] = child_session_id
             if len(_started_sessions) > 200:
                 _started_sessions.pop(next(iter(_started_sessions)))
+    if ours:
+        _mark_children(child_session_id, child_subagent_id)
 
 
 def subagent_stop(child_session_id: str = "", child_status: str = "", child_summary: Any = "", **_: Any) -> None:

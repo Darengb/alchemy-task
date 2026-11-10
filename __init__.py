@@ -29,6 +29,7 @@ def _prompt_section(_info: Any = None) -> str:
 
 def register(ctx: Any) -> None:
     runtime.bind(ctx)
+    research_agent.reload_children(ctx)
     register_tools(ctx)
     research_agent.register(ctx)
     worksession.register(ctx)
