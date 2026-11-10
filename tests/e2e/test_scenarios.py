@@ -188,6 +188,40 @@ def test_b3_default_install_researches_in_short_calls_under_the_default_host_dea
     assert day['join']['joined'] and not day['join']['degraded']
 
 
+def test_b4_scheduled_run_whose_session_changes_between_research_calls_finishes_the_same_run(world, host_factory):
+    """Context compression gives the scheduled parent a new session id mid-run.
+
+    The host then hides the first session's child handles, but those children
+    keep researching and submit to the plugin spool. The parent recovers the
+    SAME run from its new session and every payload is accepted: no relaunch,
+    no extra charge, no degraded join.
+    """
+    from e2e.test_surfaces import ORIGIN_CHAT, record_sessions
+    record_sessions(world, [(P.PARENT, ORIGIN_CHAT, ''), ('compressed-session', ORIGIN_CHAT, '')])
+    host = started_host(host_factory)
+    seed_normal(world, host)
+    lifecycle = host.subagent_lifecycle
+    lifecycle.child_seconds, lifecycle.hide_foreign = 500, True
+    sessions = []
+
+    def between_rounds(host, index):
+        if index == 1:
+            assert all(r['phase'] != 'done' for r in lifecycle.records.values())  # all children still running
+            return 'compressed-session'
+        lifecycle.tick()  # the first session's children finish in the background
+        sessions.append(host.current_parent)
+        return None
+    day = P.run_day(host, between_rounds=between_rounds)
+    recovered = [entry for name, entry in day['log'] if name == 'recovered']
+    assert len(recovered) == 1 and recovered[0]['fenced'] == []
+    assert sessions and set(sessions) == {'compressed-session'}
+    assert all(r['status'] != 'held' for r in day['rounds'])
+    assert len(lifecycle.launched) == 3  # no relaunch after the session change
+    assert header(day) == NORMAL_HEADER
+    assert day['join']['joined'] and not day['join']['degraded']
+    assert host.deadline_violations == []
+
+
 # --------------------------------------------------------------------------- c
 def test_c1_empty_completed_day(world, host_factory):
     host = started_host(host_factory)

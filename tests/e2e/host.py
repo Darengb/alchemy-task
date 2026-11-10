@@ -102,7 +102,19 @@ class FakeLifecycle:
         self.launched: list = []
         self.n = 0
         self.child_seconds = 0
+        # The real host shows a handle only to the ACTIVE parent session that
+        # launched it (agent/subagent_lifecycle.py _record); children keep
+        # running and can still call their own tools.
+        self.hide_foreign = False
         self._lock = threading.Lock()
+
+    def _visible(self, handle):
+        return not self.hide_foreign or handle['parent_session_id'] == self.host.current_parent
+
+    def tick(self):
+        """Children progress in the background, whichever parent session is active."""
+        for sid in list(self.records):
+            self._advance(sid)
 
     def launch(self, request):
         with self._lock:
@@ -137,6 +149,8 @@ class FakeLifecycle:
 
     def status(self, handle):
         sid = handle['subagent_id']
+        if not self._visible(handle):
+            return {'state': 'UNKNOWN', 'updated_at': self.host.clock.time()}
         state = self._advance(sid)
         r = self.records[sid]
         return {'state': state, 'updated_at': r['started'] or self.host.clock.time()}
@@ -154,6 +168,8 @@ class FakeLifecycle:
                 'structured_payload': None}
 
     def reconnect(self, handle):
+        if not self._visible(handle):
+            return {'connected': False, 'state': 'UNKNOWN', 'diagnostic': 'RECONNECT_UNAVAILABLE'}
         r = self.records.get(handle['subagent_id'])
         return {'connected': bool(r), 'state': r['terminal'] if r and r['phase'] == 'done' else 'RUNNING'}
 

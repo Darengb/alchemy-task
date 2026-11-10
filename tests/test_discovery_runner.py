@@ -103,18 +103,18 @@ def drive(runner, store, run, *, session='parent', max_calls=40, accept=True):
     raise AssertionError('research did not complete: ' + json.dumps(reports[-1])[:800])
 
 
-def accept_all(runner, store, run):
+def accept_all(runner, store, run, session='parent'):
     from alchemy_task.discovery_runner import CHECKLIST
     accepted = []
     for a in list(store.get_run(run)['attempts'].values()):
         if a['state'] != 'terminal_observed' or not a['payload'] or a.get('validation_error'): continue
         info = a['payload']; cursor = None
         while True:
-            p = runner.fetch(run, info['resource'], info['payload_sha256'], cursor=cursor, session_id='parent')
+            p = runner.fetch(run, info['resource'], info['payload_sha256'], cursor=cursor, session_id=session)
             if not p['has_more']: break
             cursor = p['next_cursor']
         assessment = {'accepted': True, 'reason': 'Current primary evidence establishes the distinct user action; all plausible tasks inspected.', 'checklist': {k: 'Reviewed against full supplied evidence; no unresolved contradiction.' for k in CHECKLIST}}
-        accepted.append(runner.accept(run, a['token'], info['payload_sha256'], assessment, session_id='parent'))
+        accepted.append(runner.accept(run, a['token'], info['payload_sha256'], assessment, session_id=session))
     return accepted
 
 

@@ -115,7 +115,7 @@ def drive(runner, store, run, *, session='parent', max_calls=40):
     for _ in range(max_calls):
         report, elapsed = timed_call(runner, run, session)
         reports.append((report, elapsed))
-        accept_all(runner, store, run)
+        accept_all(runner, store, run, session)
         if report['status'] == 'complete':
             return reports
     raise AssertionError('research did not complete: ' + json.dumps(reports[-1][0])[:800])
@@ -189,18 +189,25 @@ def test_new_supervisor_finishes_the_same_run_without_duplicate_launches_or_budg
     first, _ = timed_call(runner, run)
     assert first['status'] == 'running'
     launched, charged = len(pool.requests), charged_units(store)
-    # The parent stops calling. A fresh supervisor (new session/turn of the same
-    # parent, no in-memory timers) continues from saved state only.
+    # The parent stops calling. A NEW session (a different session id, as the
+    # next scheduled run or a compressed transcript has) with a fresh
+    # supervisor and no in-memory timers continues from saved state only.
     fresh = DiscoveryRunner(SimpleNamespace(subagent_lifecycle=pool), SimpleNamespace(data_dir=tmp_path),
-                            store=DiscoveryStore(tmp_path / 'discovery'), clock=runner.clock)
-    pool.runner = fresh
-    reports = drive(fresh, fresh.store, run)
+                            store=DiscoveryStore(tmp_path / 'discovery'), clock=runner.clock,
+                            recovery_authorizer=lambda run_id, old, new: True)
+    pool.runner, pool.parent = fresh, 'next-session'
+    runner.clock.sleep(300)
+    recovered = fresh.recover(run, session_id='next-session', adopt=True)
+    assert recovered['fenced'] == []
+    reports = drive(fresh, fresh.store, run, session='next-session')
     ledger = store.get_run(run)
+    assert all(r['status'] != 'held' for r, _ in reports)
     assert len(pool.requests) == 5 and launched == 3
     assert sorted(json.loads(r['context'])['candidate_id'] for r in pool.requests) == sorted(parents(store, run))
     assert charged == 3 and charged_units(store) == 5  # each candidate charged once, never twice
     assert all(a['state'] == 'accepted_bundle' for a in ledger['attempts'].values())
-    assert fresh.join(run, session_id='parent')['joined']
+    joined = fresh.join(run, session_id='next-session')
+    assert joined['joined'] and not joined['degraded']
     assert all(e <= fresh.policy.call_seconds for _, e in reports)
 
 
@@ -396,6 +403,28 @@ def test_unknown_launch_is_fenced_without_relaunch_or_refund_across_calls(tmp_pa
     assert reports[-1]['status'] == 'complete' and sorted(reports[-1]['unknown_candidates']) == sorted(parents(store, run))
     joined = runner.join(run, session_id='parent')
     assert not joined['joined']
+
+
+def test_exception_mid_call_fences_bound_children_and_holds_the_run(tmp_path):
+    runner, store, pool, run = build(tmp_path, 2)
+    wait = pool.wait
+
+    def broken(handle, *, timeout_seconds):
+        if len(pool.records) == 2:
+            raise RuntimeError('host lifecycle failed mid-call')
+        return wait(handle, timeout_seconds=timeout_seconds)
+    pool.wait = broken
+    with pytest.raises(RuntimeError):
+        runner.run(run, session_id='parent')
+    attempts = list(store.get_run(run)['attempts'].values())
+    assert len(attempts) == 2 and all(a['handle'] for a in attempts)
+    assert all(a['fenced'] and a['state'] == 'execution_unknown' for a in attempts)
+    assert len(pool.cancelled) == 2  # bound children were asked to stop
+    pool.wait = wait
+    held = runner.run(run, session_id='parent')
+    assert held['status'] == 'held' and 'interrupted' in held['holds']
+    assert 'discovery_recover' in held['next_action'] and len(pool.requests) == 2  # no relaunch
+    assert charged_units(store) == 2
 
 
 # ---------------------------------------------------------------- lease
