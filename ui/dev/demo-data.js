@@ -48,6 +48,16 @@ Pressworks' standard lead time for rigid boxes is 9 business days after approval
 
 Sources: Pressworks lead-time sheet; Slack thread in #packaging.
 <!-- task-research-dossier:end -->
+
+<!-- discovery-dossier:start dos-demo1 -->
+## Discovery: Slack #packaging
+
+**Current understanding:** Pressworks sent revision 3 of the holiday tin proof and needs approval to hold the November print slot.
+
+**Next action:** Approve revision 3 in the portal, then send the approved PDF to fulfillment.
+
+Sources: Slack #packaging thread (3 messages).
+<!-- discovery-dossier:end dos-demo1 -->
 `,
     }),
     T('Reply to Northwind Grocers about Q1 wholesale pricing', 'work', 0, { summary: 'Their buyer asked for the Q1 price sheet and case-pack minimums.' }),

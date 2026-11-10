@@ -238,7 +238,6 @@ export function TaskPanel({ id, narrow, onClose }) {
       </div>
 
       <SummaryField value={task.summary || ''} onSave={(summary) => patch({ summary })} />
-      {isDone(task) ? null : <ResearchBar task={task} />}
 
       {editing ? (
         <BodyEditor task={task} onSave={saveBody} onDone={() => setEditing(false)} onStale={() => setStale(true)} flushRef={flushRef} />
@@ -438,9 +437,16 @@ function BodyView({ task, onEdit, onToggle }) {
       {before.map((s, i) => <BodySection key={`b${i}`} s={s} render={renderSection} />)}
       {groupManaged(managed).map((m, i) => (
         <Disclosure key={`m${i}`} title={m.title} defaultOpen={m.title === 'Research'} className="at-fold" right={<Icon name="spark" size={13} />}>
+          {m.title === 'Research' && !isDone(task) ? <ResearchBar task={task} /> : null}
           <div className="at-md">{renderBlocks(parseBlocks(m.text))}</div>
         </Disclosure>
       ))}
+      {/* No research yet: show the Research section with just the button, so research can be started here. */}
+      {!isDone(task) && !groupManaged(managed).some((m) => m.title === 'Research') ? (
+        <Disclosure title="Research" defaultOpen className="at-fold" right={<Icon name="spark" size={13} />}>
+          <ResearchBar task={task} />
+        </Disclosure>
+      ) : null}
       {after.map((s, i) => <BodySection key={`a${i}`} s={s} render={renderSection} />)}
     </div>
   )
