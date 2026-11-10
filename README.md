@@ -5,8 +5,9 @@ determines the best approach to complete your tasks, what resources are already 
 what it will need from you before it begins.
 
 When a task is created, a background research agent reads the chat it came from, your skills and runbooks,
-your past sessions, notes and files, Git repositories under your home folder, your connected email and chat
-sources, and the web. It then writes into the task what it found: the context, a
+your past sessions, notes and files, Git repositories under your home folder, and your connected email and chat
+sources. It also searches the web to recommend tools, read documentation and determine best practices. It then
+writes into the task what it found: the context, a
 recommended approach, and any access your agent still needs. Apart from writing its findings into the task,
 research only reads: it never sends messages or changes your files, accounts or settings.
 
