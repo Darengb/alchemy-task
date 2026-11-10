@@ -14,7 +14,7 @@ style.textContent = css
 document.head.appendChild(style)
 
 const backend = createMockBackend()
-if (params.get('empty') === 'discovery') backend.db.runs.length = 0
+if (params.get('empty') === 'discovery') { backend.db.runs.length = 0; backend.db.settings.streams.length = 0 }
 window.__demo = backend
 const transport = makeTransport(backend.send)
 

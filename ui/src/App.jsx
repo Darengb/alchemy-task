@@ -7,7 +7,7 @@ import { describeError } from './api.js'
 import { AppContext, createTaskStore, usePref, useStore, useWidth } from './store.js'
 import { TasksView } from './tasks.jsx'
 import { TaskPanel } from './panel.jsx'
-import { DiscoveryView, pendingCount } from './discovery.jsx'
+import { DiscoveryView, discoveryBadge } from './discovery.jsx'
 import { SettingsPanel } from './settings.jsx'
 import { Icon, IconButton, OverlayHost, Spinner, ToastHost, ToastOutlet, cx, useToast } from './ui.jsx'
 
@@ -42,6 +42,7 @@ function AppInner({ transport, host, initialView, settingsOnly, chat }) {
   const [runs, setRuns] = React.useState(null)
   const [runsError, setRunsError] = React.useState(null)
   const [runsLoading, setRunsLoading] = React.useState(false)
+  const [streams, setStreams] = React.useState(null)
 
   // ---- loading
   const loadMeta = React.useCallback(() => api.meta().then((m) => { setMeta(m); setMetaError(null); store.setToday(m.today) }, setMetaError), [api, store])
@@ -49,6 +50,8 @@ function AppInner({ transport, host, initialView, settingsOnly, chat }) {
     setRunsLoading(true)
     try { const res = await api.runs(); setRuns(res.runs || []); setRunsError(null) } catch (err) { setRunsError(err) }
     setRunsLoading(false)
+    // Streams only matter for the setup badge before the first run, so skip the call once runs exist.
+    try { const s = await api.settings(); setStreams(Array.isArray(s.streams) ? s.streams : null) } catch { setStreams(null) }
   }, [api])
   React.useEffect(() => { loadMeta(); loadRuns() }, [loadMeta, loadRuns])
 
@@ -131,7 +134,7 @@ function AppInner({ transport, host, initialView, settingsOnly, chat }) {
   }, [api, store, toast])
 
   const onDrop = React.useCallback((task, date) => actions.move(task, date), [actions])
-  const pending = pendingCount(runs)
+  const pending = discoveryBadge(runs, streams)
   const ctx = React.useMemo(() => ({
     api, store, meta: meta || {}, today: today || (meta && meta.today), prefs, setPrefs, actions, selectedId, narrow, host, chat,
   }), [api, store, meta, today, prefs, setPrefs, actions, selectedId, narrow, host, chat])
