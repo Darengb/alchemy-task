@@ -19,7 +19,8 @@ from .core.discovery_dossiers import content_revision
 from .core import taskfile as tf
 from .core.discovery_research import child_schema, CANARY, SECRET_VALUE, MAX_TITLE_CHARS, MAX_REASON_CHARS, MAX_STRING_CHARS
 from .discovery_context import DiscoveryContext, resolve_identity
-from .discovery_sources import SourceAdapter, collect_attested, validate_source_config
+from .discovery_sources import (SourceAdapter, collect_attested, validate_source_config, DEFAULT_TRANSCRIPT_SENDERS,
+                                DEFAULT_TRANSCRIPT_KEYWORDS, transcript_keywords, transcript_senders)
 from .discovery_runner import DiscoveryRunner, RunnerPolicy, make_tool_handlers, make_hooks, CHECKLIST, BINDING_KEYS
 from .discovery_conversion import DiscoveryConversion
 from .discovery_digest import DiscoveryDigest
@@ -328,6 +329,55 @@ class DiscoveryIntegration:
         from .jobs import reconcile_discovery_job
         reconcile_discovery_job(self.rt, current)
         return configured
+
+    def configure_transcripts(self, stream, *, exclude=None, senders=None, keywords=None, admit_all=False, user_approved=False):
+        """One opt-in: a meeting-transcript source for every configured mailbox not excluded.
+
+        Each transcript source reuses its mailbox's account_key, scope and reader,
+        so the mailbox snapshot is read once. The mail source then skips the
+        transcript senders, so one email never yields two candidates.
+        """
+        if user_approved is not True:
+            raise UserError('ask the user once (naming each mailbox, the default note-takers and keywords) before adding transcript sources')
+        current = self._stream(stream)
+        all_configs = self.rt.ctx.state.get('discovery_sources', default={}) or {}
+        configs = copy.deepcopy(all_configs.get(current['name'], {}))
+        exclude = [str(x) for x in (exclude or [])]
+        mails = {k: c for k, c in configs.items() if c.get('kind') == 'mail'}
+        unknown = [k for k in exclude if k not in mails]
+        if unknown:
+            raise UserError('exclude names unknown mail source(s) %s; mail sources: %s' % (', '.join(unknown), ', '.join(sorted(mails)) or 'none'))
+        chosen = {k: c for k, c in mails.items() if k not in exclude}
+        if not chosen:
+            raise UserError('needs_input: meeting transcripts need an email source; configure one first')
+        shape = {'kind': 'transcript', 'service_senders': list(DEFAULT_TRANSCRIPT_SENDERS) if senders is None else list(senders),
+                 'keywords': list(DEFAULT_TRANSCRIPT_KEYWORDS) if keywords is None else list(keywords)}
+        if admit_all is True: shape['admit_all'] = True
+        shape['service_senders'], shape['keywords'] = transcript_senders(shape), transcript_keywords(shape)
+        streams = copy.deepcopy(self.rt.ctx.state.get('streams', default={}) or {})
+        entry = streams[current['name']]
+        created = []
+        for key, mail in sorted(chosen.items()):
+            approved = [s for s in entry['sources'] if s['name'] == mail.get('name') and s['scope'] == mail.get('scope')]
+            if len(approved) != 1:
+                raise UserError('mail source %s no longer matches the approved stream; reconfigure it first' % key)
+            tkey = key + '-transcripts'
+            name = (str(mail.get('name') or key) + ' meeting transcripts')[:80]
+            config = {k: copy.deepcopy(v) for k, v in mail.items() if k not in {
+                'sender_domains', 'excluded_senders', 'owner_email', 'owner_report_pattern', 'admit_all', 'transcript_senders', 'needs_reconfigure'}}
+            config.update(copy.deepcopy(shape), source_key=tkey, name=name, approved=True)
+            validate_source_config(config)
+            configs[tkey] = config
+            configs[key] = {**mail, 'transcript_senders': list(shape['service_senders'])}
+            source = {**copy.deepcopy(approved[0]), 'name': name, 'type': 'transcript'}
+            entry['sources'] = [s for s in entry['sources'] if s['name'] != name] + [source]
+            created.append(tkey)
+        all_configs[current['name']] = configs
+        self.rt.ctx.state.set('discovery_sources', all_configs)
+        self.rt.ctx.state.set('streams', streams)
+        from .jobs import reconcile_discovery_job
+        reconcile_discovery_job(self.rt, entry)
+        return {'created': created, 'excluded': exclude, 'service_senders': shape['service_senders'], 'keywords': shape['keywords']}
 
     def _all_runs(self):
         return [self.store.get_run(p.parent.name) for p in sorted((self.store.state_root / 'runs').glob('*/ledger.json'))]
@@ -1201,7 +1251,7 @@ SCHEMAS = {
  'discovery_recover': _schema('discovery_recover', 'Recover SAME saved run without blind relaunch/refund. New parent adoption requires out-of-band authorization.', {**RUN, 'owner_restarted': BOOL, 'adopt': BOOL}, ['run_id']),
  'discovery_release_hold': _schema('discovery_release_hold', 'Deliberately release safety hold without refunding unknown attempts.', {**RUN, 'reason': STR}, ['run_id', 'reason']),
  'discovery_replay': _schema('discovery_replay', 'Explicit saved_input replay of finalized frozen inputs, or current fresh_validation / targeted_supplement. Distinct lineage/review; no old task mutation.', {**RUN, 'operation': {'type': 'string', 'enum': ['saved_input', 'fresh_validation', 'targeted_supplement']}, 'mode': {'type': 'string', 'enum': ['shadow', 'research_only']}, 'candidate_ids': {'type': 'array', 'items': STR}, 'user_approved': BOOL}, ['run_id', 'operation', 'mode', 'user_approved']),
- 'discovery_config': _schema('discovery_config', 'Configure approved source/delivery, confirm identity, or approvals. approvals.owner_only is not available in this version (turning it on is refused with needs=not_available; planned follow-up). status shows current approvals. No approver list or credentials.', {'action': {'type': 'string', 'enum': ['source', 'identity', 'delivery', 'approvals', 'status']}, 'stream': STR, 'config': OBJ, 'account_key': STR, 'identity': OBJ, 'user_approved': BOOL}, ['action']),
+ 'discovery_config': _schema('discovery_config', 'Configure approved source/delivery, confirm identity, or approvals. transcripts: one opt-in adds a meeting-transcript source per configured mail source (config: exclude [mail source keys], optional service_senders [addresses or @domains], keywords, admit_all); it reuses each mailbox read. approvals.owner_only is not available in this version (turning it on is refused with needs=not_available; planned follow-up). status shows current approvals. No approver list or credentials.', {'action': {'type': 'string', 'enum': ['source', 'transcripts', 'identity', 'delivery', 'approvals', 'status']}, 'stream': STR, 'config': OBJ, 'account_key': STR, 'identity': OBJ, 'user_approved': BOOL}, ['action']),
  'discovery_collect': _schema('discovery_collect', 'Collect approved source with actual configured reader, or explicitly partial attested envelope. SAME saved window.', {**RUN, 'source_key': STR, 'envelope': OBJ, 'max_pages': {'type': 'integer', 'minimum': 1}}, ['run_id', 'source_key']),
  'discovery_context': _schema('discovery_context', 'Freeze collected source inventory, ALL-status task bodies, installed full skills, full rubric and approved context before research.', {**RUN, 'context': OBJ}, ['run_id']),
  'discovery_match': _schema('discovery_match', 'Post-join typed exact matching and all semantic target options; returns full body resources, no mutation.', {**RUN, 'unit_id': STR}, ['run_id', 'unit_id']),
@@ -1258,6 +1308,11 @@ def register(ctx, *, integration=None):
         if action != 'status': service.authorize_approval(session_id)
         if action == 'source':
             return service.configure(a['stream'], a['config'], user_approved=a.get('user_approved', False))
+        if action == 'transcripts':
+            opts = a.get('config') or {}
+            return service.configure_transcripts(a['stream'], exclude=opts.get('exclude'), senders=opts.get('service_senders'),
+                                                 keywords=opts.get('keywords'), admit_all=opts.get('admit_all') is True,
+                                                 user_approved=a.get('user_approved', False))
         if action == 'delivery':
             return service.configure_delivery(a['stream'], a['config'], user_approved=a.get('user_approved', False))
         if action == 'identity':
