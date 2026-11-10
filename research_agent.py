@@ -851,3 +851,30 @@ def register(ctx: Any) -> None:
     ctx.register_hook("subagent_start", subagent_start)
     ctx.register_hook("subagent_stop", subagent_stop)
     ctx.register_hook("pre_llm_call", pre_llm_call)
+
+
+# ------------------------------------------------------------------ queue without launching (Tasks view)
+
+class ResearchBusy(rs.ResearchError):
+    """Research for this task is already queued or running."""
+
+
+def queue_research(rt: Runtime, ref: str, log: str = "Research requested.") -> tuple[Any, Path]:
+    """Mark a task as waiting for research without launching a worker (the research sweep starts it).
+
+    For callers with no agent turn, such as the dashboard: workers can only launch inside one. Refuses
+    tasks already queued or running (``ResearchBusy``) and tasks that cannot be researched."""
+    store = rt.store()
+    doc = store.resolve(ref)
+    with task_lock(rt.data_dir, doc.task_id, doc.path):
+        doc = tf.parse_file(doc.path)
+        why = rs.eligibility(doc.fm)
+        if why in ("eligible", "running"):
+            raise ResearchBusy("research is already queued or running for this task")
+        if why in ("closed", "unsupported", "no_id", "unknown"):
+            raise rs.ResearchError(f"cannot research this task ({why}); reopen it or fix it first")
+        rs.request(doc.fm, "user asked in the Tasks view")
+        body = tf.append_log(doc.body, log, rt.settings.today())
+        tf.atomic_write(doc.path, tf.render(doc.fm, body, seq_offset=doc.seq_offset,
+                                            keep_blank=doc.blank_keys).encode(), expect=doc.raw)
+    return tf.parse_file(doc.path), doc.path
