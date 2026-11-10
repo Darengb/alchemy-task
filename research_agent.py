@@ -166,6 +166,33 @@ def _linked_notes(rt: Runtime, body: str, limit: int = 3) -> list[tuple[str, str
     return out
 
 
+BASE_TOOLSETS = ("web", "file", "session_search", RESEARCH_TOOLSET)
+
+
+def worker_toolsets(rt: Runtime) -> tuple[str, ...]:
+    """Toolsets a research worker requests: read toolsets, the research toolset, approved discovery readers."""
+    from .jobs import approved_reader_toolsets
+    return tuple(dict.fromkeys((*BASE_TOOLSETS, *approved_reader_toolsets(rt.ctx.state))))
+
+
+def _toolset_report(requested: tuple[str, ...]) -> dict[str, Any]:
+    """Which requested toolsets the host does not report as available (None when it cannot tell)."""
+    try:
+        known = _registry_toolsets()
+        missing = [t for t in requested if t != RESEARCH_TOOLSET and not (known.get(t) or {}).get("available")]
+    except Exception:  # noqa: BLE001 - no public answer: keep the requested list only
+        missing = None
+    return {"requested": list(requested), "not_available_to_worker": missing}
+
+
+def _toolset_note(report: dict[str, Any]) -> str:
+    missing = report.get("not_available_to_worker")
+    if not missing:
+        return ""
+    return ("Toolsets requested for you but not available to you on this Hermes (report access that depends on "
+            "them as missing or unverified): " + ", ".join(missing))
+
+
 def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]:
     """Claim a task and start its research agent. Must run inside an agent turn."""
     store = rt.store()
@@ -179,9 +206,14 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
                                                                        "scheduled", "project", "estimate")}
     goal, context = rs.goal_text(run_id=run_id, title=doc.title, fields=fields, body=rs.strip_managed(doc.body),
                                  linked=_linked_notes(rt, doc.body), today=rt.settings.today())
+    toolsets = worker_toolsets(rt)
+    report = _toolset_report(toolsets)
+    note = _toolset_note(report)
+    if note:
+        context = f"{context}\n\n{note}"
     try:
         handle = rt.ctx.subagent_lifecycle.launch(_make_request(
-            goal=goal, context=context, role="leaf", allowed_toolsets=("web", RESEARCH_TOOLSET),
+            goal=goal, context=context, role="leaf", allowed_toolsets=toolsets,
             correlation_id=f"alchemy-task:{doc.task_id}:{run_id}"))
         handle = dict(handle) if not hasattr(handle, "to_dict") else handle.to_dict()
     except Exception as exc:  # noqa: BLE001 - recovery retries later
@@ -190,7 +222,8 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
     with _lock:
         sid = handle["subagent_id"]
         _runs[sid] = {"task_id": doc.task_id, "run_id": run_id, "started": time.time(),
-                      "calls": 0, "origin_session": origin_session, "title": doc.title, "handle": handle}
+                      "calls": 0, "origin_session": origin_session, "title": doc.title, "handle": handle,
+                      "toolsets": report}
         early = _started_sessions.pop(sid, "")
         if early:
             _by_child_session[early] = sid

@@ -99,6 +99,31 @@ def inventory(timezone: str) -> list[dict[str, str]]:
             for key, spec in JOBS.items()]
 
 
+def approved_reader_toolsets(state: Any) -> list[str]:
+    """Union of reader toolsets recorded for approved discovery streams, read from plugin state.
+
+    Sources of each stream, plus approved source configs that match one of its sources. Delivery
+    bindings are left out (they carry senders, not readers). MCP toolsets are left out: workers
+    inherit the parent's MCP servers from Hermes. Never raises.
+    """
+    out: list[str] = []
+    try:
+        streams = state.get("streams", default={}) or {}
+        configs = state.get("discovery_sources", default={}) or {}
+        for name, stream in streams.items():
+            sources = [s for s in (stream.get("sources") or []) if isinstance(s, dict)]
+            names = [t for s in sources for t in (s.get("toolsets") or [])]
+            for config in (configs.get(name) or {}).values():
+                if not isinstance(config, dict) or config.get("approved") is False:
+                    continue
+                if any(s.get("name") == config.get("name") and s.get("scope") == config.get("scope") for s in sources):
+                    names += list(config.get("toolsets") or [])
+            out += [t for t in names if isinstance(t, str) and t and not t.startswith("mcp-")]
+    except Exception:  # noqa: BLE001 - missing or odd state means no extra readers
+        return list(dict.fromkeys(out))
+    return list(dict.fromkeys(out))
+
+
 def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None, *, delivery_owner='native_origin', deliver='origin') -> dict[str, Any]:
     """One supported source-first scheduled workflow, no separate executor."""
     return {
