@@ -169,6 +169,24 @@ def test_b2_interrupted_run_resumes_same_run_without_duplicate_children(world, h
     assert len(host.source.calls) == 1 and host2.source.calls == []  # the saved collection was not re-read
 
 
+def test_b3_default_install_researches_in_short_calls_under_the_default_host_deadline(world, host_factory):
+    """No receipt, no timeout raise: the real 420 s default bounds every call, yet research completes."""
+    host = started_host(host_factory)
+    assert host.get_config('discovery_transport_receipt', '') in ('', None)
+    assert host.tool_deadline == 420
+    seed_normal(world, host)
+    host.subagent_lifecycle.child_seconds = 500  # every child outlives one parent call
+    day = P.run_day(host)
+    research = [elapsed for name, elapsed in host.call_durations if name == 'discovery_research_run']
+    assert len(research) >= 2 and max(research) <= 300 < host.tool_deadline
+    assert host.deadline_violations == []
+    assert max(elapsed for _, elapsed in host.call_durations) < 600  # cron inactivity watchdog default
+    assert day['rounds'][0]['status'] == 'running' and day['rounds'][-1]['status'] == 'complete'
+    assert len(host.subagent_lifecycle.launched) == 3  # no duplicate children across calls
+    assert header(day) == NORMAL_HEADER
+    assert day['join']['joined'] and not day['join']['degraded']
+
+
 # --------------------------------------------------------------------------- c
 def test_c1_empty_completed_day(world, host_factory):
     host = started_host(host_factory)

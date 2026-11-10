@@ -25,10 +25,16 @@ def ok(out):
 
 
 def set_clock(host, when):
-    """The only seam: pin the plugin service's wall clock to set the business day."""
+    """The only seam: pin the plugin service's wall clock to set the business day.
+
+    The research supervisor shares the host's virtual clock, so child runtimes
+    and the host's per-call deadline are measured on the same clock.
+    """
     from alchemy_task.discovery_integration import get_service
     from alchemy_task.runtime import Runtime
-    get_service(Runtime(host)).utcnow = lambda: when
+    service = get_service(Runtime(host))
+    service.utcnow = lambda: when
+    service.runner.clock = host.clock
 
 
 def checklist_keys(host):
@@ -67,7 +73,7 @@ def _fetch_callback(host, run_id, info):
         cursor = page['next_cursor']
 
 
-def run_day(host, *, stream='work', decisions=None, max_rounds=6, retry_stale=False):
+def run_day(host, *, stream='work', decisions=None, max_rounds=20, retry_stale=False):
     """One full scheduled run. Returns everything a user or operator can observe."""
     host.current_parent = PARENT
     decisions = decisions or {}
@@ -81,6 +87,7 @@ def run_day(host, *, stream='work', decisions=None, max_rounds=6, retry_stale=Fa
     revision = frozen['index_revision']
     keys = checklist_keys(host)
     rounds = []
+    # The skill's loop: short bounded calls on the SAME run until it reports complete.
     for _ in range(max_rounds):
         res = ok(host.call('discovery_research_run', {'run_id': run_id, 'expected_revision': revision}, session=PARENT))
         rounds.append(res)
@@ -93,9 +100,7 @@ def run_day(host, *, stream='work', decisions=None, max_rounds=6, retry_stale=Fa
                 'assessment': {'accepted': True, 'retryable': True,
                                'reason': 'Full primary, all-status tasks and skills support an independent user action.',
                                'checklist': {k: CHECKLIST_TEXT for k in keys}}}, session=PARENT))
-        if not res['queued'] and not res['awaiting_parent']:
-            break
-        if res['budget_deferred'] and not res['awaiting_parent']:
+        if res['status'] == 'complete':
             break
     join = ok(host.call('discovery_join', {'run_id': run_id}, session=PARENT))
     if not join['joined']:
