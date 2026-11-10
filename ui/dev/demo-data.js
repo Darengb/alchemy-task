@@ -81,7 +81,7 @@ Jordan in #support: "Also, can we get back-in-stock alerts on the Winter Spice C
 <!-- task-research-dossier:start -->
 ## Research dossier
 
-**Content revision:** \`sha256:2f97b81fef29836829203751576d43e5e955dbbb76351368964b458377973bb8\`
+**Content revision:** \`sha256:6471b054efa6517a2591a5303b0c66d707596e4f0e03da1d83a48a7d22c877e0\`
 
 *Researched ${d(-1)}.*
 
@@ -89,9 +89,9 @@ Jordan in #support: "Also, can we get back-in-stock alerts on the Winter Spice C
 
 ### Recommended approach
 
-- Show "Back December 2" on the Winter Spice Chai page, with a "Notify me" button on the sold-out tin.
-- Use Klaviyo's back-in-stock flow, since Klaviyo already sends your email. It needs no new app or subscription.
-- Email everyone who signed up when the 400 tins arrive, using your existing brand template.
+- Show "Back December 2" on the Winter Spice Chai page, and add Klaviyo's back-in-stock form so shoppers can tap "Notify me".
+- Start from Klaviyo's back-in-stock flow template, since Klaviyo already sends your email. It needs no new app or subscription.
+- The flow waits until the tins are back in stock, then emails everyone who signed up. Use your existing brand template.
 - Give the support team a saved reply with the December 2 date, so they can answer the emails already waiting.
 - Test the button and the alert on a sold-out test product before you publish.
 
@@ -105,7 +105,7 @@ Jordan in #support: "Also, can we get back-in-stock alerts on the Winter Spice C
 
 ### Dependencies and risks
 
-- Preorders would capture sales now, but if the shipment slips, customers have already paid.
+- Preorders would capture sales now, but they need a preorder app, and if the shipment slips you would refund or delay paid orders.
 - If the supplier date moves, update the page message and the saved reply the same day.
 
 ### Open questions
@@ -127,9 +127,10 @@ Jordan in #support: "Also, can we get back-in-stock alerts on the Winter Spice C
 
 ### Sources
 
-- [Klaviyo Help Center: back in stock](https://help.klaviyo.com/) - Setting up back-in-stock signups and the alert flow
-- [Shopify Help Center: preorders](https://help.shopify.com/) - Preorder options and their payment tradeoffs
-- [Shopify theme docs](https://shopify.dev/docs/storefronts/themes) - Where to add the button in the product template
+- [Klaviyo: How to set up a back in stock form](https://help.klaviyo.com/hc/en-us/articles/38767539287323) - Needs the Shopify integration and onsite tracking
+- [Klaviyo: How to build a back in stock flow](https://help.klaviyo.com/hc/en-us/articles/115003872251) - Setting up back-in-stock signups and the alert flow
+- [Shopify: Managing pre-orders](https://help.shopify.com/en/manual/products/purchase-options/pre-orders/manage-pre-orders) - Preorder options and their payment tradeoffs
+- [Shopify theme docs](https://shopify.dev/docs/storefronts/themes) - Where to add the restock date in the product template
 <!-- task-research-dossier:end -->
 `,
     }),
