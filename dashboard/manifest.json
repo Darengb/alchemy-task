@@ -2,7 +2,7 @@
   "name": "alchemy-task",
   "label": "Tasks",
   "description": "Your Alchemy Task tasks by day, week and month, and the proposals from discovery runs.",
-  "icon": "Star",
+  "icon": "Sparkles",
   "version": "0.1.0",
   "tab": {
     "path": "/tasks",
