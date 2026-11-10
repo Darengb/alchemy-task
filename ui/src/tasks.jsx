@@ -246,6 +246,12 @@ function DesktopMonth({ weeks, month, days, overdue, today, selectedId, drag, ov
                 ) : null}
               </div>
               <MonthTasks tasks={list} date={d} selectedId={selectedId} expand={expand} />
+              <div className="at-cell-footer">
+                <button type="button" className="at-cell-view" data-no-drag="" aria-label={`View ${D.longDate(d)}`} title="View day"
+                  onClick={(e) => { e.stopPropagation(); expand(d, e.currentTarget.closest('.at-cell')) }}>
+                  <Icon name="arrowR" size={12} /><span>View day</span>
+                </button>
+              </div>
             </div>
           )
         })}
