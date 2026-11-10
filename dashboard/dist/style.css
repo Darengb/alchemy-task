@@ -2366,33 +2366,33 @@ html.at-dragging {
   margin-left: 0;
 }
 .at-sources {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 10px 14px;
-  padding: 12px 14px;
-  margin: -8px 0 20px;
-  border-radius: var(--at-r-lg);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 6px 12px;
+  padding: 8px 8px 8px 12px;
+  margin: -10px 0 16px;
+  border-radius: 10px;
   background: var(--at-soft);
   border: 1px solid var(--at-line-soft);
 }
 .at-sources-rows {
+  flex: 1 1 320px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 5px;
   min-width: 0;
 }
 .at-sources-row {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 .at-sources-label {
   flex: none;
-  padding-top: 4px;
   font-family: var(--at-mono);
-  font-size: 10px;
+  font-size: 9.5px;
   letter-spacing: .12em;
   text-transform: uppercase;
   color: var(--at-faint);
@@ -2401,20 +2401,21 @@ html.at-dragging {
 .at-sources-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px 5px;
   min-width: 0;
 }
 .at-source-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   max-width: 100%;
-  padding: 4px 10px 4px 8px;
+  padding: 2px 8px 2px 6px;
   border-radius: 999px;
-  font-size: 12.5px;
-  color: var(--at-fg);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--at-fg2, var(--at-fg));
   background: var(--at-accent-tint);
-  border: 1px solid rgba(130, 140, 255, .22);
+  border: 1px solid rgba(130, 140, 255, .18);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2423,11 +2424,19 @@ html.at-dragging {
   flex: none;
   color: var(--at-accent-text);
 }
-.at-sources > .at-btn {
-  align-self: center;
+.at-btn.at-sources-add {
+  flex: none;
+  margin-left: auto;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  gap: 5px;
+}
+.at-root.is-narrow .at-btn.at-sources-add {
+  height: 30px;
 }
 .at-copy-prompt {
-  grid-column: 1 / -1;
+  flex: 1 1 100%;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -2459,15 +2468,12 @@ html.at-dragging {
   color: #fff;
 }
 @media (max-width: 560px) {
-  .at-sources {
-    grid-template-columns: 1fr;
-  }
-  .at-sources > .at-btn {
-    justify-self: start;
+  .at-btn.at-sources-add {
+    margin-left: 0;
   }
   .at-sources-row {
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
   }
   .at-copy-prompt-row {
     flex-direction: column;

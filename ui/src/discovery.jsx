@@ -110,14 +110,14 @@ function SourcesBar({ streams }) {
             <div className="at-sources-chips">
               {(s.sources || []).length ? (s.sources || []).map((src, i) => (
                 <span key={`${src.name}-${i}`} className="at-source-chip" title={src.scope || src.name}>
-                  <Icon name={SOURCE_ICONS[src.type] || 'link'} size={13} />{src.name}
+                  <Icon name={SOURCE_ICONS[src.type] || 'dot'} size={12} />{src.name}
                 </span>
               )) : <span className="at-muted">No sources yet</span>}
             </div>
           </div>
         ))}
       </div>
-      <Button size="sm" variant="ghost" icon="plus" onClick={() => setAdding((v) => !v)} aria-expanded={adding}>Add a source</Button>
+      <Button size="sm" icon="plus" className="at-sources-add" onClick={() => setAdding((v) => !v)} aria-expanded={adding}>Add a source</Button>
       {adding ? <CopyPrompt className="is-compact" text={ADD_SOURCE_PROMPT} /> : null}
     </div>
   )
