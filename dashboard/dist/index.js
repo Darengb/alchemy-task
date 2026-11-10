@@ -1,25 +1,2735 @@
-(()=>{var Qt=window.__HERMES_PLUGIN_SDK__.React,e=Qt;var ct=t=>String(t).padStart(2,"0");function Ge(t){return`${t.getUTCFullYear()}-${ct(t.getUTCMonth()+1)}-${ct(t.getUTCDate())}`}function he(t){let[s,n,a]=String(t).split("-").map(Number);return new Date(Date.UTC(s,n-1,a))}function j(t,s){let n=he(t);return n.setUTCDate(n.getUTCDate()+s),Ge(n)}function Te(t,s){let n=he(t),a=n.getUTCDate();n.setUTCDate(1),n.setUTCMonth(n.getUTCMonth()+s);let o=new Date(Date.UTC(n.getUTCFullYear(),n.getUTCMonth()+1,0)).getUTCDate();return n.setUTCDate(Math.min(a,o)),Ge(n)}var dt=t=>(he(t).getUTCDay()+6)%7;function De(t){return j(t,-dt(t))}function xe(t){return t.slice(0,8)+"01"}function Zt(t){let s=he(xe(t));return Ge(new Date(Date.UTC(s.getUTCFullYear(),s.getUTCMonth()+1,0)))}function Rt(t,s){return Math.round((he(s)-he(t))/864e5)}function Ae(t,s){let n=[];for(let a=t;a<=s;a=j(a,1))n.push(a);return n}function Me(t){let s=De(xe(t)),n=j(De(Zt(t)),6),a=Ae(s,n),o=[];for(let i=0;i<a.length;i+=7)o.push(a.slice(i,i+7));return o}var fe=(t,s)=>he(t).toLocaleDateString(void 0,{timeZone:"UTC",...s}),le=(t,s="short")=>fe(t,{weekday:s}),ze=(t,s="long")=>fe(t,{month:s}),ve=t=>he(t).getUTCDate();function Ee(t){return fe(t,{weekday:"long",month:"long",day:"numeric"})}function de(t,s){let n=!s||t.slice(0,4)===s.slice(0,4);return fe(t,{weekday:"short",month:"short",day:"numeric",...n?{}:{year:"numeric"}})}function U(t,s){if(!t)return"";let n=Rt(s,t);return n===0?"Today":n===1?"Tomorrow":n===-1?"Yesterday":n>1&&n<7?le(t,"long"):de(t,s)}function Xe(t,s){let n=(s-dt(t)+7)%7||7;return j(t,n)}function Ke(t,s,n){if(t==="month")return fe(s,{month:"long",...s.slice(0,4)!==n.slice(0,4)?{year:"numeric"}:{}});if(t==="week"){let a=De(s),o=j(a,6),i=a.slice(0,7)===o.slice(0,7),r=fe(a,{month:"short",day:"numeric"}),l=i?String(ve(o)):fe(o,{month:"short",day:"numeric"});return`${r} \u2013 ${l}`}return U(s,n)==="Today"?"Today":fe(s,{weekday:"long",month:"short",day:"numeric"})}var Y=t=>t.scheduled||t.due||null;var mt=e.createContext(null),Se=()=>e.useContext(mt),es=380,pt=6;function Je(t,s){let n=document.elementFromPoint(t,s),a=n&&n.closest("[data-at-drop]");return a?a.getAttribute("data-at-drop"):null}function ts(t){for(let s=t;s&&s!==document.body;s=s.parentElement){let n=getComputedStyle(s);if(/(auto|scroll)/.test(n.overflowY)&&s.scrollHeight>s.clientHeight)return s}return document.scrollingElement}function ft({onDrop:t,children:s}){let[n,a]=e.useState(null),o=e.useRef(null),i=e.useRef(!1),r=e.useRef(0),l=e.useRef(null),p=m=>{let g=o.current&&o.current.over;o.current=o.current?{...o.current,...m}:null;let v=o.current;v&&l.current&&(l.current.style.transform=`translate(${v.x+12}px, ${v.y-20}px)`),v&&v.over!==g&&a(v)},c=(m,g)=>{cancelAnimationFrame(r.current);let v=document.elementFromPoint(m,g),b=v&&ts(v);if(!b)return;let D=b===document.scrollingElement?{top:0,bottom:window.innerHeight}:b.getBoundingClientRect(),E=56,N=g<D.top+E?-Math.ceil((D.top+E-g)/4):g>D.bottom-E?Math.ceil((g-(D.bottom-E))/4):0;if(!N)return;let y=()=>{o.current&&(b.scrollTop+=N,r.current=requestAnimationFrame(y))};r.current=requestAnimationFrame(y)},u=(m,g,v)=>{cancelAnimationFrame(r.current);let b=o.current;if(o.current=null,a(null),l.current&&(l.current.remove(),l.current=null),document.documentElement.classList.remove("at-dragging"),!b)return;i.current=!0,setTimeout(()=>{i.current=!1},50);let D=v?null:Je(m,g);D&&D!==b.from&&t(b.task,D)},f=(m,g,v,b,D)=>{o.current={task:m,from:g,x:v,y:b,over:g,w:D},a(o.current);let E=document.createElement("div");if(E.className="at-drag-ghost at-vars",E.textContent=m.title,E.style.transform=`translate(${v+12}px, ${b-20}px)`,document.body.appendChild(E),l.current=E,document.documentElement.classList.add("at-dragging"),navigator.vibrate)try{navigator.vibrate(8)}catch{}},h=e.useCallback((m,g)=>({onPointerDown:v=>{if(v.pointerType!=="mouse"||v.button!==0||v.target.closest("button, input, textarea, a, [data-no-drag]"))return;let b=v.clientX,D=v.clientY,E=v.currentTarget.getBoundingClientRect().width,N=L=>{if(!o.current){if(Math.hypot(L.clientX-b,L.clientY-D)<pt)return;f(m,g,L.clientX,L.clientY,E)}p({x:L.clientX,y:L.clientY,over:Je(L.clientX,L.clientY)}),c(L.clientX,L.clientY)},y=L=>{window.removeEventListener("pointermove",N),window.removeEventListener("pointerup",y),window.removeEventListener("keydown",w),o.current&&u(L.clientX,L.clientY,!1)},w=L=>{L.key==="Escape"&&(y({clientX:-1,clientY:-1}),u(-1,-1,!0))};window.addEventListener("pointermove",N),window.addEventListener("pointerup",y),window.addEventListener("keydown",w)},onTouchStart:v=>{if(v.target.closest("button, input, textarea, a, [data-no-drag]"))return;let b=v.touches[0],D=b.clientX,E=b.clientY,N=v.currentTarget.getBoundingClientRect().width,y={x:D,y:E},w=setTimeout(()=>{w=null,f(m,g,y.x,y.y,N)},es),L=P=>{let B=P.touches[0];if(y={x:B.clientX,y:B.clientY},!o.current){w&&Math.hypot(B.clientX-D,B.clientY-E)>pt&&(clearTimeout(w),w=null,$());return}P.preventDefault(),p({x:B.clientX,y:B.clientY,over:Je(B.clientX,B.clientY)}),c(B.clientX,B.clientY)},F=P=>{w&&clearTimeout(w),$(),o.current&&(P.preventDefault(),u(y.x,y.y,P.type==="touchcancel"))},$=()=>{document.removeEventListener("touchmove",L),document.removeEventListener("touchend",F),document.removeEventListener("touchcancel",F)};document.addEventListener("touchmove",L,{passive:!1}),document.addEventListener("touchend",F),document.addEventListener("touchcancel",F)},onClickCapture:v=>{i.current&&(v.stopPropagation(),v.preventDefault())},onContextMenu:v=>{o.current&&v.preventDefault()}}),[]),d=e.useMemo(()=>({drag:n,bind:h}),[n,h]);return e.useEffect(()=>()=>{l.current&&l.current.remove()},[]),e.createElement(mt.Provider,{value:d},s)}var pe=class extends Error{constructor(s,n,a=0){super(n||s),this.code=s||"error",this.status=a}};function ss(t){let s=t&&(t.body||t.responseText||t.message||"");if(s&&typeof s=="object")return s;let n=String(s),a=n.indexOf("{");if(a>=0)try{return JSON.parse(n.slice(a))}catch{}return null}function ns(t){if(t instanceof pe)return t;let s=ss(t),n=s&&(s.error||s.detail),a=t&&t.status||0;return n&&typeof n=="object"?new pe(n.code,n.message,a):typeof n=="string"?new pe(a===404?"not_found":"error",n,a):a===404?new pe("not_found","Not found",404):a===0||/network|failed to fetch|unreachable/i.test(String(t&&t.message))?new pe("offline","Hermes is not reachable right now.",a):new pe("error",t&&t.message||"Something went wrong",a)}var Qe=t=>{let s=Object.entries(t).filter(([,n])=>n!=null&&n!==""&&n!==!1).map(([n,a])=>`${encodeURIComponent(n)}=${encodeURIComponent(a===!0?"1":a)}`);return s.length?`?${s.join("&")}`:""},J=encodeURIComponent;function ht(t){async function s(n,a,o){let i;try{i=await t(n,a,o)}catch(r){throw ns(r)}if(i&&i.ok===!1){let r=i.error||{};throw new pe(r.code||i.needs||"error",r.message||i.message,200)}return i}return{meta:()=>s("GET","/meta"),tasks:(n,a,{area:o,includeDone:i=!0}={})=>s("GET","/tasks"+Qe({from:n,to:a,area:o,include_done:i})),overdue:({area:n}={})=>s("GET","/overdue"+Qe({area:n})),task:n=>s("GET",`/tasks/${J(n)}`),patch:(n,a)=>s("PATCH",`/tasks/${J(n)}`,a),complete:n=>s("POST",`/tasks/${J(n)}/complete`,{}),reopen:n=>s("POST",`/tasks/${J(n)}/reopen`,{}),putBody:(n,a,o)=>s("PUT",`/tasks/${J(n)}/body`,{body:a,expected_revision:o}),create:n=>s("POST","/tasks",n),handoff:(n,a)=>s("POST",`/tasks/${J(n)}/handoff`,{surface:a}),handoffStatus:n=>s("GET",`/handoffs/${J(n)}`),runs:(n={})=>s("GET","/runs"+Qe(n)),run:n=>s("GET",`/runs/${J(n)}`),approve:(n,a)=>s("POST",`/proposals/${J(n)}/approve`,a),dismiss:n=>s("POST",`/proposals/${J(n)}/dismiss`,{}),resume:(n,a)=>s("POST",`/runs/${J(n)}/units/${J(a)}/resume`,{}),settings:()=>s("GET","/settings"),patchStream:(n,a)=>s("PATCH",`/settings/streams/${J(n)}`,a),runStream:n=>s("POST",`/settings/streams/${J(n)}/run`,{}),patchTaskSettings:n=>s("PATCH","/settings/tasks",n)}}function W(t){switch(t&&t.code){case"stale_revision":case"retry":return"This task changed somewhere else. Reload it to see the latest version.";case"offline":return"Hermes is not reachable right now. Your change was not saved.";case"needs_due":case"due":return"Pick a date first.";case"needs_area":case"area":return"Pick an area first.";case"already_resolved":return"This proposal was already handled.";case"expired":return"This proposal expired.";case"not_production":return"This was a test run, so it cannot change tasks.";case"not_found":return"It is no longer there. It may have been moved or deleted.";default:return t&&t.message||"Something went wrong."}}function vt(t){let s={byId:{},today:null,loading:0,error:null,version:0},n=new Set,a=new Map,o=new Map,i=()=>{s={...s,version:s.version+1},n.forEach(u=>u())},r=u=>{s={...s,...u},i()};function l(u,f){let h={...s.byId},d=new Set;for(let m of u){if(d.add(m.task_id),a.has(m.task_id))continue;let g=h[m.task_id]||{},v=m.body!==void 0?m.body:g.revision===m.revision?g.body:void 0;h[m.task_id]={...g,...m,body:v}}if(f)for(let[m,g]of Object.entries(h))!d.has(m)&&!a.has(m)&&f(g)&&delete h[m];s={...s,byId:h}}async function p(u){r({loading:s.loading+1});try{return await u}finally{r({loading:Math.max(0,s.loading-1)})}}let c={getState:()=>s,subscribe:u=>(n.add(u),()=>n.delete(u)),setToday:u=>{u!==s.today&&r({today:u})},async loadRange(u,f){o.set(`${u}:${f}`,{from:u,to:f});let h=await p(t.tasks(u,f));return h.today&&(s={...s,today:h.today}),l(h.tasks||[],d=>{let m=Y(d);return m&&m>=u&&m<=f}),r({error:null}),h},async loadOverdue(){let u=await p(t.overdue()),f=u.today||s.today;return u.today&&(s={...s,today:u.today}),l(u.tasks||[],h=>{let d=Y(h);return h.status!=="done"&&h.status!=="cancelled"&&d&&d<f}),r({error:null}),u},async refresh(){let u=[...o.values()].slice(-4);try{await Promise.all([...u.map(f=>c.loadRange(f.from,f.to)),c.loadOverdue()])}catch(f){r({error:f})}},async loadTask(u){let f=await t.task(u);return l([f.task]),i(),f.task},put(u){l([u]),i()},async mutate(u,f,h){let d=s.byId[u];a.set(u,(a.get(u)||0)+1),d&&f&&(s={...s,byId:{...s.byId,[u]:{...d,...f}}},i());try{let m=await h(),g=(a.get(u)||1)-1;return g?a.set(u,g):a.delete(u),m&&m.task&&(l([m.task]),i()),m}catch(m){let g=(a.get(u)||1)-1;throw g?a.set(u,g):a.delete(u),d&&(s={...s,byId:{...s.byId,[u]:d}},i()),m}}};return c}function ye(t,s){let n=e.useCallback(()=>s(t.getState()),[t,s]),[a,o]=e.useState(n);return e.useEffect(()=>(o(n()),t.subscribe(()=>o(n()))),[t,n]),a}var Ze=e.createContext(null),A=()=>e.useContext(Ze);function yt(t,s){let n=`alchemy-task.${t}`,[a,o]=e.useState(()=>{try{let r=window.localStorage.getItem(n);return r===null?s:JSON.parse(r)}catch{return s}}),i=e.useCallback(r=>{o(l=>{let p=typeof r=="function"?r(l):r;try{window.localStorage.setItem(n,JSON.stringify(p))}catch{}return p})},[n]);return[a,i]}function gt(t){let[s,n]=e.useState(()=>typeof window<"u"?window.innerWidth:1200);return e.useLayoutEffect(()=>{let a=t.current;if(!a)return;n(a.getBoundingClientRect().width);let o=new ResizeObserver(i=>n(i[0].contentRect.width));return o.observe(a),()=>o.disconnect()},[t]),s}function kt(t,s,n,a,o=0){return t*(n+o)-o<=s?t:Math.min(t,Math.max(0,Math.floor((s-a)/(n+o))))}var Re={check:"M5 12.5l4.2 4.2L19 7",chevL:"M15 18l-6-6 6-6",chevR:"M9 6l6 6-6 6",chevD:"M6 9l6 6 6-6",gear:"M12 15.2a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4z M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z",x:"M6 6l12 12M18 6L6 18",plus:"M12 5v14M5 12h14",more:"M5 12h.01M12 12h.01M19 12h.01",cal:"M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 011 1v13a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1z",spark:"M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z M19 16l.7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7z",link:"M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5",alert:"M12 9v4M12 17h.01M10.3 3.9L2.4 18a2 2 0 001.7 3h15.8a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z",refresh:"M20 11a8 8 0 10-2.3 5.7M20 5v6h-6",inbox:"M4 13l2.5-7h11L20 13M4 13v5a1 1 0 001 1h14a1 1 0 001-1v-5M4 13h4l1.5 2.5h5L16 13h4",edit:"M4 20h4L19 9l-4-4L4 16v4z M13.5 6.5l4 4",grip:"M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",arrowR:"M5 12h14M13 6l6 6-6 6",undo:"M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 010 11H11",dot:"M12 12h.01",list:"M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01",clock:"M12 7v5l3 2 M12 21a9 9 0 100-18 9 9 0 000 18z",play:"M7 5l12 7-12 7z",clipboard:"M9 4.5h6a1 1 0 011 1V7H8V5.5a1 1 0 011-1z M8 6H6.5A1.5 1.5 0 005 7.5v11A1.5 1.5 0 006.5 20h11a1.5 1.5 0 001.5-1.5v-11A1.5 1.5 0 0017.5 6H16",chat:"M5 5.5h14a1.5 1.5 0 011.5 1.5v8a1.5 1.5 0 01-1.5 1.5h-7.5L7 20v-3.5H5A1.5 1.5 0 013.5 15V7A1.5 1.5 0 015 5.5z M8 10h8 M8 13h5"};function M({name:t,size:s=16,className:n="",strokeWidth:a=1.8}){return e.createElement("svg",{className:"at-icon "+n,width:s,height:s,viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:a,strokeLinecap:"round",strokeLinejoin:"round","aria-hidden":"true"},e.createElement("path",{d:Re[t]||Re.dot}))}var C=(...t)=>t.filter(Boolean).join(" ");async function et(t){try{if(navigator.clipboard&&window.isSecureContext)return await navigator.clipboard.writeText(t),!0}catch{}let s=document.createElement("textarea");s.value=t,s.setAttribute("readonly",""),s.style.cssText="position:fixed;top:0;left:0;opacity:0;font-size:16px",document.body.appendChild(s),s.select(),s.setSelectionRange(0,t.length);let n=!1;try{n=document.execCommand("copy")}catch{n=!1}return s.remove(),n}var wt=t=>`${t.title} (task ID: ${t.task_id})`;function O({variant:t="default",size:s,icon:n,children:a,className:o,...i}){return e.createElement("button",{type:"button",className:C("at-btn",`at-btn-${t}`,s&&`at-btn-${s}`,o),...i},n?e.createElement(M,{name:n,size:s==="sm"?14:16}):null,a?e.createElement("span",null,a):null)}function V({icon:t,label:s,className:n,size:a=16,...o}){return e.createElement("button",{type:"button",className:C("at-iconbtn",n),"aria-label":s,title:s,...o},e.createElement(M,{name:t,size:a}))}function Ie({checked:t,onChange:s,label:n,size:a="md",tone:o}){return e.createElement("button",{type:"button",role:"checkbox","aria-checked":!!t,"aria-label":n,className:C("at-check",`at-check-${a}`,t&&"is-on",o&&`at-tone-${o}`),"data-no-drag":"",onClick:i=>{i.stopPropagation(),s(!t)}},e.createElement("svg",{viewBox:"0 0 24 24","aria-hidden":"true"},e.createElement("path",{d:Re.check})))}function Be({value:t,options:s,onChange:n,label:a}){return e.createElement("div",{className:"at-seg",role:"tablist","aria-label":a},s.map(o=>e.createElement("button",{key:o.value,type:"button",role:"tab","aria-selected":t===o.value,className:C("at-seg-item",t===o.value&&"is-on"),onClick:()=>n(o.value)},o.label)))}function K({size:t=14}){return e.createElement("span",{className:"at-spinner",style:{width:t,height:t},"aria-label":"Loading"})}function ue({title:t,count:s,defaultOpen:n=!1,tone:a,children:o,right:i,className:r}){let[l,p]=e.useState(n);return e.createElement("section",{className:C("at-disc",l&&"is-open",a&&`at-tone-${a}`,r)},e.createElement("button",{type:"button",className:"at-disc-head","aria-expanded":l,onClick:()=>p(!l)},e.createElement(M,{name:"chevR",size:14,className:"at-disc-chev"}),e.createElement("span",{className:"at-disc-title"},t),s!==void 0?e.createElement("span",{className:"at-count"},s):null,e.createElement("span",{className:"at-flex"}),i),l?e.createElement("div",{className:"at-disc-body"},o):null)}function te({area:t}){return e.createElement("span",{className:"at-areadot",style:{"--at-area":as(t)},title:t})}var bt=[212,152,28,280,340,188,48,252];function as(t){if(!t)return"var(--at-faint)";let s=0;for(let n of String(t))s=s*31+n.charCodeAt(0)>>>0;return`hsl(${bt[s%bt.length]} 78% 68%)`}var Oe=t=>{let s=t.currentTarget;s.parentElement&&s.parentElement.classList.toggle("is-scrolled",s.scrollTop>2)};function He(t,s,n){let a=e.useRef(n);a.current=n,e.useEffect(()=>{let o=t.current;if(!o||!s)return;let i=null,r=0,l=!1,p=h=>h.closest&&h.closest(".at-scroll"),c=h=>{if(h.touches.length!==1)return;let d=h.target;if(d.closest&&d.closest("textarea, input, [contenteditable], .at-pop")){i=null;return}i={y:h.touches[0].clientY,t:Date.now(),fromBar:!!(d.closest&&d.closest(".at-panel-bar")),scroller:p(d)},r=0,l=!1},u=h=>{if(!i)return;let d=h.touches[0].clientY-i.y;if(!l){let m=!i.scroller||i.scroller.scrollTop<=0;if(d>6&&(i.fromBar||m))l=!0,i.y=h.touches[0].clientY,o.style.transition="none",o.style.animation="none";else if(Math.abs(d)>6){i=null;return}}l&&(h.preventDefault(),r=Math.max(0,h.touches[0].clientY-i.y),o.style.transform=`translateY(${r}px)`)},f=()=>{if(!i)return;let h=l,d=r/Math.max(1,Date.now()-i.t);i=null,l=!1,h&&(o.style.transition="transform .24s cubic-bezier(.2, .8, .2, 1)",r>110||d>.6?(o.style.transform="translateY(100%)",setTimeout(()=>a.current(),200)):o.style.transform="")};return o.addEventListener("touchstart",c,{passive:!0}),o.addEventListener("touchmove",u,{passive:!1}),o.addEventListener("touchend",f),o.addEventListener("touchcancel",f),()=>{o.removeEventListener("touchstart",c),o.removeEventListener("touchmove",u),o.removeEventListener("touchend",f),o.removeEventListener("touchcancel",f)}},[t,s])}var Nt=e.createContext(null),ee=()=>e.useContext(Nt);function Dt({rootRef:t,children:s}){let[n,a]=e.useState(null),o=e.useCallback(()=>a(l=>(l&&l.onClose&&l.onClose(),null)),[]),i=e.useCallback((l,p,c={})=>a({anchor:l,render:p,...c}),[]),r=e.useMemo(()=>({open:i,close:o}),[i,o]);return e.createElement(Nt.Provider,{value:r},s,n?e.createElement(os,{rootRef:t,...n,close:o}):null)}function os({rootRef:t,anchor:s,render:n,close:a,align:o="start",width:i}){let r=e.useRef(null),[l,p]=e.useState(null);return e.useLayoutEffect(()=>{let c=t.current,u=r.current;if(!c||!u||!s)return;let f=()=>{let d=c.getBoundingClientRect(),m=s.getBoundingClientRect?s.getBoundingClientRect():s,g=u.offsetWidth,v=u.offsetHeight,b=(o==="end"?m.right-g:m.left)-d.left;b=Math.max(8,Math.min(b,d.width-g-8));let D=m.bottom-d.top+6;D+v>d.height-8&&m.top-d.top-v-6>8&&(D=m.top-d.top-v-6),D=Math.max(8,Math.min(D,d.height-v-8)),p({left:b,top:D})};f();let h=new ResizeObserver(f);return h.observe(u),()=>h.disconnect()},[s,t,o]),e.useEffect(()=>{let c=f=>{r.current&&!r.current.contains(f.target)&&!(s&&s.contains&&s.contains(f.target))&&a()},u=f=>{f.key==="Escape"&&(f.stopPropagation(),a())};return document.addEventListener("pointerdown",c,!0),document.addEventListener("keydown",u,!0),()=>{document.removeEventListener("pointerdown",c,!0),document.removeEventListener("keydown",u,!0)}},[s,a]),e.createElement("div",{ref:r,className:"at-pop",role:"dialog",style:{left:l?l.left:-9999,top:l?l.top:-9999,width:i}},n(a))}function Q({items:t,close:s}){return e.createElement("div",{className:"at-menu",role:"menu"},t.filter(Boolean).map((n,a)=>n==="-"?e.createElement("div",{key:a,className:"at-menu-sep"}):e.createElement("button",{key:a,type:"button",role:"menuitem",className:C("at-menu-item",n.danger&&"is-danger"),onClick:()=>{s(),n.run()}},n.icon?e.createElement(M,{name:n.icon,size:15}):e.createElement("span",{className:"at-menu-pad"}),e.createElement("span",{className:"at-flex"},n.label),n.hint?e.createElement("span",{className:"at-menu-hint"},n.hint):null)))}function Ue(t){return[{label:"Today",date:t,hint:le(t)},{label:"Tomorrow",date:j(t,1),hint:le(j(t,1))},{label:"Next Monday",date:Xe(t,0),hint:de(Xe(t,0),t).replace(/^\w+,\s*/,"")},{label:"In a week",date:j(t,7),hint:de(j(t,7),t).replace(/^\w+,\s*/,"")}]}function ge({value:t,today:s,onPick:n,onClear:a,close:o,extra:i}){let[r,l]=e.useState(xe(t||s)),p=Me(r),c=u=>{n(u),o&&o()};return e.createElement("div",{className:"at-dp"},e.createElement("div",{className:"at-dp-quick"},Ue(s).map(u=>e.createElement("button",{key:u.label,type:"button",className:C("at-dp-q",t===u.date&&"is-on"),onClick:()=>c(u.date)},e.createElement("span",null,u.label),e.createElement("span",{className:"at-muted"},u.hint)))),e.createElement("div",{className:"at-dp-head"},e.createElement("span",{className:"at-dp-title"},ze(r)," ",r.slice(0,4)!==s.slice(0,4)?r.slice(0,4):""),e.createElement(V,{icon:"chevL",label:"Previous month",onClick:()=>l(Te(r,-1))}),e.createElement(V,{icon:"chevR",label:"Next month",onClick:()=>l(Te(r,1))})),e.createElement("div",{className:"at-dp-grid",role:"grid"},["M","T","W","T","F","S","S"].map((u,f)=>e.createElement("span",{key:f,className:"at-dp-dow"},u)),p.flat().map(u=>e.createElement("button",{key:u,type:"button",onClick:()=>c(u),className:C("at-dp-day",u.slice(0,7)!==r.slice(0,7)&&"is-out",u===s&&"is-today",u===t&&"is-on")},ve(u)))),a||i?e.createElement("div",{className:"at-dp-foot"},i,e.createElement("span",{className:"at-flex"}),a?e.createElement(O,{size:"sm",variant:"ghost",onClick:()=>{a(),o&&o()}},"Clear"):null):null)}var xt=e.createContext(null),St=e.createContext(null),ne=()=>e.useContext(xt);function Ct({children:t}){let[s,n]=e.useState([]),a=e.useRef(0),o=e.useCallback(l=>n(p=>p.filter(c=>c.id!==l)),[]),i=e.useCallback((l,p={})=>{let c=++a.current;return n(u=>[...u.slice(-2),{id:c,message:l,...p}]),setTimeout(()=>o(c),p.duration||(p.undo?6500:p.tone==="error"?7e3:3500)),c},[o]),r=e.useMemo(()=>({toasts:s,dismiss:o}),[s,o]);return e.createElement(xt.Provider,{value:i},e.createElement(St.Provider,{value:r},t))}function Tt(){let{toasts:t,dismiss:s}=e.useContext(St);return e.createElement("div",{className:"at-toasts","aria-live":"polite"},t.map(n=>e.createElement("div",{key:n.id,className:C("at-toast",n.tone&&`at-tone-${n.tone}`)},n.tone==="error"?e.createElement(M,{name:"alert",size:15}):null,e.createElement("span",{className:"at-flex"},n.message),n.undo?e.createElement("button",{type:"button",className:"at-toast-act",onClick:()=>{s(n.id),n.undo()}},"Undo"):null,n.action?e.createElement("button",{type:"button",className:"at-toast-act",onClick:()=>{s(n.id),n.action.run()}},n.action.label):null)))}var Mt={urgent:0,high:1,normal:2,low:3},q=t=>t.status==="done"||t.status==="cancelled",Et=(t,s)=>(Mt[t.priority]??2)-(Mt[s.priority]??2)||t.title.localeCompare(s.title);function Le(){let{store:t,prefs:s}=A(),n=ye(t,rs),a=ye(t,is);return e.useMemo(()=>{let o={},i=[];for(let r of Object.values(n)){if(s.area&&r.area!==s.area)continue;let l=Y(r);l&&(!q(r)&&a&&l<a&&i.push(r),(o[l]||(o[l]=[])).push(r))}for(let r of Object.keys(o))o[r].sort((l,p)=>Number(q(l))-Number(q(p))||Et(l,p));return i.sort((r,l)=>Y(l).localeCompare(Y(r))||Et(r,l)),{days:o,overdue:i,today:a}},[n,a,s.area])}var rs=t=>t.byId,is=t=>t.today;function tt({task:t,from:s,compact:n,showDate:a,selected:o}){let{actions:i,today:r}=A(),{bind:l}=Se(),p=ee(),c=q(t),u=!c&&Y(t)&&Y(t)<r,f=t.due&&t.scheduled&&t.due!==t.scheduled,h=t.research==="pending"||t.research==="running",d=m=>{m.stopPropagation(),p.open(m.currentTarget,g=>e.createElement(ls,{task:t,close:g}),{width:236,align:"end"})};return e.createElement("div",{className:C("at-row",n&&"is-compact",c&&"is-done",o&&"is-selected",u&&"is-late"),...l(t,s),onClick:()=>{p.close(),i.open(t.task_id)},onKeyDown:m=>{m.key==="Enter"&&(p.close(),i.open(t.task_id)),m.key===" "&&m.target===m.currentTarget&&(m.preventDefault(),i.toggle(t))},tabIndex:0,role:"button","aria-label":t.title,"data-task":t.task_id},e.createElement(Ie,{checked:c,onChange:()=>i.toggle(t),label:c?"Mark not done":"Mark done",size:n?"sm":"md",tone:u||t.priority==="urgent"||t.priority==="high"?"high":void 0}),e.createElement("div",{className:"at-row-main"},e.createElement("div",{className:"at-row-title",title:n?t.title:void 0},t.title),n?null:e.createElement("div",{className:"at-row-meta"},t.area?e.createElement("span",{className:"at-meta-area"},e.createElement(te,{area:t.area}),t.area):null,a?e.createElement("span",{className:C("at-meta-date",u&&"is-late")},U(Y(t),r)):null,f?e.createElement("span",{className:"at-meta-due"},"due ",U(t.due,r)):null,t.priority==="urgent"||t.priority==="high"?e.createElement("span",{className:"at-meta-prio"},t.priority):null,t.status==="waiting"?e.createElement("span",{className:"at-meta-status"},"waiting"):null,t.status==="in-progress"?e.createElement("span",{className:"at-meta-status is-active"},"in progress"):null,h?e.createElement("span",{className:"at-meta-research"},e.createElement(M,{name:"spark",size:12}),"researching"):null)),n?null:e.createElement(V,{icon:"more",label:"Task actions",className:"at-row-more",onClick:d,"data-no-drag":""}))}function ls({task:t,close:s}){let{actions:n,today:a}=A(),[o,i]=e.useState(!1);if(o)return e.createElement(ge,{value:Y(t),today:a,onPick:l=>n.move(t,l),close:s});let r=Ue(a).slice(0,3).map(l=>({label:l.label,hint:l.hint,icon:"cal",run:()=>n.move(t,l.date)})).filter((l,p)=>Ue(a)[p].date!==Y(t));return e.createElement("div",{className:"at-menu",role:"menu"},e.createElement("div",{className:"at-menu-label"},"Move to"),e.createElement(Q,{items:r,close:s}),e.createElement("button",{type:"button",className:"at-menu-item",onClick:()=>i(!0)},e.createElement(M,{name:"cal",size:15}),e.createElement("span",{className:"at-flex"},"Pick a date\u2026")),e.createElement("div",{className:"at-menu-sep"}),e.createElement(Q,{close:s,items:[{label:q(t)?"Mark not done":"Mark done",icon:"check",run:()=>n.toggle(t)},{label:"Open",icon:"arrowR",run:()=>n.open(t.task_id)}]}))}function st({date:t,tasks:s=[],overdue:n=[],compact:a,empty:o="Nothing planned",showAdd:i}){let{today:r,prefs:l,selectedId:p}=A(),{drag:c}=Se(),u=t===r,f=l.hideDone?s.filter(d=>!q(d)):s,h=s.length-f.length;return e.createElement("div",{className:C("at-daylist",c&&c.over===t&&"is-over"),"data-at-drop":t},u&&n.length?e.createElement(us,{tasks:n}):null,f.map(d=>e.createElement(tt,{key:d.task_id,task:d,from:t,compact:a,selected:p===d.task_id})),!f.length&&!(u&&n.length)?e.createElement("div",{className:"at-empty-day"},h?`${h} done`:o):null,i?e.createElement(_t,{date:t}):null,c&&c.over===t&&c.from!==t?e.createElement("div",{className:"at-drop-hint"},"Move to ",U(t,r)):null)}function us({tasks:t,defaultOpen:s=!1}){let{actions:n,today:a,selectedId:o}=A();return e.createElement(ue,{className:"at-overdue",tone:"late",title:"Overdue",count:t.length,defaultOpen:s,right:e.createElement("span",{className:"at-link",role:"button",tabIndex:0,"data-no-drag":"",onClick:i=>{i.stopPropagation(),n.moveMany(t,a)}},"Move all to today")},t.map(i=>e.createElement(tt,{key:i.task_id,task:i,from:Y(i),showDate:!0,selected:o===i.task_id})))}function _t({date:t,autoFocus:s,onDone:n}){let{actions:a,meta:o,prefs:i}=A(),[r,l]=e.useState(""),[p,c]=e.useState(!1),[u,f]=e.useState(!!s),h=e.useRef(null);if(e.useEffect(()=>{u&&h.current&&h.current.focus()},[u]),!u)return e.createElement("button",{type:"button",className:"at-add",onClick:()=>f(!0),"data-no-drag":""},e.createElement(M,{name:"plus",size:14})," Add a task");let d=async()=>{let m=r.trim();if(!m){f(!1),n&&n();return}c(!0);let g=await a.create({title:m,date:t,area:i.area||o.default_area||void 0});c(!1),g&&(l(""),h.current&&h.current.focus())};return e.createElement("form",{className:"at-add-form","data-no-drag":"",onSubmit:m=>{m.preventDefault(),d()}},e.createElement("span",{className:"at-check at-check-md is-ghost","aria-hidden":"true"}),e.createElement("input",{ref:h,className:"at-add-input",value:r,placeholder:"New task",disabled:p,onChange:m=>l(m.target.value),onKeyDown:m=>{m.key==="Escape"&&(l(""),f(!1),n&&n())},onBlur:()=>{r.trim()||(f(!1),n&&n())}}),p?e.createElement(K,null):null)}function cs({anchor:t,narrow:s}){let{today:n,selectedId:a}=A(),{days:o,overdue:i}=Le(),r=ee(),{drag:l}=Se(),p=Me(t),c=t.slice(0,7),[u,f]=e.useState(null);if(s){let h=u&&u.slice(0,7)===c?u:n.slice(0,7)===c?n:xe(t);return e.createElement("div",{className:"at-scroll at-mmonth"},e.createElement("div",{className:"at-mmonth-dows"},["M","T","W","T","F","S","S"].map((d,m)=>e.createElement("span",{key:m},d))),e.createElement("div",{className:"at-mmonth-grid"},p.flat().map(d=>{let m=o[d]||[],g=m.filter(v=>!q(v)).length;return e.createElement("button",{key:d,type:"button","data-at-drop":d,onClick:()=>f(d),className:C("at-mcell",d.slice(0,7)!==c&&"is-out",d===n&&"is-today",d===h&&"is-on",l&&l.over===d&&"is-over")},e.createElement("span",{className:"at-mcell-num"},ve(d)),e.createElement("span",{className:"at-mcell-dots"},m.slice(0,3).map(v=>e.createElement("i",{key:v.task_id,className:q(v)?"is-done":""})),d===n&&i.length?e.createElement("i",{className:"is-late"}):null),g>3?e.createElement("span",{className:"at-mcell-more"},"+",g-3):null)})),e.createElement(nt,{date:h,tasks:o[h]||[],overdue:h===n?i:[]}))}return e.createElement(Lt,{weeks:p,month:c,days:o,overdue:i,today:n,selectedId:a,drag:l,overlay:r})}function Lt({weeks:t,month:s,days:n,overdue:a,today:o,selectedId:i,drag:r,overlay:l,picked:p,onPick:c}){let u=(m,g)=>c?c(m):l.open(g,v=>e.createElement(ps,{date:m,close:v}),{width:360}),f=e.useRef(null),[h,d]=e.useState(160);return e.useLayoutEffect(()=>{let m=f.current;if(!m)return;let g=new ResizeObserver(()=>d(m.clientWidth/7));return g.observe(m),()=>g.disconnect()},[t.length]),e.createElement("div",{className:C("at-month",c&&"at-week-strip")},e.createElement("div",{className:"at-month-dows"},t[0].map(m=>e.createElement("div",{key:m},le(m)))),e.createElement("div",{ref:f,className:"at-month-grid"},t.flat().map(m=>{let g=n[m]||[],v=m===o;return e.createElement("div",{key:m,"data-at-drop":m,className:C("at-cell",s&&m.slice(0,7)!==s&&"is-out",v&&"is-today",m<o&&"is-past",r&&r.over===m&&"is-over",p===m&&"is-picked"),tabIndex:c?0:void 0,role:c?"button":void 0,"aria-label":c?`Select ${Ee(m)}`:void 0,"aria-pressed":c?p===m:void 0,onKeyDown:b=>{c&&b.target===b.currentTarget&&(b.key==="Enter"||b.key===" ")&&(b.preventDefault(),c(m))},onClick:b=>{b.target.closest(".at-row")||(c?c(m):u(m,b.currentTarget))}},e.createElement("div",{className:"at-cell-head"},e.createElement("span",{className:"at-cell-num"},ve(m)===1?`${ze(m,"short")} 1`:ve(m)),v&&a.length?e.createElement("button",{type:"button",className:"at-chip at-tone-late","data-no-drag":"",title:`${a.length} overdue`,onClick:b=>{b.stopPropagation(),u(m,b.currentTarget.closest(".at-cell"))}},h<140?`${a.length} late`:`${a.length} overdue`):null),e.createElement(ds,{tasks:g,date:m,selectedId:i,expand:u}),e.createElement("div",{className:"at-cell-footer"},e.createElement("button",{type:"button",className:"at-cell-view","data-no-drag":"","aria-label":`View ${Ee(m)}`,title:"View day",onClick:b=>{b.stopPropagation(),u(m,b.currentTarget.closest(".at-cell"))}},e.createElement(M,{name:"arrowR",size:12}),e.createElement("span",null,"View day"))))})))}function ds({tasks:t,date:s,selectedId:n,expand:a}){let o=e.useRef(null),[i,r]=e.useState(1);e.useLayoutEffect(()=>{let p=o.current,c=()=>{let f=p.querySelector(".at-row"),h=p.querySelector(".at-cell-more"),d=parseFloat(getComputedStyle(p).rowGap)||0;r(kt(t.length,p.getBoundingClientRect().height,f?.getBoundingClientRect().height||24,h.getBoundingClientRect().height,d))},u=new ResizeObserver(c);return u.observe(p),c(),()=>u.disconnect()},[t.length]);let l=Math.max(0,t.length-i);return e.createElement("div",{ref:o,className:"at-cell-list is-tight"},t.slice(0,i).map(p=>e.createElement(tt,{key:p.task_id,task:p,from:s,compact:!0,selected:n===p.task_id})),e.createElement("button",{type:"button",className:"at-cell-more","data-no-drag":"",style:{visibility:l?"visible":"hidden"},tabIndex:l?0:-1,"aria-hidden":!l,onClick:p=>{p.stopPropagation(),a(s,p.currentTarget.closest(".at-cell"))}},"+",l," more"))}function ps({date:t,close:s}){let{today:n}=A(),{days:a,overdue:o}=Le();return e.createElement("div",{className:"at-daypop"},e.createElement("div",{className:"at-daypop-head"},e.createElement("div",null,e.createElement("div",{className:"at-daypop-title"},U(t,n)==="Today"?"Today":le(t,"long")),e.createElement("div",{className:"at-muted"},Ee(t))),e.createElement(V,{icon:"x",label:"Close",onClick:s})),e.createElement("div",{className:"at-daypop-body"},e.createElement(st,{date:t,tasks:a[t]||[],overdue:t===n?o:[],showAdd:!0})))}function ms({anchor:t,narrow:s,onStep:n}){let{today:a}=A(),{days:o,overdue:i}=Le(),r=De(t),l=Ae(r,j(r,6));return s?e.createElement(hs,{dates:l,days:o,overdue:i,today:a,onStep:n}):e.createElement(fs,{dates:l,days:o,overdue:i,today:a})}function fs({dates:t,days:s,overdue:n,today:a}){let{selectedId:o}=A(),{drag:i}=Se(),r=ee(),[l,p]=e.useState(null),c=l&&t.includes(l)?l:t.includes(a)?a:t[0];return e.createElement("div",{className:"at-desktop-week at-scroll"},e.createElement(Lt,{weeks:[t],month:null,days:s,overdue:n,today:a,selectedId:o,drag:i,overlay:r,picked:c,onPick:p}),e.createElement($t,{anchor:c}))}function hs({dates:t,days:s,overdue:n,today:a,onStep:o}){let{drag:i}=Se(),[r,l]=e.useState(null),p=r&&t.includes(r)?r:t.includes(a)?a:t[0],c=e.useRef(null);return e.createElement("div",{className:"at-scroll at-mmonth at-mweek"},e.createElement("div",{className:"at-mmonth-dows"},t.map(u=>e.createElement("span",{key:u},le(u).slice(0,1)))),e.createElement("div",{className:"at-mmonth-grid",onTouchStart:u=>{let f=u.touches[0];c.current={x:f.clientX,y:f.clientY}},onTouchEnd:u=>{let f=c.current;if(c.current=null,!f||!o)return;let h=u.changedTouches[0],d=h.clientX-f.x;Math.abs(d)>50&&Math.abs(d)>1.5*Math.abs(h.clientY-f.y)&&o(d<0?1:-1)}},t.map(u=>{let f=s[u]||[],h=f.filter(d=>!q(d)).length;return e.createElement("button",{key:u,type:"button","data-at-drop":u,onClick:()=>l(u),className:C("at-mcell",u===a&&"is-today",u===p&&"is-on",i&&i.over===u&&"is-over")},e.createElement("span",{className:"at-mcell-num"},ve(u)),e.createElement("span",{className:"at-mcell-dots"},f.slice(0,3).map(d=>e.createElement("i",{key:d.task_id,className:q(d)?"is-done":""})),u===a&&n.length?e.createElement("i",{className:"is-late"}):null),h>3?e.createElement("span",{className:"at-mcell-more"},"+",h-3):null)})),e.createElement(nt,{date:p,tasks:s[p]||[],overdue:p===a?n:[]}))}function $t({anchor:t}){let{today:s}=A(),{days:n,overdue:a}=Le();return e.createElement("div",{className:"at-scroll at-dayview"},e.createElement("div",{className:"at-dayview-inner"},e.createElement("header",{className:"at-dayview-head"},e.createElement("h2",null,U(t,s)==="Today"?"Today":le(t,"long")),e.createElement("div",{className:"at-muted"},Ee(t))),e.createElement(st,{date:t,tasks:n[t]||[],overdue:t===s?a:[],showAdd:!0})))}function nt({date:t,tasks:s,overdue:n}){let{today:a}=A(),o=U(t,a),i=o==="Today"||o==="Tomorrow"||o==="Yesterday",r=!s.length&&!n.length;return e.createElement("section",{className:C("at-daysec",t===a&&"is-today",r&&"is-empty")},e.createElement("header",{className:"at-daysec-head"},e.createElement("span",{className:"at-daysec-title"},i?o:le(t,"long")),e.createElement("span",{className:"at-muted"},de(t,a).replace(/^\w+,\s*/,""))),e.createElement(st,{date:t,tasks:s,overdue:n,showAdd:!r||t===a}))}function vs({anchor:t,onReachEnd:s,length:n}){let{today:a}=A(),{days:o,overdue:i}=Le(),r=Ae(t,j(t,n-1)),l=e.useRef(null);return e.useEffect(()=>{let p=l.current;if(!p)return;let c=new IntersectionObserver(u=>{u[0].isIntersecting&&s()},{rootMargin:"400px"});return c.observe(p),()=>c.disconnect()},[s]),e.createElement("div",{className:"at-scroll at-days"},r.map(p=>e.createElement(nt,{key:p,date:p,tasks:o[p]||[],overdue:p===a?i:[]})),e.createElement("div",{ref:l,className:"at-sentinel"}))}function Pt({narrow:t}){let{store:s,prefs:n,setPrefs:a,meta:o,today:i}=A(),r=ee(),l=n.view||(t?"day":"week"),[p,c]=e.useState(i),[u,f]=e.useState(21),h=e.useCallback(()=>f(N=>Math.min(N+14,120)),[]);e.useEffect(()=>{!p&&i&&c(i)},[i,p]);let d=p||i,m=e.useMemo(()=>{if(!d)return null;if(l==="month"){let N=Me(d);return[N[0][0],N[N.length-1][6]]}if(l==="week"){let N=De(d);return[N,j(N,6)]}return t?[d,j(d,u-1)]:[d,d]},[d,l,t,u]);e.useEffect(()=>{m&&(s.loadRange(m[0],m[1]).catch(()=>{}),s.loadOverdue().catch(()=>{}))},[m&&m[0],m&&m[1]]);let g=N=>{c(l==="month"?Te(d,N):l==="week"?j(d,7*N):j(d,N))};if(e.useEffect(()=>{let N=y=>{if(y.target.closest&&y.target.closest("input, textarea, [contenteditable]")||y.metaKey||y.ctrlKey||y.altKey)return;let w=y.key.toLowerCase();if(w==="t")c(i);else if(w==="d")a({view:"day"});else if(w==="w")a({view:"week"});else if(w==="m")a({view:"month"});else if(y.key==="ArrowLeft")g(-1);else if(y.key==="ArrowRight")g(1);else return;y.preventDefault()};return window.addEventListener("keydown",N),()=>window.removeEventListener("keydown",N)}),!d)return e.createElement("div",{className:"at-loading"},e.createElement(K,{size:18}));let v=l==="day"?Ke("month",d,i):Ke(l,d,i),b=o.areas||[],D=N=>r.open(N.currentTarget,y=>e.createElement(Q,{close:y,items:[{label:"All areas",icon:n.area?void 0:"check",run:()=>a({area:""})},"-",...b.map(w=>({label:w,icon:n.area===w?"check":void 0,run:()=>a({area:w})})),"-",{label:n.hideDone?"Show completed":"Hide completed",run:()=>a({hideDone:!n.hideDone})}]}),{width:200,align:"end"}),E=N=>r.open(N.currentTarget,y=>e.createElement("div",{className:"at-pop-add"},e.createElement(_t,{date:l==="day"?d:i,autoFocus:!0,onDone:y})),{width:320,align:"end"});return e.createElement("div",{className:C("at-tasks",`is-${l}`)},e.createElement("div",{className:"at-toolbar"},e.createElement("div",{className:"at-toolbar-nav"},e.createElement(O,{variant:"ghost",size:"sm",onClick:()=>c(i),disabled:d===i&&l!=="month"},"Today"),e.createElement(V,{icon:"chevL",label:"Previous",onClick:()=>g(-1)}),e.createElement(V,{icon:"chevR",label:"Next",onClick:()=>g(1)}),e.createElement("h1",{className:"at-period"},v,l!=="week"&&!v.includes(d.slice(0,4))?e.createElement("span",{className:"at-period-year"},d.slice(0,4)):null)),e.createElement("div",{className:"at-toolbar-right"},e.createElement(Be,{label:"View",value:l,onChange:N=>a({view:N}),options:[{value:"day",label:"Day"},{value:"week",label:"Week"},{value:"month",label:"Month"}]}),e.createElement("button",{type:"button",className:C("at-filter",n.area&&"is-on"),onClick:D},n.area?e.createElement(te,{area:n.area}):null,e.createElement("span",null,n.area||"All areas"),e.createElement(M,{name:"chevD",size:14})),t?null:e.createElement(O,{variant:"primary",size:"sm",icon:"plus",onClick:E},"Add"))),e.createElement("div",{className:"at-viewport"},l==="month"?e.createElement(cs,{anchor:d,narrow:t}):null,l==="week"?e.createElement(ms,{anchor:d,narrow:t,onStep:g}):null,l==="day"&&t?e.createElement(vs,{anchor:d,length:u,onReachEnd:h}):null,l==="day"&&!t?e.createElement($t,{anchor:d}):null),t?e.createElement(ys,{date:l==="day"?d:i}):null)}function ys({date:t}){let{actions:s,meta:n,prefs:a,today:o}=A(),i=ee(),[r,l]=e.useState(!1),[p,c]=e.useState(""),[u,f]=e.useState(t),[h,d]=e.useState(""),[m,g]=e.useState(!1),[v,b]=e.useState(0),D=e.useRef(null);e.useEffect(()=>{let $=window.visualViewport;if(!r||!$){b(0);return}let P=()=>b(Math.max(0,Math.round(window.innerHeight-($.offsetTop+$.height))));return P(),$.addEventListener("resize",P),$.addEventListener("scroll",P),()=>{$.removeEventListener("resize",P),$.removeEventListener("scroll",P)}},[r]);let E=()=>{D.current&&D.current.focus(),f(t),d(a.area||n.default_area||""),l(!0)},N=()=>{i.close(),l(!1),c(""),D.current&&D.current.blur()},y=async()=>{let $=p.trim();if(!$||m)return;g(!0);let P=await s.create({title:$,date:u,area:h||void 0});g(!1),P&&(c(""),D.current&&D.current.focus())},w=()=>{D.current&&D.current.focus()},L=$=>i.open($.currentTarget,P=>e.createElement(ge,{value:u,today:o,close:P,onPick:B=>{f(B),w()}}),{width:300}),F=$=>i.open($.currentTarget,P=>e.createElement(Q,{close:P,items:(n.areas||[]).map(B=>({label:B,icon:B===h?"check":void 0,run:()=>{d(B),w()}}))}),{width:220});return e.createElement(e.Fragment,null,e.createElement("button",{type:"button",className:C("at-fab",r&&"is-hidden"),"aria-label":"Add a task",onClick:E},e.createElement(M,{name:"plus",size:24})),r?e.createElement("div",{className:"at-composer-scrim",onClick:N}):null,e.createElement("form",{className:C("at-composer",r&&"is-open"),style:{bottom:v},"aria-hidden":!r,"data-no-drag":"",onSubmit:$=>{$.preventDefault(),y()}},e.createElement("div",{className:"at-composer-row"},e.createElement("span",{className:"at-check is-ghost","aria-hidden":"true"}),e.createElement("input",{ref:D,className:"at-composer-input",value:p,placeholder:"New task",enterKeyHint:"done",tabIndex:r?0:-1,readOnly:m,"aria-label":"New task title",onChange:$=>c($.target.value),onKeyDown:$=>{$.key==="Escape"&&N()}}),m?e.createElement(K,null):null),e.createElement("div",{className:"at-composer-bar"},e.createElement("button",{type:"button",className:"at-field",onClick:L,tabIndex:r?0:-1},e.createElement(M,{name:"cal",size:15}),e.createElement("span",null,U(u,o))),(n.areas||[]).length?e.createElement("button",{type:"button",className:"at-field",onClick:F,tabIndex:r?0:-1},e.createElement(te,{area:h}),e.createElement("span",null,h||"No area")):null,e.createElement("span",{className:"at-flex"}),e.createElement(O,{variant:"ghost",size:"sm",onClick:N,tabIndex:r?0:-1},"Done"),e.createElement("button",{type:"submit",className:"at-composer-send","aria-label":"Add task",disabled:!p.trim()||m,tabIndex:r?0:-1},e.createElement(M,{name:"arrowR",size:18,strokeWidth:2.2})))))}var I=e.createElement,gs=/^(https?:|mailto:|obsidian:|#)/i;function ce(t,s="i"){let n=[],a=String(t),o=0,i=/(`[^`]+`)|(\*\*[^*]+\*\*|__[^_]+__)|(\*[^*\s][^*]*\*|_[^_\s][^_]*_)|(\[\[[^\]]+\]\])|(\[[^\]]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/;for(;a;){let r=a.match(i);if(!r){n.push(a);break}r.index&&n.push(a.slice(0,r.index));let l=r[0],p=`${s}-${o++}`;if(r[1])n.push(I("code",{key:p},l.slice(1,-1)));else if(r[2])n.push(I("strong",{key:p},ce(l.slice(2,-2),p)));else if(r[3])n.push(I("em",{key:p},ce(l.slice(1,-1),p)));else if(r[4]){let c=l.slice(2,-2),u=c.includes("|")?c.split("|").pop():c.split("/").pop();n.push(I("span",{key:p,className:"at-md-wikilink",title:c.split("|")[0]},u))}else if(r[5]){let c=l.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/),u=c[2];n.push(gs.test(u)?I("a",{key:p,href:u,target:"_blank",rel:"noreferrer noopener"},ce(c[1],p)):c[1])}else r[6]&&n.push(I("a",{key:p,href:l,target:"_blank",rel:"noreferrer noopener"},ks(l)));a=a.slice(r.index+l.length)}return n}function At(t){let s=String(t).replace(/[*_`]/g,"").trim();return/^(time|duration|estimate|estimated time|time estimate)$/i.test(s)?"at-md-time":void 0}function ks(t){try{let s=new URL(t),n=s.pathname.length>24?s.pathname.slice(0,22)+"\u2026":s.pathname;return s.host.replace(/^www\./,"")+(n==="/"?"":n)}catch{return t}}var Ye=/^(\s*)([-*+]|\d+[.)])\s+(\[( |x|X)\]\s+)?(.*)$/;function Ve(t){let s=String(t||"").replace(/\r\n?/g,`
-`).split(`
-`),n=[],a=0;for(;a<s.length;){let o=s[a];if(!o.trim()){a++;continue}let i=o.match(/^\s*(```|~~~)/);if(i){let p=[];for(a++;a<s.length&&!s[a].trim().startsWith(i[1]);)p.push(s[a++]);a++,n.push({type:"code",text:p.join(`
-`)});continue}let r=o.match(/^(#{1,6})\s+(.*)$/);if(r){n.push({type:"heading",level:r[1].length,text:r[2].trim(),line:a}),a++;continue}if(/^\s*<!--.*-->\s*$/.test(o)){a++;continue}if(/^\s*([-*_])\s*\1\s*\1[\s\1]*$/.test(o)){n.push({type:"hr"}),a++;continue}if(/^\s*\|.*\|\s*$/.test(o)&&a+1<s.length&&/^\s*\|?[\s:|-]+\|?\s*$/.test(s[a+1])&&s[a+1].includes("-")){let p=f=>f.trim().replace(/^\||\|$/g,"").split("|").map(h=>h.trim()),c=p(o),u=[];for(a+=2;a<s.length&&/^\s*\|.*\|\s*$/.test(s[a]);)u.push(p(s[a++]));n.push({type:"table",head:c,rows:u});continue}if(/^\s*>/.test(o)){let p=[];for(;a<s.length&&/^\s*>/.test(s[a]);)p.push(s[a++].replace(/^\s*>\s?/,""));n.push({type:"quote",text:p.join(" ")});continue}if(Ye.test(o)){let p=[];for(;a<s.length&&(Ye.test(s[a])||/^\s{2,}\S/.test(s[a])&&p.length);){let c=s[a].match(Ye);c?p.push({indent:Math.floor(c[1].replace(/\t/g,"  ").length/2),ordered:/\d/.test(c[2]),checkbox:c[3]?c[4].toLowerCase()==="x":null,text:c[5],line:a}):p[p.length-1].text+=" "+s[a].trim(),a++}n.push({type:"list",items:p});continue}let l=[];for(;a<s.length&&s[a].trim()&&!Ye.test(s[a])&&!/^(#{1,6})\s/.test(s[a])&&!/^\s*(```|~~~|>|\|)/.test(s[a]);)l.push(s[a++].trim());l.length?n.push({type:"p",text:l.join(" ")}):a++}return n}function Fe(t,{onToggle:s}={}){return t.map((n,a)=>{let o=`b${a}`;switch(n.type){case"heading":return I(`h${Math.min(6,n.level+2)}`,{key:o,className:"at-md-h"},ce(n.text,o));case"p":return I("p",{key:o},ce(n.text,o));case"hr":return I("hr",{key:o});case"code":return I("pre",{key:o},I("code",null,n.text));case"quote":return I("blockquote",{key:o},ce(n.text,o));case"table":return I("div",{key:o,className:"at-md-table"},I("table",null,I("thead",null,I("tr",null,n.head.map((i,r)=>I("th",{key:r,className:At(i)},ce(i,`${o}h${r}`))))),I("tbody",null,n.rows.map((i,r)=>I("tr",{key:r},i.map((l,p)=>I("td",{key:p,className:At(n.head[p])},ce(l,`${o}r${r}${p}`))))))));case"list":{let i=n.items[0]&&n.items[0].ordered;return I(i?"ol":"ul",{key:o,className:"at-md-list"},n.items.map((r,l)=>{let p=r.indent?{marginLeft:`${r.indent*1.25}em`}:void 0;return r.checkbox===null?I("li",{key:l,style:p},ce(r.text,`${o}${l}`)):I("li",{key:l,style:p,className:"at-md-check"+(r.checkbox?" is-done":"")},I("label",null,I("input",{type:"checkbox",checked:r.checkbox,disabled:!s,onChange:c=>s&&s(r.line,c.target.checked)}),I("span",null,ce(r.text,`${o}${l}`))))}))}default:return null}})}function zt(t,s,n){let a=String(t).split(`
-`),o=a[s]&&a[s].match(/^(\s*(?:[-*+]|\d+[.)])\s+)\[( |x|X)\](.*)$/);return o?(a[s]=`${o[1]}[${n?"x":" "}]${o[3]}`,a.join(`
-`)):t}var It=/^\s*<!--\s*([\w-]+):start\s*-->\s*$/,We=/^\s*<!--\s*([\w-]+):end\s*-->\s*$/;function Bt(t){let s=String(t||"").replace(/\r\n?/g,`
-`).split(`
-`),n=s.slice(),a=[];for(let r=0;r<s.length;r++){let l=s[r].match(It);if(!l)continue;let p=r+1;for(;p<s.length&&!(We.test(s[p])&&s[p].match(We)[1]===l[1]);)p++;if(!(p>=s.length)){a.push({name:l[1],text:s.slice(r+1,p).join(`
-`).trim()});for(let c=r;c<=p;c++)n[c]="";r=p}}let o=[],i={title:"",start:0,lines:[]};return n.forEach((r,l)=>{let p=r.match(/^##\s+(.*)$/);p?(o.push(i),i={title:p[1].trim(),start:l+1,lines:[]}):i.lines.push(r)}),o.push(i),{sections:o.filter(r=>r.title||r.lines.join("").trim()).map(r=>({title:r.title,text:r.lines.join(`
-`),start:r.start,folded:/^(log|history|activity)$/i.test(r.title)})),managed:a}}function at(t){return/dossier|research/i.test(t)?"Research":/state/i.test(t)?"Current state":t.replace(/[-_]+/g," ").replace(/^\w/,s=>s.toUpperCase())}function Ot(t){let s=String(t||"").replace(/\r\n?/g,`
-`).split(`
-`),n=[],a=[],o=[],i=!1;for(let l=0;l<s.length;l++){let p=s[l].match(It);if(p){let c=l+1;for(;c<s.length&&!(We.test(s[c])&&s[c].match(We)[1]===p[1]);)c++;if(c<s.length){(i?o:a).push(s.slice(l,c+1).join(`
-`)),l=c;continue}}s[l].trim()&&(i=!0),n.push(s[l])}return{editable:n.join(`
-`).replace(/\n{3,}/g,`
+(() => {
+  // ui/hosts/react-dashboard.js
+  var React = window.__HERMES_PLUGIN_SDK__.React;
+  var react_dashboard_default = React;
 
-`).replace(/^\n+/,"").replace(/\s+$/,"")+`
-`,top:a,bottom:o}}function Ht(t,s,n){let a=[];return s.length&&a.push(s.join(`
+  // ui/src/lib/dates.js
+  var pad = (n) => String(n).padStart(2, "0");
+  function toISO(d) {
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+  }
+  function parseISO(s) {
+    const [y, m, d] = String(s).split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, d));
+  }
+  function addDays(s, n) {
+    const d = parseISO(s);
+    d.setUTCDate(d.getUTCDate() + n);
+    return toISO(d);
+  }
+  function addMonths(s, n) {
+    const d = parseISO(s);
+    const day = d.getUTCDate();
+    d.setUTCDate(1);
+    d.setUTCMonth(d.getUTCMonth() + n);
+    const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+    d.setUTCDate(Math.min(day, last));
+    return toISO(d);
+  }
+  var weekday = (s) => (parseISO(s).getUTCDay() + 6) % 7;
+  function startOfWeek(s) {
+    return addDays(s, -weekday(s));
+  }
+  function startOfMonth(s) {
+    return s.slice(0, 8) + "01";
+  }
+  function endOfMonth(s) {
+    const d = parseISO(startOfMonth(s));
+    return toISO(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)));
+  }
+  function daysBetween(a, b) {
+    return Math.round((parseISO(b) - parseISO(a)) / 864e5);
+  }
+  function range(start, end) {
+    const out = [];
+    for (let d = start; d <= end; d = addDays(d, 1)) out.push(d);
+    return out;
+  }
+  function monthGrid(s) {
+    const first = startOfWeek(startOfMonth(s));
+    const last = addDays(startOfWeek(endOfMonth(s)), 6);
+    const days = range(first, last);
+    const weeks = [];
+    for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7));
+    return weeks;
+  }
+  var fmt = (s, opts) => parseISO(s).toLocaleDateString(void 0, { timeZone: "UTC", ...opts });
+  var dayName = (s, style = "short") => fmt(s, { weekday: style });
+  var monthName = (s, style = "long") => fmt(s, { month: style });
+  var dayNum = (s) => parseISO(s).getUTCDate();
+  function longDate(s) {
+    return fmt(s, { weekday: "long", month: "long", day: "numeric" });
+  }
+  function shortDate(s, today) {
+    const sameYear = !today || s.slice(0, 4) === today.slice(0, 4);
+    return fmt(s, { weekday: "short", month: "short", day: "numeric", ...sameYear ? {} : { year: "numeric" } });
+  }
+  function relativeDay(s, today) {
+    if (!s) return "";
+    const diff = daysBetween(today, s);
+    if (diff === 0) return "Today";
+    if (diff === 1) return "Tomorrow";
+    if (diff === -1) return "Yesterday";
+    if (diff > 1 && diff < 7) return dayName(s, "long");
+    return shortDate(s, today);
+  }
+  function nextWeekday(today, target) {
+    const diff = (target - weekday(today) + 7) % 7 || 7;
+    return addDays(today, diff);
+  }
+  function periodLabel(view, anchor, today) {
+    if (view === "month") {
+      return fmt(anchor, { month: "long", ...anchor.slice(0, 4) !== today.slice(0, 4) ? { year: "numeric" } : {} });
+    }
+    if (view === "week") {
+      const a = startOfWeek(anchor);
+      const b = addDays(a, 6);
+      const sameMonth = a.slice(0, 7) === b.slice(0, 7);
+      const left = fmt(a, { month: "short", day: "numeric" });
+      const right = sameMonth ? String(dayNum(b)) : fmt(b, { month: "short", day: "numeric" });
+      return `${left} \u2013 ${right}`;
+    }
+    return relativeDay(anchor, today) === "Today" ? "Today" : fmt(anchor, { weekday: "long", month: "short", day: "numeric" });
+  }
+  var taskDate = (t) => t.scheduled || t.due || null;
 
-`)),a.push(String(t).replace(/\s+$/,"")),n.length&&a.push(n.join(`
+  // ui/src/lib/dnd.js
+  var DragCtx = react_dashboard_default.createContext(null);
+  var useDrag = () => react_dashboard_default.useContext(DragCtx);
+  var LONG_PRESS_MS = 380;
+  var MOVE_SLOP = 6;
+  function dropDateAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    const target = el && el.closest("[data-at-drop]");
+    return target ? target.getAttribute("data-at-drop") : null;
+  }
+  function scrollParent(el) {
+    for (let n = el; n && n !== document.body; n = n.parentElement) {
+      const s = getComputedStyle(n);
+      if (/(auto|scroll)/.test(s.overflowY) && n.scrollHeight > n.clientHeight) return n;
+    }
+    return document.scrollingElement;
+  }
+  function DragProvider({ onDrop, children }) {
+    const [drag, setDrag] = react_dashboard_default.useState(null);
+    const dragRef = react_dashboard_default.useRef(null);
+    const suppressClick = react_dashboard_default.useRef(false);
+    const raf = react_dashboard_default.useRef(0);
+    const ghost = react_dashboard_default.useRef(null);
+    const update = (patch) => {
+      const prevOver = dragRef.current && dragRef.current.over;
+      dragRef.current = dragRef.current ? { ...dragRef.current, ...patch } : null;
+      const d = dragRef.current;
+      if (d && ghost.current) ghost.current.style.transform = `translate(${d.x + 12}px, ${d.y - 20}px)`;
+      if (d && d.over !== prevOver) setDrag(d);
+    };
+    const autoScroll = (x, y) => {
+      cancelAnimationFrame(raf.current);
+      const el = document.elementFromPoint(x, y);
+      const sc = el && scrollParent(el);
+      if (!sc) return;
+      const r = sc === document.scrollingElement ? { top: 0, bottom: window.innerHeight } : sc.getBoundingClientRect();
+      const edge = 56;
+      const dy = y < r.top + edge ? -Math.ceil((r.top + edge - y) / 4) : y > r.bottom - edge ? Math.ceil((y - (r.bottom - edge)) / 4) : 0;
+      if (!dy) return;
+      const step = () => {
+        if (!dragRef.current) return;
+        sc.scrollTop += dy;
+        raf.current = requestAnimationFrame(step);
+      };
+      raf.current = requestAnimationFrame(step);
+    };
+    const finish = (x, y, cancelled) => {
+      cancelAnimationFrame(raf.current);
+      const d = dragRef.current;
+      dragRef.current = null;
+      setDrag(null);
+      if (ghost.current) {
+        ghost.current.remove();
+        ghost.current = null;
+      }
+      document.documentElement.classList.remove("at-dragging");
+      if (!d) return;
+      suppressClick.current = true;
+      setTimeout(() => {
+        suppressClick.current = false;
+      }, 50);
+      const date = cancelled ? null : dropDateAt(x, y);
+      if (date && date !== d.from) onDrop(d.task, date);
+    };
+    const begin = (task, from, x, y, w) => {
+      dragRef.current = { task, from, x, y, over: from, w };
+      setDrag(dragRef.current);
+      const g = document.createElement("div");
+      g.className = "at-drag-ghost at-vars";
+      g.textContent = task.title;
+      g.style.transform = `translate(${x + 12}px, ${y - 20}px)`;
+      document.body.appendChild(g);
+      ghost.current = g;
+      document.documentElement.classList.add("at-dragging");
+      if (navigator.vibrate) {
+        try {
+          navigator.vibrate(8);
+        } catch {
+        }
+      }
+    };
+    const bind = react_dashboard_default.useCallback((task, from) => ({
+      onPointerDown: (e) => {
+        if (e.pointerType !== "mouse" || e.button !== 0) return;
+        if (e.target.closest("button, input, textarea, a, [data-no-drag]")) return;
+        const sx = e.clientX;
+        const sy = e.clientY;
+        const w = e.currentTarget.getBoundingClientRect().width;
+        const move = (ev) => {
+          if (!dragRef.current) {
+            if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < MOVE_SLOP) return;
+            begin(task, from, ev.clientX, ev.clientY, w);
+          }
+          update({ x: ev.clientX, y: ev.clientY, over: dropDateAt(ev.clientX, ev.clientY) });
+          autoScroll(ev.clientX, ev.clientY);
+        };
+        const up = (ev) => {
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", up);
+          window.removeEventListener("keydown", key);
+          if (dragRef.current) finish(ev.clientX, ev.clientY, false);
+        };
+        const key = (ev) => {
+          if (ev.key === "Escape") {
+            up({ clientX: -1, clientY: -1 });
+            finish(-1, -1, true);
+          }
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+        window.addEventListener("keydown", key);
+      },
+      onTouchStart: (e) => {
+        if (e.target.closest("button, input, textarea, a, [data-no-drag]")) return;
+        const t0 = e.touches[0];
+        const sx = t0.clientX;
+        const sy = t0.clientY;
+        const w = e.currentTarget.getBoundingClientRect().width;
+        let last = { x: sx, y: sy };
+        let timer = setTimeout(() => {
+          timer = null;
+          begin(task, from, last.x, last.y, w);
+        }, LONG_PRESS_MS);
+        const move = (ev) => {
+          const t = ev.touches[0];
+          last = { x: t.clientX, y: t.clientY };
+          if (!dragRef.current) {
+            if (timer && Math.hypot(t.clientX - sx, t.clientY - sy) > MOVE_SLOP) {
+              clearTimeout(timer);
+              timer = null;
+              cleanup();
+            }
+            return;
+          }
+          ev.preventDefault();
+          update({ x: t.clientX, y: t.clientY, over: dropDateAt(t.clientX, t.clientY) });
+          autoScroll(t.clientX, t.clientY);
+        };
+        const end = (ev) => {
+          if (timer) clearTimeout(timer);
+          cleanup();
+          if (dragRef.current) {
+            ev.preventDefault();
+            finish(last.x, last.y, ev.type === "touchcancel");
+          }
+        };
+        const cleanup = () => {
+          document.removeEventListener("touchmove", move);
+          document.removeEventListener("touchend", end);
+          document.removeEventListener("touchcancel", end);
+        };
+        document.addEventListener("touchmove", move, { passive: false });
+        document.addEventListener("touchend", end);
+        document.addEventListener("touchcancel", end);
+      },
+      onClickCapture: (e) => {
+        if (suppressClick.current) {
+          e.stopPropagation();
+          e.preventDefault();
+        }
+      },
+      onContextMenu: (e) => {
+        if (dragRef.current) e.preventDefault();
+      }
+    }), []);
+    const value = react_dashboard_default.useMemo(() => ({ drag, bind }), [drag, bind]);
+    react_dashboard_default.useEffect(() => () => {
+      if (ghost.current) ghost.current.remove();
+    }, []);
+    return react_dashboard_default.createElement(DragCtx.Provider, { value }, children);
+  }
 
-`)),`
-`+a.filter(o=>o.trim()).join(`
+  // ui/src/api.js
+  var ApiError = class extends Error {
+    constructor(code, message, status = 0) {
+      super(message || code);
+      this.code = code || "error";
+      this.status = status;
+    }
+  };
+  function parseErrorBody(err) {
+    const raw = err && (err.body || err.responseText || err.message || "");
+    if (raw && typeof raw === "object") return raw;
+    const text = String(raw);
+    const at = text.indexOf("{");
+    if (at >= 0) {
+      try {
+        return JSON.parse(text.slice(at));
+      } catch {
+      }
+    }
+    return null;
+  }
+  function toApiError(err) {
+    if (err instanceof ApiError) return err;
+    const body = parseErrorBody(err);
+    const e = body && (body.error || body.detail);
+    const status = err && err.status || 0;
+    if (e && typeof e === "object") return new ApiError(e.code, e.message, status);
+    if (typeof e === "string") return new ApiError(status === 404 ? "not_found" : "error", e, status);
+    if (status === 404) return new ApiError("not_found", "Not found", 404);
+    if (status === 0 || /network|failed to fetch|unreachable/i.test(String(err && err.message))) {
+      return new ApiError("offline", "Hermes is not reachable right now.", status);
+    }
+    return new ApiError("error", err && err.message || "Something went wrong", status);
+  }
+  var qs = (params) => {
+    const parts = Object.entries(params).filter(([, v]) => v !== void 0 && v !== null && v !== "" && v !== false).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v === true ? "1" : v)}`);
+    return parts.length ? `?${parts.join("&")}` : "";
+  };
+  var enc = encodeURIComponent;
+  function makeTransport(send) {
+    async function call(method, path, body) {
+      let res;
+      try {
+        res = await send(method, path, body);
+      } catch (err) {
+        throw toApiError(err);
+      }
+      if (res && res.ok === false) {
+        const e = res.error || {};
+        throw new ApiError(e.code || res.needs || "error", e.message || res.message, 200);
+      }
+      return res;
+    }
+    return {
+      // ---- tasks
+      meta: () => call("GET", "/meta"),
+      tasks: (from, to, { area, includeDone = true } = {}) => call("GET", "/tasks" + qs({ from, to, area, include_done: includeDone })),
+      overdue: ({ area } = {}) => call("GET", "/overdue" + qs({ area })),
+      task: (id) => call("GET", `/tasks/${enc(id)}`),
+      patch: (id, changes) => call("PATCH", `/tasks/${enc(id)}`, changes),
+      complete: (id) => call("POST", `/tasks/${enc(id)}/complete`, {}),
+      reopen: (id) => call("POST", `/tasks/${enc(id)}/reopen`, {}),
+      putBody: (id, body, expectedRevision) => call("PUT", `/tasks/${enc(id)}/body`, { body, expected_revision: expectedRevision }),
+      create: (fields) => call("POST", "/tasks", fields),
+      // Send to chat: desktop gets the note back to send in a new chat; other surfaces queue it for the gateway.
+      handoff: (id, surface) => call("POST", `/tasks/${enc(id)}/handoff`, { surface }),
+      handoffStatus: (handoffId) => call("GET", `/handoffs/${enc(handoffId)}`),
+      // ---- discovery (routes owned by the discovery backend; see docs/discovery-backend-contract.md)
+      runs: (params = {}) => call("GET", "/runs" + qs(params)),
+      run: (runId) => call("GET", `/runs/${enc(runId)}`),
+      approve: (proposalId, body) => call("POST", `/proposals/${enc(proposalId)}/approve`, body),
+      dismiss: (proposalId) => call("POST", `/proposals/${enc(proposalId)}/dismiss`, {}),
+      resume: (runId, unitId) => call("POST", `/runs/${enc(runId)}/units/${enc(unitId)}/resume`, {}),
+      // ---- settings
+      settings: () => call("GET", "/settings"),
+      patchStream: (name, changes) => call("PATCH", `/settings/streams/${enc(name)}`, changes),
+      runStream: (name) => call("POST", `/settings/streams/${enc(name)}/run`, {}),
+      patchTaskSettings: (changes) => call("PATCH", "/settings/tasks", changes)
+    };
+  }
+  function describeError(err) {
+    const code = err && err.code;
+    switch (code) {
+      case "stale_revision":
+      case "retry":
+        return "This task changed somewhere else. Reload it to see the latest version.";
+      case "offline":
+        return "Hermes is not reachable right now. Your change was not saved.";
+      case "needs_due":
+      case "due":
+        return "Pick a date first.";
+      case "needs_area":
+      case "area":
+        return "Pick an area first.";
+      case "already_resolved":
+        return "This proposal was already handled.";
+      case "expired":
+        return "This proposal expired.";
+      case "not_production":
+        return "This was a test run, so it cannot change tasks.";
+      case "not_found":
+        return "It is no longer there. It may have been moved or deleted.";
+      default:
+        return err && err.message || "Something went wrong.";
+    }
+  }
 
-`)+`
-`}var bs=["urgent","high","normal","low"],ws={gui:"the Hermes app",desktop:"Hermes Desktop",tui:"the terminal",telegram:"Telegram",discord:"Discord",slack:"Slack",whatsapp:"WhatsApp",signal:"Signal",photon:"iMessage",bluebubbles:"iMessage",matrix:"Matrix",teams:"Teams",email:"email",sms:"SMS"},Ns=t=>{let s=ws[t&&t.platform||""]||(t&&t.platform?t.platform[0].toUpperCase()+t.platform.slice(1):"chat");return t&&t.reason==="task"&&t.chat_name?`${s} (${t.chat_name})`:s},Ut=[["open","Open"],["in-progress","In progress"],["waiting","Waiting"]];function Wt({id:t,narrow:s,onClose:n}){let{store:a,api:o,actions:i,today:r,meta:l,host:p,chat:c}=A(),u=ne(),f=ee(),h=e.useCallback(k=>k.byId[t],[t]),d=ye(a,h),[m,g]=e.useState(null),[v,b]=e.useState(!1),[D,E]=e.useState(!1),[N,y]=e.useState(!1);e.useEffect(()=>{if(!N)return;let k=()=>y(!1);return document.addEventListener("pointerdown",k,!0),document.addEventListener("keydown",k,!0),()=>{document.removeEventListener("pointerdown",k,!0),document.removeEventListener("keydown",k,!0)}},[N]),e.useEffect(()=>y(!1),[t]);let[w,L]=e.useState(!1),F=e.useCallback(()=>(g(null),E(!1),a.loadTask(t).catch(k=>g(k))),[t,a]);e.useEffect(()=>{b(!1),F()},[t]);let $=!!d&&d.body===void 0;e.useEffect(()=>{$&&!m&&F()},[$]),e.useEffect(()=>{if(v)return;let k=()=>a.loadTask(t).catch(()=>{}),x=setInterval(()=>{document.visibilityState==="visible"&&k()},3e4);return window.addEventListener("focus",k),()=>{clearInterval(x),window.removeEventListener("focus",k)}},[t,v,a]),e.useEffect(()=>{let k=x=>{x.key==="Escape"&&!x.defaultPrevented&&!v&&n()};return window.addEventListener("keydown",k),()=>window.removeEventListener("keydown",k)},[n,v]);let P=e.useRef(null),B=async()=>{if(!v||!P.current)return!0;let k=await P.current();return k&&b(!1),k},ae=async(k,x)=>{if(await B())try{await a.mutate(t,x||k,()=>o.patch(t,{...k,expected_revision:(a.getState().byId[t]||d||{}).revision}))}catch(T){(T.code==="stale_revision"||T.code==="retry")&&E(!0),u(W(T),{tone:"error"})}},we=async(k,x)=>{let T=await o.putBody(t,k,x);return a.put(T.task),T.task},oe=e.useRef(Promise.resolve()),Ne=(k,x)=>{oe.current=oe.current.then(async()=>{let T=a.getState().byId[t];if(!(!T||T.body===void 0))try{await we(zt(T.body,k,x),T.revision)}catch(Z){Z.code==="stale_revision"&&E(!0),u(W(Z),{tone:"error"})}})};if(!d&&m)return e.createElement(ot,{narrow:s,onClose:n},e.createElement("div",{className:"at-panel-empty"},e.createElement(M,{name:"alert",size:20}),e.createElement("p",null,W(m)),e.createElement(O,{onClick:F},"Try again")));if(!d)return e.createElement(ot,{narrow:s,onClose:n},e.createElement("div",{className:"at-panel-empty"},e.createElement(K,{size:18})));let re=Y(d),S=d.due&&d.scheduled&&d.due!==d.scheduled,z=k=>f.open(k.currentTarget,x=>e.createElement(ge,{value:re,today:r,close:x,onPick:async T=>{await B()&&i.move(a.getState().byId[t]||d,T)}}),{width:300}),X=k=>f.open(k.currentTarget,x=>e.createElement(ge,{value:d.due,today:r,close:x,onPick:T=>ae({due:T,keep_separate:!0},{due:T})}),{width:300}),ie=k=>f.open(k.currentTarget,x=>e.createElement(Q,{close:x,items:(l.areas||[]).map(T=>({label:T,icon:T===d.area?"check":void 0,run:()=>ae({area:T})}))}),{width:200}),ke=k=>f.open(k.currentTarget,x=>e.createElement(Q,{close:x,items:bs.map(T=>({label:T[0].toUpperCase()+T.slice(1),icon:T===(d.priority||"normal")?"check":void 0,run:()=>ae({priority:T})}))}),{width:180}),$e=k=>f.open(k.currentTarget,x=>e.createElement(Q,{close:x,items:Ut.map(([T,Z])=>({label:Z,icon:T===d.status?"check":void 0,run:()=>ae({status:T,...T==="waiting"?{reason:"Marked waiting from the Tasks UI"}:{}})}))}),{width:180}),Ce=async()=>{let k=a.getState().byId[t]||d,x=await et(wt(k));return x?y(!0):(y(!1),u("Could not copy. Your browser blocked the clipboard.",{tone:"error"})),x},Pe=()=>{navigator.vibrate&&navigator.vibrate(12),y(!0)},je=async()=>{if(!w){L(!0);try{if(p==="desktop"&&c){let se=await o.handoff(t,"desktop");await c.startChat(se.text)||u("Could not open a new chat. Update Hermes Desktop and try again.",{tone:"error"});return}let k="Starting a new chat for this task. Hermes will message you there in about a minute.",T=(await o.handoff(t,s?"phone":"dashboard")).handoff;if(T.route==="session"){u(k,{duration:7e3});return}let Z=Ns(T.target);u(`Sending to ${Z}\u2026`);for(let se=0;se<30;se++){await new Promise(_=>setTimeout(_,1e3));let me=(await o.handoffStatus(T.id)).handoff;if(me.state==="sent"){u(`Sent. Hermes will message you on ${Z}.`);return}if(me.route==="session"&&me.state==="started"){u(`${Z} did not respond, so Hermes is starting a new chat instead. It will message you there in about a minute.`,{duration:8e3});return}if(me.state==="failed"){u(me.error||"Could not send it to chat.",{tone:"error"});return}}u("Still sending. Hermes will message you when it picks this up.",{tone:"error"})}catch(k){if(k.code==="permission"){let x="hermes config set plugins.entries.alchemy-task.allow_gateway_injection true";u("Alchemy Task needs permission to message you in chat. Ask Hermes to allow it, or run the command.",{tone:"error",duration:12e3,action:{label:"Copy command",run:()=>et(x)}})}else u(W(k),{tone:"error",duration:9e3})}finally{L(!1)}}};return e.createElement(ot,{narrow:s,onClose:n,footer:q(d)?null:e.createElement("button",{type:"button",className:C("at-cta",w&&"is-busy"),onClick:je,disabled:w},e.createElement(M,{name:"chat",size:19,strokeWidth:2}),e.createElement("span",null,w?"Starting\u2026":"Start in chat")),actions:e.createElement(e.Fragment,null,d.loading?e.createElement(K,null):null,e.createElement(V,{icon:"clipboard",label:"Copy title and ID for chat",onClick:Ce}),e.createElement(V,{icon:"refresh",label:"Reload",onClick:F}))},D?e.createElement("div",{className:"at-banner at-tone-late"},e.createElement(M,{name:"alert",size:15}),e.createElement("span",{className:"at-flex"},"This task changed somewhere else."),e.createElement(O,{size:"sm",onClick:F},"Reload")):null,e.createElement("div",{className:"at-panel-titlerow"},e.createElement(Ie,{checked:q(d),onChange:async()=>{await B()&&i.toggle(a.getState().byId[t]||d)},label:q(d)?"Mark not done":"Mark done",size:"lg"}),e.createElement(Ds,{value:d.title,done:q(d),onSave:k=>ae({title:k}),onHold:Pe,onLongPress:Ce,copied:N})),e.createElement("div",{className:"at-fields"},e.createElement("button",{type:"button",className:C("at-field",re&&re<r&&!q(d)&&"is-late"),onClick:z},e.createElement(M,{name:"cal",size:15}),e.createElement("span",null,re?U(re,r):"No date")),e.createElement("button",{type:"button",className:"at-field",onClick:ie},e.createElement(te,{area:d.area}),e.createElement("span",null,d.area||"No area")),q(d)?e.createElement("span",{className:"at-field at-status is-static","data-s":d.status},e.createElement("span",{className:"at-status-dot"}),e.createElement("span",null,d.status==="cancelled"?"Cancelled":"Done")):e.createElement("button",{type:"button",className:"at-field at-status","data-s":d.status||"open",onClick:$e},e.createElement("span",{className:"at-status-dot"}),e.createElement("span",null,(Ut.find(([k])=>k===d.status)||[0,"Open"])[1])),S?e.createElement("button",{type:"button",className:"at-field",onClick:X},e.createElement("span",{className:"at-muted"},"Due"),e.createElement("span",null,U(d.due,r))):null),e.createElement(xs,{value:d.summary||"",onSave:k=>ae({summary:k})}),d.research==="pending"||d.research==="running"?e.createElement("div",{className:"at-research-note"},e.createElement(M,{name:"spark",size:14})," Hermes is researching this task. Findings will appear here."):null,v?e.createElement(Cs,{task:d,onSave:we,onDone:()=>b(!1),onStale:()=>E(!0),flushRef:P}):d.body===void 0?e.createElement("div",{className:"at-panel-loading"},e.createElement(K,null)):e.createElement(Ss,{task:d,onEdit:()=>b(!0),onToggle:Ne}),e.createElement(ue,{title:"More",className:"at-more"},e.createElement("div",{className:"at-more-grid"},e.createElement("span",{className:"at-muted"},"Priority"),e.createElement("span",null,e.createElement("button",{type:"button",className:C("at-field is-plain",(d.priority==="high"||d.priority==="urgent")&&"is-high"),onClick:ke},e.createElement("span",{className:"at-prio-glyph","data-p":d.priority||"normal"}),e.createElement("span",null,(d.priority||"normal").replace(/^\w/,k=>k.toUpperCase())))),e.createElement("span",{className:"at-muted"},"Due date"),e.createElement("span",null,S?e.createElement("button",{type:"button",className:"at-field is-plain",onClick:X},de(d.due,r)):e.createElement("button",{type:"button",className:"at-link",onClick:X},"Set a separate due date")),d.completed?e.createElement(e.Fragment,null,e.createElement("span",{className:"at-muted"},"Completed"),e.createElement("span",null,de(d.completed,r))):null,d.project?e.createElement(e.Fragment,null,e.createElement("span",{className:"at-muted"},"Project"),e.createElement("span",{className:"at-mono"},String(d.project).replace(/^\[\[|\]\]$/g,"").split("/").slice(-2,-1)[0]||d.project)):null,e.createElement("span",{className:"at-muted"},"File"),e.createElement("span",{className:"at-mono at-break"},d.path))))}function ot({narrow:t,onClose:s,actions:n,footer:a,children:o}){let i=e.useRef(null);return He(i,t,s),e.createElement("aside",{ref:i,className:C("at-panel",t?"is-sheet":"is-side"),"aria-label":"Task"},e.createElement("div",{className:"at-panel-bar"},t?e.createElement("span",{className:"at-grabber"}):null,e.createElement("span",{className:"at-flex"}),n,e.createElement(V,{icon:"x",label:"Close",onClick:s})),e.createElement("div",{className:C("at-panel-body at-scroll",a&&"has-foot"),onScroll:Oe},o),a?e.createElement("div",{className:"at-panel-foot"},a):null)}function Ds({value:t,done:s,onSave:n,onHold:a,onLongPress:o,copied:i}){let[r,l]=e.useState(t),[p,c]=e.useState(!1),[u,f]=e.useState(!1),h=e.useRef(null),d=e.useRef(null);e.useEffect(()=>l(t),[t]),e.useLayoutEffect(()=>{let y=h.current;y&&(y.style.height="auto",y.style.height=y.scrollHeight+"px")},[r]);let m=()=>{let y=r.replace(/\s+/g," ").trim();y&&y!==t?n(y):l(t)},g=()=>{d.current&&clearTimeout(d.current.timer),d.current=null,f(!1)},v=y=>{if(p||y.pointerType==="mouse"&&y.button!==0)return;let w={x:y.clientX,y:y.clientY,armed:!1,timer:0};w.timer=setTimeout(()=>{w.armed=!0,f(!0),a()},450),d.current=w},b=y=>{let w=d.current;w&&!w.armed&&Math.hypot(y.clientX-w.x,y.clientY-w.y)>8&&g()},D=()=>{d.current&&d.current.armed||g()},E=y=>{let w=d.current;if(!w)return;let L=w.armed;g(),L&&(y.preventDefault(),d.current={swallowClick:!0},o())},N=y=>{if(d.current&&d.current.swallowClick){d.current=null,y.preventDefault();return}if(p)return;let w=y.currentTarget;w.readOnly=!1,w.focus(),c(!0)};return e.createElement("div",{className:"at-title-wrap"},e.createElement("textarea",{ref:h,rows:1,className:C("at-title-input",s&&"is-done",u&&"is-armed",!p&&"is-idle"),value:r,"aria-label":"Title",readOnly:!p,title:p?void 0:"Tap to edit. Press and hold to copy for chat.",onChange:y=>l(y.target.value),onFocus:()=>{!p&&!d.current&&c(!0)},onBlur:()=>{c(!1),m()},onPointerDown:v,onPointerMove:b,onPointerUp:E,onPointerCancel:D,onTouchEnd:y=>{d.current&&d.current.armed&&E(y)},onClick:N,onContextMenu:y=>{p||y.preventDefault()},onKeyDown:y=>{y.key==="Enter"&&(y.preventDefault(),y.currentTarget.blur()),y.key==="Escape"&&(y.preventDefault(),l(t),y.currentTarget.blur())}}),i?e.createElement("span",{className:"at-copied",role:"status"},e.createElement(M,{name:"check",size:13,strokeWidth:2.4}),"Copied"):null)}function xs({value:t,onSave:s}){let[n,a]=e.useState(t),o=e.useRef(null);return e.useEffect(()=>a(t),[t]),e.useLayoutEffect(()=>{let i=o.current;i&&(i.style.height="auto",i.style.height=i.scrollHeight+"px")},[n]),e.createElement("textarea",{ref:o,rows:1,className:"at-summary-input",value:n,placeholder:"Add a short summary","aria-label":"Summary",onChange:i=>a(i.target.value),onBlur:()=>{let i=n.trim();i!==t.trim()&&s(i)},onKeyDown:i=>{i.key==="Escape"&&(i.preventDefault(),a(t),i.currentTarget.blur())}})}function Ss({task:t,onEdit:s,onToggle:n}){let{sections:a,managed:o}=e.useMemo(()=>Bt(t.body||""),[t.body]),i=o.find(m=>/current-state/.test(m.name)),r=o.filter(m=>m!==i),l=i?{title:"Current state",text:i.text,start:0,managed:!0}:a.find(m=>/^current state$/i.test(m.title)),p=a.filter(m=>m!==l),c=p.findIndex(m=>/^log$/i.test((m.title||"").trim())),u=c>=0?p.slice(0,c):p,f=c>=0?p.slice(c):[],h=m=>Fe(Ve(m.text),{onToggle:(g,v)=>n(m.start+g,v)}),d=a.some(m=>m.text.trim());return e.createElement("div",{className:"at-body"},e.createElement("div",{className:"at-body-bar"},e.createElement("span",{className:"at-body-label"},"Notes"),e.createElement("span",{className:"at-flex"}),e.createElement(O,{size:"sm",variant:"ghost",icon:"edit",onClick:s},"Edit")),l&&l.text.trim()?e.createElement("div",{className:"at-state"},e.createElement("div",{className:"at-state-label"},"Current state"),e.createElement("div",{className:"at-md"},l.managed?Fe(Ve(l.text)):h(l))):null,!d&&!r.length?e.createElement("button",{type:"button",className:"at-empty-notes",onClick:s},"Add notes"):null,u.map((m,g)=>e.createElement(Yt,{key:`b${g}`,s:m,render:h})),r.map((m,g)=>e.createElement(ue,{key:`m${g}`,title:at(m.name),defaultOpen:at(m.name)==="Research",className:"at-fold",right:e.createElement(M,{name:"spark",size:13})},e.createElement("div",{className:"at-md"},Fe(Ve(m.text))))),f.map((m,g)=>e.createElement(Yt,{key:`a${g}`,s:m,render:h})))}function Yt({s:t,render:s}){return t.folded?e.createElement(ue,{title:t.title,className:"at-fold"},e.createElement("div",{className:"at-md"},s(t))):e.createElement("div",{className:"at-section"},t.title&&!/^notes$/i.test(t.title)?e.createElement("h3",{className:"at-section-title"},t.title):null,e.createElement("div",{className:"at-md"},s(t)))}function Cs({task:t,onSave:s,onDone:n,onStale:a,flushRef:o}){let i=ne(),r=e.useMemo(()=>Ot(t.body||""),[]),l=e.useRef(t.revision),p=e.useRef(Promise.resolve(!0)),[c,u]=e.useState(r.editable),[f,h]=e.useState("saved"),d=e.useRef(c),m=e.useRef(r.editable),g=e.useRef(null),v=e.useRef(null),b=e.useCallback(()=>(clearTimeout(g.current),p.current=p.current.then(async()=>{let y=d.current;if(y===m.current)return h(w=>w==="error"?w:"saved"),!0;h("saving");try{let w=await s(Ht(y,r.top,r.bottom),l.current);return l.current=w.revision,m.current=y,h(d.current===y?"saved":"dirty"),!0}catch(w){return h("error"),w.code==="stale_revision"&&a(),i(W(w),{tone:"error"}),!1}}),p.current),[s,a,i,r]);e.useEffect(()=>{if(o)return o.current=b,()=>{o.current=null}},[o,b]);let D=t.revision&&l.current&&t.revision!==l.current&&f!=="saving";e.useEffect(()=>{v.current&&v.current.focus()},[]),e.useEffect(()=>()=>clearTimeout(g.current),[]);let E=y=>{u(y),d.current=y,h("dirty"),clearTimeout(g.current),g.current=setTimeout(b,1500)},N=async()=>{await b()&&n()};return e.createElement("div",{className:"at-body is-editing"},e.createElement("div",{className:"at-body-bar"},e.createElement("span",{className:"at-body-label"},"Notes"),e.createElement("span",{className:C("at-save",`is-${f}`)},f==="saving"?"Saving\u2026":f==="saved"?"Saved":f==="error"?"Not saved":"Editing"),e.createElement("span",{className:"at-flex"}),f==="error"?e.createElement(O,{size:"sm",variant:"ghost",onClick:n},"Discard changes"):null,f==="error"&&!D?e.createElement(O,{size:"sm",onClick:b},"Retry"):null,e.createElement(O,{size:"sm",variant:"primary",onClick:N},"Done")),D?e.createElement("div",{className:"at-banner at-tone-late"},e.createElement(M,{name:"alert",size:15}),e.createElement("span",{className:"at-flex"},"This task changed while you were editing. Your text is kept here and will not overwrite it. Copy what you need, then choose Discard changes to see the latest version.")):null,e.createElement("textarea",{ref:v,className:"at-editor",value:c,spellCheck:!0,onChange:y=>E(y.target.value),onKeyDown:y=>{(y.metaKey||y.ctrlKey)&&y.key==="s"&&(y.preventDefault(),b()),y.key==="Escape"&&(y.preventDefault(),N())}}),e.createElement("div",{className:"at-editor-hint"},"Markdown. Saves as you type.",r.top.length+r.bottom.length?" Research added by Hermes is kept as it is.":""))}var Ft=t=>(t||[]).reduce((s,n)=>s+(n.proposals||[]).filter(a=>a.state==="pending"&&!a.expired).length,0),jt=t=>String(t||"").replace(/[-_]+/g," ").replace(/\b\w/g,s=>s.toUpperCase());function it(t){let s=t.time,n=typeof s=="number"?new Date(s*(s<1e12?1e3:1)):new Date(s);return Number.isNaN(n.getTime())?"":n.toLocaleTimeString(void 0,{hour:"numeric",minute:"2-digit"})}function Vt(t){let s=t.coverage||[];if(!s.length)return t.sources_checked&&t.sources_checked.length?`${t.sources_checked.length} sources`:"";let n=s.filter(a=>a.status==="complete").length;return n===s.length?`${n} ${n===1?"source":"sources"} checked`:`${n} of ${s.length} sources checked`}function qt({runs:t,error:s,loading:n,reload:a}){let{today:o}=A(),[i,r]=e.useState("waiting");if(s&&s.code==="not_found")return e.createElement(rt,{icon:"inbox",title:"Discovery is not available yet",text:"This version of Alchemy Task has no discovery runs to show. Update the plugin to review discovery here."});if(!t&&n)return e.createElement("div",{className:"at-loading"},e.createElement(K,{size:18}));if(s&&!t)return e.createElement(rt,{icon:"alert",title:"Could not load discovery",text:W(s),action:e.createElement(O,{onClick:a},"Try again")});let l=t||[];if(!l.length)return e.createElement(rt,{icon:"spark",title:"No discovery runs yet",text:e.createElement(e.Fragment,null,"Discovery reads the sources you choose and proposes tasks. To start one, ask Hermes:",e.createElement("br",null),e.createElement("q",null,"Set up a daily digest from my email and Slack at 7 AM."))});let p=f=>(f.summary?f.summary.pending:(f.proposals||[]).filter(h=>h.state==="pending").length)>0||(f.conflicts||[]).length||(f.failures||[]).length,c=i==="waiting"?l.filter(p):l,u=l[0];return e.createElement("div",{className:"at-scroll at-disco"},e.createElement("div",{className:"at-disco-inner"},e.createElement("div",{className:"at-disco-bar"},e.createElement("h1",{className:"at-period"},"Discovery"),e.createElement("span",{className:"at-flex"}),e.createElement(Be,{label:"Show",value:i,onChange:r,options:[{value:"waiting",label:"Waiting for you"},{value:"all",label:"All runs"}]}),e.createElement(V,{icon:"refresh",label:"Refresh",onClick:a})),c.length?null:e.createElement("div",{className:"at-caughtup"},e.createElement(M,{name:"check",size:18}),e.createElement("div",null,e.createElement("div",{className:"at-caughtup-title"},"All caught up"),e.createElement("div",{className:"at-muted"},"Last run: ",jt(u.stream),", ",U(u.day,o)," ",it(u)))),c.map(f=>e.createElement(Ts,{key:f.run_id,run:f,filter:i,reload:a}))))}function rt({icon:t,title:s,text:n,action:a}){return e.createElement("div",{className:"at-scroll at-disco"},e.createElement("div",{className:"at-emptystate"},e.createElement("span",{className:"at-emptystate-icon"},e.createElement(M,{name:t,size:22})),e.createElement("h2",null,s),e.createElement("p",null,n),a))}function Ts({run:t,filter:s,reload:n}){let{today:a}=A(),o=t.proposals||[],i=s==="waiting"?o.filter(c=>c.state==="pending"):o,r=(t.outcomes||[]).filter(c=>c.status!=="noop"),l=[...(t.conflicts||[]).map(c=>({...c,kind:"conflict"})),...t.failures||[]],p=t.mode&&t.mode!=="production";return e.createElement("article",{className:"at-run"},e.createElement("header",{className:"at-run-head"},e.createElement("div",null,e.createElement("div",{className:"at-run-title"},jt(t.stream)),e.createElement("div",{className:"at-run-sub"},e.createElement("span",null,U(t.day,a),it(t)?` \xB7 ${it(t)}`:""),Vt(t)?e.createElement("span",{className:C(t.degraded&&"is-late")},Vt(t)):null,p?e.createElement("span",{className:"at-badge"},"Test run"):null)),e.createElement("span",{className:"at-flex"}),t.summary&&t.summary.pending?e.createElement("span",{className:"at-count is-accent"},t.summary.pending," waiting"):null),i.length?e.createElement("div",{className:"at-proposals"},i.map(c=>e.createElement(_s,{key:c.proposal_id,p:c,run:t,reload:n,readOnly:p}))):s==="all"&&!o.length?e.createElement("div",{className:"at-run-none"},"No new proposals in this run."):null,r.length?e.createElement(ue,{title:"Updated automatically",count:r.length,className:"at-run-fold"},r.map(c=>e.createElement(Es,{key:c.unit_id,o:c,run:t,reload:n}))):null,l.length?e.createElement(ue,{title:"Needs attention",count:l.length,tone:"late",className:"at-run-fold",defaultOpen:!0},l.map((c,u)=>e.createElement("div",{key:u,className:"at-attn"},e.createElement(M,{name:"alert",size:14}),e.createElement("div",null,e.createElement("div",{className:"at-attn-title"},c.title||(c.kind==="conflict"?"Several tasks match one item":"Research follow-up")),e.createElement("div",{className:"at-muted"},c.kind==="conflict"?"Nothing was changed. Ask Hermes which task this belongs to.":c.reason))))):null,e.createElement(ue,{title:"Run details",className:"at-run-fold is-quiet"},e.createElement("div",{className:"at-details"},(t.coverage||[]).map((c,u)=>e.createElement("div",{key:u,className:"at-detail-row"},e.createElement("span",{className:C("at-statusdot",c.status==="complete"?"is-ok":"is-late")}),e.createElement("span",{className:"at-flex"},c.source_key||c.source||"Source"),e.createElement("span",{className:"at-muted"},c.status==="complete"?"Checked":c.status||"Unknown"))),e.createElement("div",{className:"at-detail-row"},e.createElement("span",{className:"at-muted"},"Run"),e.createElement("span",{className:"at-flex"}),e.createElement("span",{className:"at-mono"},String(t.run_id).slice(0,12))),t.delivery&&t.delivery.state?e.createElement("div",{className:"at-detail-row"},e.createElement("span",{className:"at-muted"},"Digest"),e.createElement("span",{className:"at-flex"}),e.createElement("span",null,Ms(t.delivery.state))):null)))}var Ms=t=>({delivered:"Sent",host_pending:"Sent by Hermes",prepared:"Prepared",not_prepared:"Not sent",unknown:"Unknown",inflight:"Sending"})[t]||t;function Es({o:t,run:s,reload:n}){let{actions:a,api:o}=A(),i=ne(),[r,l]=e.useState(!1),p=async()=>{l(!0);try{await o.resume(s.run_id,t.unit_id),await n()}catch(u){i(W(u),{tone:"error"})}l(!1)},c=t.status==="complete";return e.createElement("div",{className:"at-outcome"},e.createElement("span",{className:C("at-statusdot",c?"is-ok":"is-late")}),e.createElement("button",{type:"button",className:"at-outcome-title",onClick:()=>t.task_id&&a.open(t.task_id)},t.title),e.createElement("span",{className:"at-flex"}),c?e.createElement("span",{className:"at-muted"},"Updated"):t.resume_action?e.createElement(O,{size:"sm",onClick:p,disabled:r},r?"Finishing\u2026":"Finish update"):e.createElement("span",{className:"at-muted"},t.status))}function _s({p:t,run:s,reload:n,readOnly:a}){let{api:o,actions:i,today:r,meta:l,store:p}=A(),c=ne(),u=ee(),f=t.targets||[],h=t.kind==="selection"||f.length>1,[d,m]=e.useState(t.kind==="new"||!f.length?"create":"update"),[g,v]=e.useState(f.length===1?f[0].task_id:null),b=(l.streams||{})[s.stream]||[],[D,E]=e.useState(t.due||t.due_hint||r),[N,y]=e.useState(t.area||(b.length===1?b[0]:l.default_area)||""),[w,L]=e.useState(null),[F,$]=e.useState(!1);if(t.state==="approved"||t.state==="complete"){let S=t.result||{},z=t.state==="complete"||S.state==="complete";return e.createElement("div",{className:"at-prop is-resolved"},e.createElement("span",{className:C("at-statusdot",z?"is-ok":"is-late")}),e.createElement("span",{className:"at-prop-resolved"},S.operation==="updated"?"Updated":"Created"," ",e.createElement("button",{type:"button",className:"at-linkish",onClick:()=>S.task_id&&i.open(S.task_id)},S.title||t.title)),e.createElement("span",{className:"at-flex"}),z?e.createElement("span",{className:"at-muted"},t.ref):e.createElement("span",{className:"at-muted"},"Saving\u2026"))}if(t.state==="dismissed"||F)return e.createElement("div",{className:"at-prop is-resolved is-dismissed"},e.createElement("span",{className:"at-prop-resolved"},t.title),e.createElement("span",{className:"at-flex"}),e.createElement("span",{className:"at-muted"},"Dismissed"));let P=async S=>{if(S==="create"&&!N){c("Pick an area first.",{tone:"error"});return}let z=f.find(ie=>ie.task_id===g);if(S==="update"&&!z){c("Pick the task to update.",{tone:"error"});return}let X=S==="create"?{choice:S,due:D,area:N}:{choice:S,target_task_id:z.task_id,expected_revision:z.revision};t.expired&&(X.allow_expired=!0),L(S);try{let ke=(await o.approve(t.proposal_id,X)).receipt||{};c(S==="create"?"Task created":"Task updated",ke.task_id?{action:{label:"Open",run:()=>i.open(ke.task_id)}}:{}),await n(),p.refresh()}catch(ie){c(W(ie),{tone:"error"}),(ie.code==="already_resolved"||ie.code==="stale_revision")&&n()}L(null)},B=async()=>{L("dismiss");try{await o.dismiss(t.proposal_id),$(!0),c("Proposal dismissed"),n()}catch(S){c(W(S),{tone:"error"})}L(null)},ae=S=>u.open(S.currentTarget,z=>e.createElement(ge,{value:D,today:r,onPick:E,close:z}),{width:300}),we=S=>u.open(S.currentTarget,z=>e.createElement(Q,{close:z,items:(l.areas||[]).map(X=>({label:X,icon:X===N?"check":void 0,run:()=>y(X)}))}),{width:200}),oe=[].concat(t.new_information||[]).filter(Boolean),Ne=[].concat(t.source_links||[]).filter(Boolean),re=t.research_disposition==="uncertain";return e.createElement("div",{className:C("at-prop",t.expired&&"is-expired")},e.createElement("div",{className:"at-prop-head"},e.createElement("span",{className:"at-prop-ref"},t.ref),e.createElement("h3",{className:"at-prop-title"},t.title),e.createElement(V,{icon:"x",label:"Dismiss",className:"at-prop-dismiss",onClick:B,disabled:!!w||a})),t.current_understanding?e.createElement("p",{className:"at-prop-text"},t.current_understanding):null,t.substantive_next_action?e.createElement("div",{className:"at-prop-next"},e.createElement("span",{className:"at-prop-label"},"Next"),e.createElement("span",null,t.substantive_next_action)):null,re?e.createElement("div",{className:"at-prop-uncertain"},e.createElement(M,{name:"alert",size:14}),e.createElement("span",null,[].concat(t.uncertainty||[]).join(" ")||"Hermes was not sure about this one. Check it before you add it.")):null,Ne.length?e.createElement("div",{className:"at-prop-links"},Ne.slice(0,4).map((S,z)=>e.createElement(Ls,{key:z,href:S}))):null,f.length?e.createElement("div",{className:C("at-prop-targets",d==="create"&&"is-muted")},e.createElement("div",{className:"at-prop-label"},h?"Could update one of these tasks":"May update an existing task"),f.map(S=>e.createElement("label",{key:S.task_id,className:C("at-target",g===S.task_id&&d==="update"&&"is-on")},h?e.createElement("input",{type:"radio",name:t.proposal_id,checked:g===S.task_id&&d==="update",onChange:()=>{v(S.task_id),m("update")}}):e.createElement(M,{name:"arrowR",size:14}),e.createElement("span",{className:"at-target-main"},e.createElement("span",{className:"at-target-title"},S.title),e.createElement("span",{className:"at-target-meta"},S.area?e.createElement(e.Fragment,null,e.createElement(te,{area:S.area}),S.area):null,Y(S)?e.createElement("span",null,U(Y(S),r)):null,S.status&&S.status!=="open"?e.createElement("span",null,S.status):null)),e.createElement("button",{type:"button",className:"at-link",onClick:z=>{z.preventDefault(),i.open(S.task_id)}},"Open"))),oe.length?e.createElement("div",{className:"at-prop-addition"},e.createElement("span",{className:"at-prop-label"},"Would add"),e.createElement("ul",null,oe.map((S,z)=>e.createElement("li",{key:z},S)))):null):oe.length?e.createElement("ul",{className:"at-prop-list"},oe.map((S,z)=>e.createElement("li",{key:z},S))):null,e.createElement("div",{className:"at-prop-actions"},d==="create"?e.createElement(e.Fragment,null,e.createElement("button",{type:"button",className:"at-field",onClick:ae},e.createElement(M,{name:"cal",size:14}),e.createElement("span",null,U(D,r))),e.createElement("button",{type:"button",className:C("at-field",!N&&"is-late"),onClick:we},e.createElement(te,{area:N}),e.createElement("span",null,N||"Pick area")),e.createElement("span",{className:"at-flex"}),f.length?e.createElement(O,{variant:"ghost",size:"sm",onClick:()=>m("update"),disabled:!!w},"Update instead"):null,e.createElement(O,{variant:"primary",size:"sm",icon:"plus",onClick:()=>P("create"),disabled:!!w||a},w==="create"?"Creating\u2026":"Create task")):e.createElement(e.Fragment,null,e.createElement(O,{variant:"ghost",size:"sm",onClick:()=>m("create"),disabled:!!w},"Create new instead"),e.createElement("span",{className:"at-flex"}),e.createElement(O,{variant:"primary",size:"sm",icon:"check",onClick:()=>P("update"),disabled:!!w||!g||a},w==="update"?"Updating\u2026":h?"Update selected":"Update task"))),t.expired?e.createElement("div",{className:"at-prop-foot at-muted"},"Expired ",U(t.expires,r).toLowerCase(),". You can still add it."):null)}function Ls({href:t}){let s=t;try{let a=new URL(t).host.replace(/^www\./,"");s=/slack/.test(a)?"Slack":/mail\.google|gmail/.test(a)?"Gmail":/notion/.test(a)?"Notion":/github/.test(a)?"GitHub":a}catch{}return e.createElement("a",{className:"at-srclink",href:t,target:"_blank",rel:"noreferrer noopener"},e.createElement(M,{name:"link",size:12}),s)}var Gt=[["daily","Every day"],["weekdays","Weekdays"],["every 4 hours","Every 4 hours"],["every 3 hours","Every 3 hours"],["every 2 hours","Every 2 hours"],["hourly","Every hour"]],lt=t=>t==="daily"||t==="weekdays";function Xt(t){let s=String(t||"").trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);if(!s)return"07:00";let n=Number(s[1])%24;return s[3]==="pm"&&n<12&&(n+=12),s[3]==="am"&&n===12&&(n=0),`${String(n).padStart(2,"0")}:${s[2]||"00"}`}function $s(t){let[s,n]=t.split(":").map(Number);return`${(s+11)%12+1}:${String(n).padStart(2,"0")} ${s<12?"AM":"PM"}`}function ut({onClose:t,inline:s,narrow:n}){let{api:a}=A(),[o,i]=e.useState(null),[r,l]=e.useState(null),p=e.useRef(null);He(p,n&&!s,t);let c=e.useCallback(()=>(l(null),a.settings().then(i,l)),[a]);e.useEffect(()=>{c()},[c]);let u=o?e.createElement(Ps,{data:o,reload:c}):r?e.createElement("div",{className:"at-panel-empty"},e.createElement(M,{name:"alert",size:20}),e.createElement("p",null,W(r)),e.createElement(O,{onClick:c},"Try again")):e.createElement("div",{className:"at-panel-empty"},e.createElement(K,{size:18}));return s?e.createElement("div",{className:"at-settings-inline"},u):e.createElement("aside",{ref:p,className:C("at-panel",n?"is-sheet":"is-side","at-settings"),"aria-label":"Settings"},e.createElement("div",{className:"at-panel-bar"},n?e.createElement("span",{className:"at-grabber"}):null,e.createElement("span",{className:"at-panel-heading"},"Settings"),e.createElement("span",{className:"at-flex"}),e.createElement(V,{icon:"x",label:"Close",onClick:t})),e.createElement("div",{className:"at-panel-body at-scroll",onScroll:Oe},u))}function Ps({data:t,reload:s}){let n=t.streams||[],a=t.tasks||{};return e.createElement("div",{className:"at-settings-body"},e.createElement("section",{className:"at-set-sec"},e.createElement("h3",null,"Discovery"),e.createElement("p",{className:"at-muted"},"When each discovery stream reads its sources and proposes tasks."),n.length?n.map(o=>e.createElement(As,{key:o.name,s:o,reload:s})):e.createElement("div",{className:"at-set-empty"},"No streams yet. Ask Hermes: ",e.createElement("q",null,"Set up a daily digest from my email at 7 AM."))),e.createElement("section",{className:"at-set-sec"},e.createElement("h3",null,"Tasks"),e.createElement(Is,{t:a,reload:s})),e.createElement("section",{className:"at-set-sec"},e.createElement("h3",null,"Sync and storage"),e.createElement("div",{className:"at-set-grid"},e.createElement("span",{className:"at-muted"},"Workspace"),e.createElement("span",{className:"at-mono at-break"},a.workspace_root||"Not set up"),e.createElement("span",{className:"at-muted"},"Time zone"),e.createElement("span",null,a.timezone||"Hermes default"),t.sync&&t.sync.git?e.createElement(e.Fragment,null,e.createElement("span",{className:"at-muted"},"Git"),e.createElement("span",null,t.sync.git)):null,t.sync&&t.sync.reminders?e.createElement(e.Fragment,null,e.createElement("span",{className:"at-muted"},"iOS Reminders"),e.createElement("span",null,t.sync.reminders)):null),e.createElement("p",{className:"at-muted at-set-hint"},"To change sources, accounts or areas, ask Hermes in chat, for example ",e.createElement("q",null,"add my team Slack channel to the work digest"),".")))}function As({s:t,reload:s}){let{api:n}=A(),a=ne(),o=ee(),[i,r]=e.useState(t.frequency||"daily"),[l,p]=e.useState(Xt(t.time||"7 AM")),[c,u]=e.useState(null),f=i!==(t.frequency||"daily")||lt(i)&&l!==Xt(t.time||"7 AM"),h=async()=>{u("save");try{let v=await n.patchStream(t.name,lt(i)?{frequency:i,time:$s(l)}:{frequency:i});a(v.message||"Schedule updated"),await s()}catch(v){a(W(v),{tone:"error"})}u(null)},d=async()=>{u("run");try{let v=await n.runStream(t.name);a(v.message||"Discovery run started")}catch(v){a(W(v),{tone:"error"})}u(null)},m=v=>o.open(v.currentTarget,b=>e.createElement(Q,{close:b,items:Gt.map(([D,E])=>({label:E,icon:D===i?"check":void 0,run:()=>r(D)}))}),{width:200}),g=t.setup_blocked_reason||(t.activation_state&&!/active|ok|ready/i.test(t.activation_state)?t.activation_state:"");return e.createElement("div",{className:"at-stream"},e.createElement("div",{className:"at-stream-head"},e.createElement("div",null,e.createElement("div",{className:"at-stream-name"},String(t.name).replace(/\b\w/g,v=>v.toUpperCase())),e.createElement("div",{className:"at-muted"},(t.areas||[]).map(v=>e.createElement("span",{key:v,className:"at-inline-area"},e.createElement(te,{area:v}),v)),t.last_run?e.createElement("span",null," \xB7 last ran ",zs(t.last_run)):null)),e.createElement("span",{className:"at-flex"}),e.createElement(O,{size:"sm",variant:"ghost",icon:"play",onClick:d,disabled:!!c},c==="run"?"Starting\u2026":"Run now")),e.createElement("div",{className:"at-stream-sched"},e.createElement("button",{type:"button",className:"at-field",onClick:m},e.createElement(M,{name:"clock",size:14}),e.createElement("span",null,(Gt.find(([v])=>v===i)||[0,i])[1]),e.createElement(M,{name:"chevD",size:13})),lt(i)?e.createElement("label",{className:"at-field at-timefield"},e.createElement("span",{className:"at-muted"},"at"),e.createElement("input",{type:"time",value:l,step:300,onChange:v=>p(v.target.value||l)})):null,t.timezone?e.createElement("span",{className:"at-muted at-tz"},t.timezone.replace(/_/g," ")):null,e.createElement("span",{className:"at-flex"}),f?e.createElement(O,{size:"sm",variant:"primary",onClick:h,disabled:!!c},c==="save"?"Saving\u2026":"Save"):null),(t.sources||[]).length?e.createElement("div",{className:"at-stream-sources"},(t.sources||[]).map(v=>e.createElement("span",{key:v.name,className:"at-chip",title:v.scope},v.name))):null,g?e.createElement("div",{className:"at-banner at-tone-late"},e.createElement(M,{name:"alert",size:14}),e.createElement("span",null,g)):null)}function zs(t){let s=typeof t=="number"?new Date(t*(t<1e12?1e3:1)):new Date(t);if(Number.isNaN(s.getTime()))return"";let n=Math.round((Date.now()-s.getTime())/6e4);return n<60?`${Math.max(1,n)} min ago`:n<1440?`${Math.round(n/60)} h ago`:s.toLocaleDateString(void 0,{month:"short",day:"numeric"})}function Is({t,reload:s}){let{api:n,meta:a}=A(),o=ne(),i=ee(),r=async p=>{try{await n.patchTaskSettings(p),o("Saved"),await s()}catch(c){o(W(c),{tone:"error"})}};return e.createElement("div",{className:"at-set-grid"},e.createElement("span",{className:"at-muted"},"Default area"),e.createElement("span",null,e.createElement("button",{type:"button",className:"at-field",onClick:p=>i.open(p.currentTarget,c=>e.createElement(Q,{close:c,items:(a.areas||[]).map(u=>({label:u,icon:u===t.default_area?"check":void 0,run:()=>r({default_area:u})}))}),{width:200})},e.createElement(te,{area:t.default_area}),e.createElement("span",null,t.default_area||"None"),e.createElement(M,{name:"chevD",size:13}))),e.createElement("span",{className:"at-muted"},"Research new tasks"),e.createElement("span",null,e.createElement("button",{type:"button",role:"switch","aria-checked":!!t.research_by_default,className:C("at-switch",t.research_by_default&&"is-on"),onClick:()=>r({research_by_default:!t.research_by_default})},e.createElement("i",null))))}var Bs=720,Os=3e4;function Jt(t){return e.createElement(Ct,null,e.createElement(Hs,{...t}))}function Hs({transport:t,host:s,initialView:n,settingsOnly:a,chat:o}){let i=t,r=ne(),l=e.useRef(null),c=gt(l)<Bs,u=e.useMemo(()=>vt(i),[i]),f=ye(u,Us),h=ye(u,Ys),[d,m]=e.useState(null),[g,v]=e.useState(null),[b,D]=e.useState(n==="discovery"?"discovery":"tasks"),[E,N]=e.useState(n==="settings"),[y,w]=e.useState(null),[L,F]=yt("prefs",{view:null,area:"",hideDone:!1}),$=L,P=e.useCallback(k=>F(x=>({...x,...k})),[F]),[B,ae]=e.useState(null),[we,oe]=e.useState(null),[Ne,re]=e.useState(!1),S=e.useCallback(()=>i.meta().then(k=>{m(k),v(null),u.setToday(k.today)},v),[i,u]),z=e.useCallback(async()=>{re(!0);try{let k=await i.runs();ae(k.runs||[]),oe(null)}catch(k){oe(k)}re(!1)},[i]);e.useEffect(()=>{S(),z()},[S,z]),e.useEffect(()=>{let k=()=>{S(),u.refresh(),z()},x=setInterval(()=>{document.visibilityState==="visible"&&k()},Os);return window.addEventListener("focus",k),()=>{clearInterval(x),window.removeEventListener("focus",k)}},[S,z,u]),e.useEffect(()=>{let k=x=>{let T=x.detail;(T==="discovery"||T==="tasks")&&D(T),T==="settings"&&N(!0)};return window.addEventListener("alchemy-task:open",k),()=>window.removeEventListener("alchemy-task:open",k)},[]);let X=e.useMemo(()=>{let k=_=>_.status==="done"||_.status==="cancelled",x=_=>r(W(_),{tone:"error"}),T=_=>u.mutate(_.task_id,{status:"done",completed:u.getState().today},()=>i.complete(_.task_id)),Z=_=>u.mutate(_.task_id,{status:"open",completed:null},()=>i.reopen(_.task_id)),se=(_,H,R)=>u.mutate(_.task_id,{scheduled:H,due:R},()=>i.patch(_.task_id,H===R?{date:H}:{scheduled:H,due:R,keep_separate:!0}));return{open:_=>w(_),async toggle(_){try{k(_)?(await Z(_),r("Marked not done",{undo:()=>T(_).catch(x)})):(await T(_),r(`Done: ${_.title}`,{undo:()=>Z(_).catch(x)}))}catch(H){x(H)}},async move(_,H){let R={scheduled:_.scheduled||null,due:_.due||null};if(!(Y(_)===H&&(!_.due||_.due===H)))try{await se(_,H,H),r(`Moved to ${U(H,u.getState().today)}`,{undo:()=>se({..._,scheduled:H,due:H},R.scheduled||R.due,R.due||R.scheduled).catch(x)})}catch(G){x(G)}},async moveMany(_,H){let R=_.slice(),G=0;for(let be of R)try{await se(be,H,H),G++}catch(qe){x(qe);break}G&&r(`Moved ${G} ${G===1?"task":"tasks"} to ${U(H,u.getState().today).toLowerCase()}`,{undo:async()=>{for(let be of R.slice(0,G))try{await se({...be,scheduled:H,due:H},be.scheduled||be.due,be.due||be.scheduled)}catch(qe){x(qe);break}}})},async create({title:_,date:H,area:R}){try{let G=await i.create({title:_,date:H,area:R});return G.task&&u.put(G.task),r(G.task&&G.task.research==="pending"?"Added. Hermes is researching it.":"Added",{action:G.task?{label:"Open",run:()=>w(G.task.task_id)}:void 0}),!0}catch(G){return x(G),!1}}}},[i,u,r]),ie=e.useCallback((k,x)=>X.move(k,x),[X]),ke=Ft(B),$e=e.useMemo(()=>({api:i,store:u,meta:d||{},today:f||d&&d.today,prefs:$,setPrefs:P,actions:X,selectedId:y,narrow:c,host:s,chat:o}),[i,u,d,f,$,P,X,y,c,s,o]),[Ce,Pe]=e.useState(null);e.useLayoutEffect(()=>{let k=l.current;if(!k||a)return;let x=()=>{let T=k.parentElement,Z=T?T.getBoundingClientRect().height:0;if(s==="desktop"&&Z>300){Pe(null);return}let se=k.getBoundingClientRect().top,me=window.visualViewport&&window.visualViewport.height||window.innerHeight;Pe(Math.max(420,Math.round(me-Math.max(0,se)-8)))};return x(),window.addEventListener("resize",x),window.visualViewport&&window.visualViewport.addEventListener("resize",x),()=>{window.removeEventListener("resize",x),window.visualViewport&&window.visualViewport.removeEventListener("resize",x)}},[s,a]);let je=!d&&g?e.createElement(Kt,{icon:"alert",title:"Alchemy Task is not responding",text:W(g)}):!d||!$e.today?e.createElement("div",{className:"at-loading"},e.createElement(K,{size:18})):d.configured===!1?e.createElement(Kt,{icon:"list",title:"Set up your tasks",text:e.createElement(e.Fragment,null,"Alchemy Task is installed but not set up yet. In chat, ask Hermes: ",e.createElement("q",null,"Set up my tasks."))}):a?e.createElement(ut,{inline:!0,narrow:c}):e.createElement(e.Fragment,null,e.createElement("nav",{className:"at-appbar"},c?null:e.createElement("span",{className:"at-brand"},e.createElement("i",{className:"at-brand-mark","aria-hidden":"true"}),"Alchemy Task"),e.createElement("div",{className:"at-tabs",role:"tablist"},e.createElement("button",{type:"button",role:"tab","aria-selected":b==="tasks",className:C("at-tab",b==="tasks"&&"is-on"),onClick:()=>D("tasks")},"Tasks"),e.createElement("button",{type:"button",role:"tab","aria-selected":b==="discovery",className:C("at-tab",b==="discovery"&&"is-on"),onClick:()=>D("discovery")},"Discovery",ke?e.createElement("span",{className:"at-badge-dot"},ke):null)),e.createElement("span",{className:"at-flex"}),h?e.createElement(K,{size:12}):null,e.createElement(V,{icon:"gear",label:"Settings",className:C(E&&"is-on"),onClick:()=>{w(null),N(k=>!k)}})),e.createElement("div",{className:C("at-main",y&&!c&&"has-panel",E&&!c&&"has-panel")},b==="tasks"?e.createElement(Pt,{narrow:c}):e.createElement(qt,{runs:B,error:we,loading:Ne,reload:z})),y?e.createElement(Wt,{id:y,narrow:c,onClose:()=>w(null)}):null,E&&!y?e.createElement(ut,{narrow:c,onClose:()=>N(!1)}):null);return e.createElement(Ze.Provider,{value:$e},e.createElement("div",{ref:l,className:C("at-root at-vars",c&&"is-narrow",`host-${s}`,a&&"is-settings-only"),style:Ce?{height:Ce}:void 0},e.createElement(ft,{onDrop:ie},e.createElement(Dt,{rootRef:l},je)),e.createElement(Tt,null)))}var Us=t=>t.today,Ys=t=>t.loading>0;function Kt({icon:t,title:s,text:n}){return e.createElement("div",{className:"at-emptystate is-full"},e.createElement("span",{className:"at-emptystate-icon"},e.createElement(M,{name:t,size:22})),e.createElement("h2",null,s),e.createElement("p",null,n))}var Ws=window.__HERMES_PLUGIN_SDK__,Vs="/api/plugins/alchemy-task",Fs=ht(async(t,s,n)=>{let a={method:t,headers:{}};return n!==void 0&&(a.headers["Content-Type"]="application/json",a.body=JSON.stringify(n)),Ws.fetchJSON(Vs+s,a)});function js(){return e.createElement(Jt,{transport:Fs,host:"dashboard"})}window.__HERMES_PLUGINS__.register("alchemy-task",js);})();
+  // ui/src/store.js
+  function createTaskStore(api) {
+    let state = { byId: {}, today: null, loading: 0, error: null, version: 0 };
+    const listeners = /* @__PURE__ */ new Set();
+    const pending = /* @__PURE__ */ new Map();
+    const loaded = /* @__PURE__ */ new Map();
+    const emit = () => {
+      state = { ...state, version: state.version + 1 };
+      listeners.forEach((l) => l());
+    };
+    const set = (patch) => {
+      state = { ...state, ...patch };
+      emit();
+    };
+    function upsert(tasks, coveredFn) {
+      const byId = { ...state.byId };
+      const seen = /* @__PURE__ */ new Set();
+      for (const t of tasks) {
+        seen.add(t.task_id);
+        if (pending.has(t.task_id)) continue;
+        const prev = byId[t.task_id] || {};
+        const body = t.body !== void 0 ? t.body : prev.revision === t.revision ? prev.body : void 0;
+        byId[t.task_id] = { ...prev, ...t, body };
+      }
+      if (coveredFn) {
+        for (const [id, t] of Object.entries(byId)) {
+          if (!seen.has(id) && !pending.has(id) && coveredFn(t)) delete byId[id];
+        }
+      }
+      state = { ...state, byId };
+    }
+    async function track(promise) {
+      set({ loading: state.loading + 1 });
+      try {
+        return await promise;
+      } finally {
+        set({ loading: Math.max(0, state.loading - 1) });
+      }
+    }
+    const store = {
+      getState: () => state,
+      subscribe: (fn) => {
+        listeners.add(fn);
+        return () => listeners.delete(fn);
+      },
+      setToday: (today) => {
+        if (today !== state.today) set({ today });
+      },
+      async loadRange(from, to) {
+        loaded.set(`${from}:${to}`, { from, to });
+        const res = await track(api.tasks(from, to));
+        if (res.today) state = { ...state, today: res.today };
+        upsert(res.tasks || [], (t) => {
+          const d = taskDate(t);
+          return d && d >= from && d <= to;
+        });
+        set({ error: null });
+        return res;
+      },
+      async loadOverdue() {
+        const res = await track(api.overdue());
+        const today = res.today || state.today;
+        if (res.today) state = { ...state, today: res.today };
+        upsert(res.tasks || [], (t) => {
+          const d = taskDate(t);
+          return t.status !== "done" && t.status !== "cancelled" && d && d < today;
+        });
+        set({ error: null });
+        return res;
+      },
+      /** Refetch every range loaded so far (focus, polling, after agent changes). */
+      async refresh() {
+        const ranges = [...loaded.values()].slice(-4);
+        try {
+          await Promise.all([...ranges.map((r) => store.loadRange(r.from, r.to)), store.loadOverdue()]);
+        } catch (err) {
+          set({ error: err });
+        }
+      },
+      async loadTask(id) {
+        const res = await api.task(id);
+        upsert([res.task]);
+        emit();
+        return res.task;
+      },
+      put(task) {
+        upsert([task]);
+        emit();
+      },
+      /** Apply a local change now, run the server call, then take the server's version (or roll back). */
+      async mutate(id, localPatch, run) {
+        const before = state.byId[id];
+        pending.set(id, (pending.get(id) || 0) + 1);
+        if (before && localPatch) {
+          state = { ...state, byId: { ...state.byId, [id]: { ...before, ...localPatch } } };
+          emit();
+        }
+        try {
+          const res = await run();
+          const left = (pending.get(id) || 1) - 1;
+          if (left) pending.set(id, left);
+          else pending.delete(id);
+          if (res && res.task) {
+            upsert([res.task]);
+            emit();
+          }
+          return res;
+        } catch (err) {
+          const left = (pending.get(id) || 1) - 1;
+          if (left) pending.set(id, left);
+          else pending.delete(id);
+          if (before) {
+            state = { ...state, byId: { ...state.byId, [id]: before } };
+            emit();
+          }
+          throw err;
+        }
+      }
+    };
+    return store;
+  }
+  function useStore(store, selector) {
+    const get = react_dashboard_default.useCallback(() => selector(store.getState()), [store, selector]);
+    const [value, setValue] = react_dashboard_default.useState(get);
+    react_dashboard_default.useEffect(() => {
+      setValue(get());
+      return store.subscribe(() => setValue(get()));
+    }, [store, get]);
+    return value;
+  }
+  var AppContext = react_dashboard_default.createContext(null);
+  var useApp = () => react_dashboard_default.useContext(AppContext);
+  function usePref(key, initial) {
+    const full = `alchemy-task.${key}`;
+    const [value, setValue] = react_dashboard_default.useState(() => {
+      try {
+        const raw = window.localStorage.getItem(full);
+        return raw === null ? initial : JSON.parse(raw);
+      } catch {
+        return initial;
+      }
+    });
+    const update = react_dashboard_default.useCallback((v) => {
+      setValue((prev) => {
+        const next = typeof v === "function" ? v(prev) : v;
+        try {
+          window.localStorage.setItem(full, JSON.stringify(next));
+        } catch {
+        }
+        return next;
+      });
+    }, [full]);
+    return [value, update];
+  }
+  function useWidth(ref) {
+    const [w, setW] = react_dashboard_default.useState(() => typeof window !== "undefined" ? window.innerWidth : 1200);
+    react_dashboard_default.useLayoutEffect(() => {
+      const el = ref.current;
+      if (!el) return void 0;
+      setW(el.getBoundingClientRect().width);
+      const ro = new ResizeObserver((entries) => setW(entries[0].contentRect.width));
+      ro.observe(el);
+      return () => ro.disconnect();
+    }, [ref]);
+    return w;
+  }
+
+  // ui/src/lib/month.js
+  function fittingRows(total, height, rowHeight, moreHeight, gap = 0) {
+    if (total * (rowHeight + gap) - gap <= height) return total;
+    return Math.min(total, Math.max(0, Math.floor((height - moreHeight) / (rowHeight + gap))));
+  }
+
+  // ui/src/ui.jsx
+  var P = {
+    check: "M5 12.5l4.2 4.2L19 7",
+    chevL: "M15 18l-6-6 6-6",
+    chevR: "M9 6l6 6-6 6",
+    chevD: "M6 9l6 6 6-6",
+    gear: "M12 15.2a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4z M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z",
+    x: "M6 6l12 12M18 6L6 18",
+    plus: "M12 5v14M5 12h14",
+    more: "M5 12h.01M12 12h.01M19 12h.01",
+    cal: "M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 011 1v13a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1z",
+    spark: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z M19 16l.7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7z",
+    link: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5",
+    alert: "M12 9v4M12 17h.01M10.3 3.9L2.4 18a2 2 0 001.7 3h15.8a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z",
+    refresh: "M20 11a8 8 0 10-2.3 5.7M20 5v6h-6",
+    inbox: "M4 13l2.5-7h11L20 13M4 13v5a1 1 0 001 1h14a1 1 0 001-1v-5M4 13h4l1.5 2.5h5L16 13h4",
+    edit: "M4 20h4L19 9l-4-4L4 16v4z M13.5 6.5l4 4",
+    grip: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",
+    arrowR: "M5 12h14M13 6l6 6-6 6",
+    undo: "M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 010 11H11",
+    dot: "M12 12h.01",
+    list: "M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01",
+    clock: "M12 7v5l3 2 M12 21a9 9 0 100-18 9 9 0 000 18z",
+    play: "M7 5l12 7-12 7z",
+    clipboard: "M9 4.5h6a1 1 0 011 1V7H8V5.5a1 1 0 011-1z M8 6H6.5A1.5 1.5 0 005 7.5v11A1.5 1.5 0 006.5 20h11a1.5 1.5 0 001.5-1.5v-11A1.5 1.5 0 0017.5 6H16",
+    chat: "M5 5.5h14a1.5 1.5 0 011.5 1.5v8a1.5 1.5 0 01-1.5 1.5h-7.5L7 20v-3.5H5A1.5 1.5 0 013.5 15V7A1.5 1.5 0 015 5.5z M8 10h8 M8 13h5"
+  };
+  function Icon({ name, size = 16, className = "", strokeWidth = 1.8 }) {
+    return /* @__PURE__ */ react_dashboard_default.createElement(
+      "svg",
+      {
+        className: "at-icon " + className,
+        width: size,
+        height: size,
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        "aria-hidden": "true"
+      },
+      /* @__PURE__ */ react_dashboard_default.createElement("path", { d: P[name] || P.dot })
+    );
+  }
+  var cx = (...xs) => xs.filter(Boolean).join(" ");
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+    }
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:fixed;top:0;left:0;opacity:0;font-size:16px";
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    ta.remove();
+    return ok;
+  }
+  var taskHandoff = (task) => `${task.title} (task ID: ${task.task_id})`;
+  function Button({ variant = "default", size, icon, children, className, ...rest }) {
+    return /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-btn", `at-btn-${variant}`, size && `at-btn-${size}`, className), ...rest }, icon ? /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: icon, size: size === "sm" ? 14 : 16 }) : null, children ? /* @__PURE__ */ react_dashboard_default.createElement("span", null, children) : null);
+  }
+  function IconButton({ icon, label, className, size = 16, ...rest }) {
+    return /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-iconbtn", className), "aria-label": label, title: label, ...rest }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: icon, size }));
+  }
+  function Check({ checked, onChange, label, size = "md", tone }) {
+    return /* @__PURE__ */ react_dashboard_default.createElement(
+      "button",
+      {
+        type: "button",
+        role: "checkbox",
+        "aria-checked": !!checked,
+        "aria-label": label,
+        className: cx("at-check", `at-check-${size}`, checked && "is-on", tone && `at-tone-${tone}`),
+        "data-no-drag": "",
+        onClick: (e) => {
+          e.stopPropagation();
+          onChange(!checked);
+        }
+      },
+      /* @__PURE__ */ react_dashboard_default.createElement("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, /* @__PURE__ */ react_dashboard_default.createElement("path", { d: P.check }))
+    );
+  }
+  function Segmented({ value, options, onChange, label }) {
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-seg", role: "tablist", "aria-label": label }, options.map((o) => /* @__PURE__ */ react_dashboard_default.createElement(
+      "button",
+      {
+        key: o.value,
+        type: "button",
+        role: "tab",
+        "aria-selected": value === o.value,
+        className: cx("at-seg-item", value === o.value && "is-on"),
+        onClick: () => onChange(o.value)
+      },
+      o.label
+    )));
+  }
+  function Spinner({ size = 14 }) {
+    return /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-spinner", style: { width: size, height: size }, "aria-label": "Loading" });
+  }
+  function Disclosure({ title, count, defaultOpen = false, tone, children, right, className }) {
+    const [open, setOpen] = react_dashboard_default.useState(defaultOpen);
+    return /* @__PURE__ */ react_dashboard_default.createElement("section", { className: cx("at-disc", open && "is-open", tone && `at-tone-${tone}`, className) }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-disc-head", "aria-expanded": open, onClick: () => setOpen(!open) }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "chevR", size: 14, className: "at-disc-chev" }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-disc-title" }, title), count !== void 0 ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-count" }, count) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), right), open ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disc-body" }, children) : null);
+  }
+  function AreaDot({ area }) {
+    return /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-areadot", style: { "--at-area": areaColor(area) }, title: area });
+  }
+  var AREA_HUES = [212, 152, 28, 280, 340, 188, 48, 252];
+  function areaColor(area) {
+    if (!area) return "var(--at-faint)";
+    let h2 = 0;
+    for (const c of String(area)) h2 = h2 * 31 + c.codePointAt(0) >>> 0;
+    return `hsl(${AREA_HUES[h2 % AREA_HUES.length]} 78% 68%)`;
+  }
+  var markScrolled = (e) => {
+    const el = e.currentTarget;
+    if (el.parentElement) el.parentElement.classList.toggle("is-scrolled", el.scrollTop > 2);
+  };
+  function useSheetDismiss(ref, enabled, onClose) {
+    const closeRef = react_dashboard_default.useRef(onClose);
+    closeRef.current = onClose;
+    react_dashboard_default.useEffect(() => {
+      const el = ref.current;
+      if (!el || !enabled) return void 0;
+      let start = null;
+      let dy = 0;
+      let dragging = false;
+      const scrollerOf = (target) => target.closest && target.closest(".at-scroll");
+      const onStart = (e) => {
+        if (e.touches.length !== 1) return;
+        const t = e.target;
+        if (t.closest && t.closest("textarea, input, [contenteditable], .at-pop")) {
+          start = null;
+          return;
+        }
+        start = { y: e.touches[0].clientY, t: Date.now(), fromBar: !!(t.closest && t.closest(".at-panel-bar")), scroller: scrollerOf(t) };
+        dy = 0;
+        dragging = false;
+      };
+      const onMove = (e) => {
+        if (!start) return;
+        const d = e.touches[0].clientY - start.y;
+        if (!dragging) {
+          const atTop = !start.scroller || start.scroller.scrollTop <= 0;
+          if (d > 6 && (start.fromBar || atTop)) {
+            dragging = true;
+            start.y = e.touches[0].clientY;
+            el.style.transition = "none";
+            el.style.animation = "none";
+          } else if (Math.abs(d) > 6) {
+            start = null;
+            return;
+          }
+        }
+        if (dragging) {
+          e.preventDefault();
+          dy = Math.max(0, e.touches[0].clientY - start.y);
+          el.style.transform = `translateY(${dy}px)`;
+        }
+      };
+      const onEnd = () => {
+        if (!start) return;
+        const wasDragging = dragging;
+        const speed = dy / Math.max(1, Date.now() - start.t);
+        start = null;
+        dragging = false;
+        if (!wasDragging) return;
+        el.style.transition = "transform .24s cubic-bezier(.2, .8, .2, 1)";
+        if (dy > 110 || speed > 0.6) {
+          el.style.transform = "translateY(100%)";
+          setTimeout(() => closeRef.current(), 200);
+        } else {
+          el.style.transform = "";
+        }
+      };
+      el.addEventListener("touchstart", onStart, { passive: true });
+      el.addEventListener("touchmove", onMove, { passive: false });
+      el.addEventListener("touchend", onEnd);
+      el.addEventListener("touchcancel", onEnd);
+      return () => {
+        el.removeEventListener("touchstart", onStart);
+        el.removeEventListener("touchmove", onMove);
+        el.removeEventListener("touchend", onEnd);
+        el.removeEventListener("touchcancel", onEnd);
+      };
+    }, [ref, enabled]);
+  }
+  var OverlayCtx = react_dashboard_default.createContext(null);
+  var useOverlay = () => react_dashboard_default.useContext(OverlayCtx);
+  function OverlayHost({ rootRef, children }) {
+    const [ov, setOv] = react_dashboard_default.useState(null);
+    const close = react_dashboard_default.useCallback(() => setOv((cur) => {
+      if (cur && cur.onClose) cur.onClose();
+      return null;
+    }), []);
+    const open = react_dashboard_default.useCallback((anchor, render, opts = {}) => setOv({ anchor, render, ...opts }), []);
+    const api = react_dashboard_default.useMemo(() => ({ open, close }), [open, close]);
+    return /* @__PURE__ */ react_dashboard_default.createElement(OverlayCtx.Provider, { value: api }, children, ov ? /* @__PURE__ */ react_dashboard_default.createElement(Popover, { rootRef, ...ov, close }) : null);
+  }
+  function Popover({ rootRef, anchor, render, close, align = "start", width }) {
+    const ref = react_dashboard_default.useRef(null);
+    const [pos, setPos] = react_dashboard_default.useState(null);
+    react_dashboard_default.useLayoutEffect(() => {
+      const root = rootRef.current;
+      const el = ref.current;
+      if (!root || !el || !anchor) return;
+      const place = () => {
+        const r = root.getBoundingClientRect();
+        const a = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : anchor;
+        const w = el.offsetWidth;
+        const hgt = el.offsetHeight;
+        let left = (align === "end" ? a.right - w : a.left) - r.left;
+        left = Math.max(8, Math.min(left, r.width - w - 8));
+        let top = a.bottom - r.top + 6;
+        if (top + hgt > r.height - 8 && a.top - r.top - hgt - 6 > 8) top = a.top - r.top - hgt - 6;
+        top = Math.max(8, Math.min(top, r.height - hgt - 8));
+        setPos({ left, top });
+      };
+      place();
+      const ro = new ResizeObserver(place);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }, [anchor, rootRef, align]);
+    react_dashboard_default.useEffect(() => {
+      const down = (e) => {
+        if (ref.current && !ref.current.contains(e.target) && !(anchor && anchor.contains && anchor.contains(e.target))) close();
+      };
+      const key = (e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          close();
+        }
+      };
+      document.addEventListener("pointerdown", down, true);
+      document.addEventListener("keydown", key, true);
+      return () => {
+        document.removeEventListener("pointerdown", down, true);
+        document.removeEventListener("keydown", key, true);
+      };
+    }, [anchor, close]);
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { ref, className: "at-pop", role: "dialog", style: { left: pos ? pos.left : -9999, top: pos ? pos.top : -9999, width } }, render(close));
+  }
+  function Menu({ items, close }) {
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-menu", role: "menu" }, items.filter(Boolean).map((it, i) => it === "-" ? /* @__PURE__ */ react_dashboard_default.createElement("div", { key: i, className: "at-menu-sep" }) : /* @__PURE__ */ react_dashboard_default.createElement(
+      "button",
+      {
+        key: i,
+        type: "button",
+        role: "menuitem",
+        className: cx("at-menu-item", it.danger && "is-danger"),
+        onClick: () => {
+          close();
+          it.run();
+        }
+      },
+      it.icon ? /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: it.icon, size: 15 }) : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-menu-pad" }),
+      /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, it.label),
+      it.hint ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-menu-hint" }, it.hint) : null
+    )));
+  }
+  function quickDates(today) {
+    return [
+      { label: "Today", date: today, hint: dayName(today) },
+      { label: "Tomorrow", date: addDays(today, 1), hint: dayName(addDays(today, 1)) },
+      { label: "Next Monday", date: nextWeekday(today, 0), hint: shortDate(nextWeekday(today, 0), today).replace(/^\w+,\s*/, "") },
+      { label: "In a week", date: addDays(today, 7), hint: shortDate(addDays(today, 7), today).replace(/^\w+,\s*/, "") }
+    ];
+  }
+  function DatePicker({ value, today, onPick, onClear, close, extra }) {
+    const [month, setMonth] = react_dashboard_default.useState(startOfMonth(value || today));
+    const weeks = monthGrid(month);
+    const pick = (d) => {
+      onPick(d);
+      close && close();
+    };
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-dp" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-dp-quick" }, quickDates(today).map((q) => /* @__PURE__ */ react_dashboard_default.createElement("button", { key: q.label, type: "button", className: cx("at-dp-q", value === q.date && "is-on"), onClick: () => pick(q.date) }, /* @__PURE__ */ react_dashboard_default.createElement("span", null, q.label), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, q.hint)))), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-dp-head" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-dp-title" }, monthName(month), " ", month.slice(0, 4) !== today.slice(0, 4) ? month.slice(0, 4) : ""), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "chevL", label: "Previous month", onClick: () => setMonth(addMonths(month, -1)) }), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "chevR", label: "Next month", onClick: () => setMonth(addMonths(month, 1)) })), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-dp-grid", role: "grid" }, ["M", "T", "W", "T", "F", "S", "S"].map((d, i) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: i, className: "at-dp-dow" }, d)), weeks.flat().map((d) => /* @__PURE__ */ react_dashboard_default.createElement(
+      "button",
+      {
+        key: d,
+        type: "button",
+        onClick: () => pick(d),
+        className: cx("at-dp-day", d.slice(0, 7) !== month.slice(0, 7) && "is-out", d === today && "is-today", d === value && "is-on")
+      },
+      dayNum(d)
+    ))), onClear || extra ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-dp-foot" }, extra, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), onClear ? /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", onClick: () => {
+      onClear();
+      close && close();
+    } }, "Clear") : null) : null);
+  }
+  var ToastCtx = react_dashboard_default.createContext(null);
+  var ToastListCtx = react_dashboard_default.createContext(null);
+  var useToast = () => react_dashboard_default.useContext(ToastCtx);
+  function ToastHost({ children }) {
+    const [toasts, setToasts] = react_dashboard_default.useState([]);
+    const seq = react_dashboard_default.useRef(0);
+    const dismiss = react_dashboard_default.useCallback((id) => setToasts((ts) => ts.filter((t) => t.id !== id)), []);
+    const show = react_dashboard_default.useCallback((message, opts = {}) => {
+      const id = ++seq.current;
+      setToasts((ts) => [...ts.slice(-2), { id, message, ...opts }]);
+      setTimeout(() => dismiss(id), opts.duration || (opts.undo ? 6500 : opts.tone === "error" ? 7e3 : 3500));
+      return id;
+    }, [dismiss]);
+    const list = react_dashboard_default.useMemo(() => ({ toasts, dismiss }), [toasts, dismiss]);
+    return /* @__PURE__ */ react_dashboard_default.createElement(ToastCtx.Provider, { value: show }, /* @__PURE__ */ react_dashboard_default.createElement(ToastListCtx.Provider, { value: list }, children));
+  }
+  function ToastOutlet() {
+    const { toasts, dismiss } = react_dashboard_default.useContext(ToastListCtx);
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-toasts", "aria-live": "polite" }, toasts.map((t) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: t.id, className: cx("at-toast", t.tone && `at-tone-${t.tone}`) }, t.tone === "error" ? /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 15 }) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, t.message), t.undo ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-toast-act", onClick: () => {
+      dismiss(t.id);
+      t.undo();
+    } }, "Undo") : null, t.action ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-toast-act", onClick: () => {
+      dismiss(t.id);
+      t.action.run();
+    } }, t.action.label) : null)));
+  }
+
+  // ui/src/tasks.jsx
+  var PRIO = { urgent: 0, high: 1, normal: 2, low: 3 };
+  var isDone = (t) => t.status === "done" || t.status === "cancelled";
+  var byPriority = (a, b) => (PRIO[a.priority] ?? 2) - (PRIO[b.priority] ?? 2) || a.title.localeCompare(b.title);
+  function useTaskIndex() {
+    const { store, prefs } = useApp();
+    const byId = useStore(store, selById);
+    const today = useStore(store, selToday);
+    return react_dashboard_default.useMemo(() => {
+      const days = {};
+      const overdue = [];
+      for (const t of Object.values(byId)) {
+        if (prefs.area && t.area !== prefs.area) continue;
+        const d = taskDate(t);
+        if (!d) continue;
+        if (!isDone(t) && today && d < today) overdue.push(t);
+        (days[d] || (days[d] = [])).push(t);
+      }
+      for (const k of Object.keys(days)) days[k].sort((a, b) => Number(isDone(a)) - Number(isDone(b)) || byPriority(a, b));
+      overdue.sort((a, b) => taskDate(b).localeCompare(taskDate(a)) || byPriority(a, b));
+      return { days, overdue, today };
+    }, [byId, today, prefs.area]);
+  }
+  var selById = (s) => s.byId;
+  var selToday = (s) => s.today;
+  function TaskRow({ task, from, compact, showDate, selected }) {
+    const { actions, today } = useApp();
+    const { bind } = useDrag();
+    const overlay = useOverlay();
+    const done = isDone(task);
+    const overdue = !done && taskDate(task) && taskDate(task) < today;
+    const dueDiffers = task.due && task.scheduled && task.due !== task.scheduled;
+    const researching = task.research === "pending" || task.research === "running";
+    const openMenu = (e) => {
+      e.stopPropagation();
+      overlay.open(e.currentTarget, (close) => /* @__PURE__ */ react_dashboard_default.createElement(RowMenu, { task, close }), { width: 236, align: "end" });
+    };
+    return /* @__PURE__ */ react_dashboard_default.createElement(
+      "div",
+      {
+        className: cx("at-row", compact && "is-compact", done && "is-done", selected && "is-selected", overdue && "is-late"),
+        ...bind(task, from),
+        onClick: () => {
+          overlay.close();
+          actions.open(task.task_id);
+        },
+        onKeyDown: (e) => {
+          if (e.key === "Enter") {
+            overlay.close();
+            actions.open(task.task_id);
+          }
+          if (e.key === " " && e.target === e.currentTarget) {
+            e.preventDefault();
+            actions.toggle(task);
+          }
+        },
+        tabIndex: 0,
+        role: "button",
+        "aria-label": task.title,
+        "data-task": task.task_id
+      },
+      /* @__PURE__ */ react_dashboard_default.createElement(
+        Check,
+        {
+          checked: done,
+          onChange: () => actions.toggle(task),
+          label: done ? "Mark not done" : "Mark done",
+          size: compact ? "sm" : "md",
+          tone: overdue || task.priority === "urgent" || task.priority === "high" ? "high" : void 0
+        }
+      ),
+      /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-row-main" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-row-title", title: compact ? task.title : void 0 }, task.title), compact ? null : /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-row-meta" }, task.area ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-meta-area" }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: task.area }), task.area) : null, showDate ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx("at-meta-date", overdue && "is-late") }, relativeDay(taskDate(task), today)) : null, dueDiffers ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-meta-due" }, "due ", relativeDay(task.due, today)) : null, task.priority === "urgent" || task.priority === "high" ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-meta-prio" }, task.priority) : null, task.status === "waiting" ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-meta-status" }, "waiting") : null, task.status === "in-progress" ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-meta-status is-active" }, "in progress") : null, researching ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-meta-research" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "spark", size: 12 }), "researching") : null)),
+      compact ? null : /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "more", label: "Task actions", className: "at-row-more", onClick: openMenu, "data-no-drag": "" })
+    );
+  }
+  function RowMenu({ task, close }) {
+    const { actions, today } = useApp();
+    const [picking, setPicking] = react_dashboard_default.useState(false);
+    if (picking) {
+      return /* @__PURE__ */ react_dashboard_default.createElement(DatePicker, { value: taskDate(task), today, onPick: (d) => actions.move(task, d), close });
+    }
+    const items = quickDates(today).slice(0, 3).map((q) => ({
+      label: q.label,
+      hint: q.hint,
+      icon: "cal",
+      run: () => actions.move(task, q.date)
+    })).filter((it, i) => quickDates(today)[i].date !== taskDate(task));
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-menu", role: "menu" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-menu-label" }, "Move to"), /* @__PURE__ */ react_dashboard_default.createElement(Menu, { items, close }), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-menu-item", onClick: () => setPicking(true) }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "cal", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, "Pick a date\u2026")), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-menu-sep" }), /* @__PURE__ */ react_dashboard_default.createElement(Menu, { close, items: [
+      { label: isDone(task) ? "Mark not done" : "Mark done", icon: "check", run: () => actions.toggle(task) },
+      { label: "Open", icon: "arrowR", run: () => actions.open(task.task_id) }
+    ] }));
+  }
+  function DayList({ date, tasks = [], overdue = [], compact, empty = "Nothing planned", showAdd }) {
+    const { today, prefs, selectedId } = useApp();
+    const { drag } = useDrag();
+    const isToday = date === today;
+    const visible = prefs.hideDone ? tasks.filter((t) => !isDone(t)) : tasks;
+    const doneHidden = tasks.length - visible.length;
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-daylist", drag && drag.over === date && "is-over"), "data-at-drop": date }, isToday && overdue.length ? /* @__PURE__ */ react_dashboard_default.createElement(OverdueSection, { tasks: overdue }) : null, visible.map((t) => /* @__PURE__ */ react_dashboard_default.createElement(TaskRow, { key: t.task_id, task: t, from: date, compact, selected: selectedId === t.task_id })), !visible.length && !(isToday && overdue.length) ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-empty-day" }, doneHidden ? `${doneHidden} done` : empty) : null, showAdd ? /* @__PURE__ */ react_dashboard_default.createElement(QuickAdd, { date }) : null, drag && drag.over === date && drag.from !== date ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-drop-hint" }, "Move to ", relativeDay(date, today)) : null);
+  }
+  function OverdueSection({ tasks, defaultOpen = false }) {
+    const { actions, today, selectedId } = useApp();
+    return /* @__PURE__ */ react_dashboard_default.createElement(
+      Disclosure,
+      {
+        className: "at-overdue",
+        tone: "late",
+        title: "Overdue",
+        count: tasks.length,
+        defaultOpen,
+        right: /* @__PURE__ */ react_dashboard_default.createElement(
+          "span",
+          {
+            className: "at-link",
+            role: "button",
+            tabIndex: 0,
+            "data-no-drag": "",
+            onClick: (e) => {
+              e.stopPropagation();
+              actions.moveMany(tasks, today);
+            }
+          },
+          "Move all to today"
+        )
+      },
+      tasks.map((t) => /* @__PURE__ */ react_dashboard_default.createElement(TaskRow, { key: t.task_id, task: t, from: taskDate(t), showDate: true, selected: selectedId === t.task_id }))
+    );
+  }
+  function QuickAdd({ date, autoFocus, onDone }) {
+    const { actions, meta, prefs } = useApp();
+    const [title, setTitle] = react_dashboard_default.useState("");
+    const [busy, setBusy] = react_dashboard_default.useState(false);
+    const [open, setOpen] = react_dashboard_default.useState(!!autoFocus);
+    const ref = react_dashboard_default.useRef(null);
+    react_dashboard_default.useEffect(() => {
+      if (open && ref.current) ref.current.focus();
+    }, [open]);
+    if (!open) {
+      return /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-add", onClick: () => setOpen(true), "data-no-drag": "" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "plus", size: 14 }), " Add a task");
+    }
+    const submit = async () => {
+      const t = title.trim();
+      if (!t) {
+        setOpen(false);
+        onDone && onDone();
+        return;
+      }
+      setBusy(true);
+      const ok = await actions.create({ title: t, date, area: prefs.area || meta.default_area || void 0 });
+      setBusy(false);
+      if (ok) {
+        setTitle("");
+        if (ref.current) ref.current.focus();
+      }
+    };
+    return /* @__PURE__ */ react_dashboard_default.createElement("form", { className: "at-add-form", "data-no-drag": "", onSubmit: (e) => {
+      e.preventDefault();
+      submit();
+    } }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-check at-check-md is-ghost", "aria-hidden": "true" }), /* @__PURE__ */ react_dashboard_default.createElement(
+      "input",
+      {
+        ref,
+        className: "at-add-input",
+        value: title,
+        placeholder: "New task",
+        disabled: busy,
+        onChange: (e) => setTitle(e.target.value),
+        onKeyDown: (e) => {
+          if (e.key === "Escape") {
+            setTitle("");
+            setOpen(false);
+            onDone && onDone();
+          }
+        },
+        onBlur: () => {
+          if (!title.trim()) {
+            setOpen(false);
+            onDone && onDone();
+          }
+        }
+      }
+    ), busy ? /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null) : null);
+  }
+  function MonthView({ anchor, narrow }) {
+    const { today, selectedId } = useApp();
+    const { days, overdue } = useTaskIndex();
+    const overlay = useOverlay();
+    const { drag } = useDrag();
+    const weeks = monthGrid(anchor);
+    const month = anchor.slice(0, 7);
+    const [picked, setPicked] = react_dashboard_default.useState(null);
+    if (narrow) {
+      const sel = picked && picked.slice(0, 7) === month ? picked : today.slice(0, 7) === month ? today : startOfMonth(anchor);
+      return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-mmonth" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-mmonth-dows" }, ["M", "T", "W", "T", "F", "S", "S"].map((x, i) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: i }, x))), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-mmonth-grid" }, weeks.flat().map((d) => {
+        const list = days[d] || [];
+        const open = list.filter((t) => !isDone(t)).length;
+        return /* @__PURE__ */ react_dashboard_default.createElement(
+          "button",
+          {
+            key: d,
+            type: "button",
+            "data-at-drop": d,
+            onClick: () => setPicked(d),
+            className: cx(
+              "at-mcell",
+              d.slice(0, 7) !== month && "is-out",
+              d === today && "is-today",
+              d === sel && "is-on",
+              drag && drag.over === d && "is-over"
+            )
+          },
+          /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mcell-num" }, dayNum(d)),
+          /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mcell-dots" }, list.slice(0, 3).map((t) => /* @__PURE__ */ react_dashboard_default.createElement("i", { key: t.task_id, className: isDone(t) ? "is-done" : "" })), d === today && overdue.length ? /* @__PURE__ */ react_dashboard_default.createElement("i", { className: "is-late" }) : null),
+          open > 3 ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mcell-more" }, "+", open - 3) : null
+        );
+      })), /* @__PURE__ */ react_dashboard_default.createElement(DaySection, { date: sel, tasks: days[sel] || [], overdue: sel === today ? overdue : [] }));
+    }
+    return /* @__PURE__ */ react_dashboard_default.createElement(DesktopMonth, { weeks, month, days, overdue, today, selectedId, drag, overlay });
+  }
+  function DesktopMonth({ weeks, month, days, overdue, today, selectedId, drag, overlay, picked, onPick }) {
+    const expand = (date, el) => onPick ? onPick(date) : overlay.open(el, (close) => /* @__PURE__ */ react_dashboard_default.createElement(DayPopover, { date, close }), { width: 360 });
+    const gridRef = react_dashboard_default.useRef(null);
+    const [cellW, setCellW] = react_dashboard_default.useState(160);
+    react_dashboard_default.useLayoutEffect(() => {
+      const el = gridRef.current;
+      if (!el) return void 0;
+      const ro = new ResizeObserver(() => setCellW(el.clientWidth / 7));
+      ro.observe(el);
+      return () => ro.disconnect();
+    }, [weeks.length]);
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-month", onPick && "at-week-strip") }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-month-dows" }, weeks[0].map((d) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: d }, dayName(d)))), /* @__PURE__ */ react_dashboard_default.createElement("div", { ref: gridRef, className: "at-month-grid" }, weeks.flat().map((d) => {
+      const list = days[d] || [];
+      const isToday = d === today;
+      return /* @__PURE__ */ react_dashboard_default.createElement(
+        "div",
+        {
+          key: d,
+          "data-at-drop": d,
+          className: cx(
+            "at-cell",
+            month && d.slice(0, 7) !== month && "is-out",
+            isToday && "is-today",
+            d < today && "is-past",
+            drag && drag.over === d && "is-over",
+            picked === d && "is-picked"
+          ),
+          tabIndex: onPick ? 0 : void 0,
+          role: onPick ? "button" : void 0,
+          "aria-label": onPick ? `Select ${longDate(d)}` : void 0,
+          "aria-pressed": onPick ? picked === d : void 0,
+          onKeyDown: (e) => {
+            if (onPick && e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+              e.preventDefault();
+              onPick(d);
+            }
+          },
+          onClick: (e) => {
+            if (!e.target.closest(".at-row")) {
+              if (onPick) onPick(d);
+              else expand(d, e.currentTarget);
+            }
+          }
+        },
+        /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-cell-head" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-cell-num" }, dayNum(d) === 1 ? `${monthName(d, "short")} 1` : dayNum(d)), isToday && overdue.length ? /* @__PURE__ */ react_dashboard_default.createElement(
+          "button",
+          {
+            type: "button",
+            className: "at-chip at-tone-late",
+            "data-no-drag": "",
+            title: `${overdue.length} overdue`,
+            onClick: (e) => {
+              e.stopPropagation();
+              expand(d, e.currentTarget.closest(".at-cell"));
+            }
+          },
+          cellW < 140 ? `${overdue.length} late` : `${overdue.length} overdue`
+        ) : null),
+        /* @__PURE__ */ react_dashboard_default.createElement(MonthTasks, { tasks: list, date: d, selectedId, expand }),
+        /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-cell-footer" }, /* @__PURE__ */ react_dashboard_default.createElement(
+          "button",
+          {
+            type: "button",
+            className: "at-cell-view",
+            "data-no-drag": "",
+            "aria-label": `View ${longDate(d)}`,
+            title: "View day",
+            onClick: (e) => {
+              e.stopPropagation();
+              expand(d, e.currentTarget.closest(".at-cell"));
+            }
+          },
+          /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "arrowR", size: 12 }),
+          /* @__PURE__ */ react_dashboard_default.createElement("span", null, "View day")
+        ))
+      );
+    })));
+  }
+  function MonthTasks({ tasks, date, selectedId, expand }) {
+    const ref = react_dashboard_default.useRef(null);
+    const [fit, setFit] = react_dashboard_default.useState(1);
+    react_dashboard_default.useLayoutEffect(() => {
+      const el = ref.current;
+      const measure = () => {
+        const row = el.querySelector(".at-row");
+        const more2 = el.querySelector(".at-cell-more");
+        const gap = parseFloat(getComputedStyle(el).rowGap) || 0;
+        setFit(fittingRows(
+          tasks.length,
+          el.getBoundingClientRect().height,
+          row?.getBoundingClientRect().height || 24,
+          more2.getBoundingClientRect().height,
+          gap
+        ));
+      };
+      const ro = new ResizeObserver(measure);
+      ro.observe(el);
+      measure();
+      return () => ro.disconnect();
+    }, [tasks.length]);
+    const more = Math.max(0, tasks.length - fit);
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { ref, className: "at-cell-list is-tight" }, tasks.slice(0, fit).map((t) => /* @__PURE__ */ react_dashboard_default.createElement(TaskRow, { key: t.task_id, task: t, from: date, compact: true, selected: selectedId === t.task_id })), /* @__PURE__ */ react_dashboard_default.createElement(
+      "button",
+      {
+        type: "button",
+        className: "at-cell-more",
+        "data-no-drag": "",
+        style: { visibility: more ? "visible" : "hidden" },
+        tabIndex: more ? 0 : -1,
+        "aria-hidden": !more,
+        onClick: (e) => {
+          e.stopPropagation();
+          expand(date, e.currentTarget.closest(".at-cell"));
+        }
+      },
+      "+",
+      more,
+      " more"
+    ));
+  }
+  function DayPopover({ date, close }) {
+    const { today } = useApp();
+    const { days, overdue } = useTaskIndex();
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-daypop" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-daypop-head" }, /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-daypop-title" }, relativeDay(date, today) === "Today" ? "Today" : dayName(date, "long")), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, longDate(date))), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "x", label: "Close", onClick: close })), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-daypop-body" }, /* @__PURE__ */ react_dashboard_default.createElement(DayList, { date, tasks: days[date] || [], overdue: date === today ? overdue : [], showAdd: true })));
+  }
+  function WeekView({ anchor, narrow, onStep }) {
+    const { today } = useApp();
+    const { days, overdue } = useTaskIndex();
+    const start = startOfWeek(anchor);
+    const dates = range(start, addDays(start, 6));
+    if (narrow) {
+      return /* @__PURE__ */ react_dashboard_default.createElement(PhoneWeek, { dates, days, overdue, today, onStep });
+    }
+    return /* @__PURE__ */ react_dashboard_default.createElement(DesktopWeek, { dates, days, overdue, today });
+  }
+  function DesktopWeek({ dates, days, overdue, today }) {
+    const { selectedId } = useApp();
+    const { drag } = useDrag();
+    const overlay = useOverlay();
+    const [picked, setPicked] = react_dashboard_default.useState(null);
+    const sel = picked && dates.includes(picked) ? picked : dates.includes(today) ? today : dates[0];
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-desktop-week at-scroll" }, /* @__PURE__ */ react_dashboard_default.createElement(
+      DesktopMonth,
+      {
+        weeks: [dates],
+        month: null,
+        days,
+        overdue,
+        today,
+        selectedId,
+        drag,
+        overlay,
+        picked: sel,
+        onPick: setPicked
+      }
+    ), /* @__PURE__ */ react_dashboard_default.createElement(DayView, { anchor: sel }));
+  }
+  function PhoneWeek({ dates, days, overdue, today, onStep }) {
+    const { drag } = useDrag();
+    const [picked, setPicked] = react_dashboard_default.useState(null);
+    const sel = picked && dates.includes(picked) ? picked : dates.includes(today) ? today : dates[0];
+    const swipe = react_dashboard_default.useRef(null);
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-mmonth at-mweek" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-mmonth-dows" }, dates.map((d) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: d }, dayName(d).slice(0, 1)))), /* @__PURE__ */ react_dashboard_default.createElement(
+      "div",
+      {
+        className: "at-mmonth-grid",
+        onTouchStart: (e) => {
+          const t = e.touches[0];
+          swipe.current = { x: t.clientX, y: t.clientY };
+        },
+        onTouchEnd: (e) => {
+          const s0 = swipe.current;
+          swipe.current = null;
+          if (!s0 || !onStep) return;
+          const t = e.changedTouches[0];
+          const dx = t.clientX - s0.x;
+          if (Math.abs(dx) > 50 && Math.abs(dx) > 1.5 * Math.abs(t.clientY - s0.y)) onStep(dx < 0 ? 1 : -1);
+        }
+      },
+      dates.map((d) => {
+        const list = days[d] || [];
+        const open = list.filter((t) => !isDone(t)).length;
+        return /* @__PURE__ */ react_dashboard_default.createElement(
+          "button",
+          {
+            key: d,
+            type: "button",
+            "data-at-drop": d,
+            onClick: () => setPicked(d),
+            className: cx("at-mcell", d === today && "is-today", d === sel && "is-on", drag && drag.over === d && "is-over")
+          },
+          /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mcell-num" }, dayNum(d)),
+          /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mcell-dots" }, list.slice(0, 3).map((t) => /* @__PURE__ */ react_dashboard_default.createElement("i", { key: t.task_id, className: isDone(t) ? "is-done" : "" })), d === today && overdue.length ? /* @__PURE__ */ react_dashboard_default.createElement("i", { className: "is-late" }) : null),
+          open > 3 ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mcell-more" }, "+", open - 3) : null
+        );
+      })
+    ), /* @__PURE__ */ react_dashboard_default.createElement(DaySection, { date: sel, tasks: days[sel] || [], overdue: sel === today ? overdue : [] }));
+  }
+  function DayView({ anchor }) {
+    const { today } = useApp();
+    const { days, overdue } = useTaskIndex();
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-dayview" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-dayview-inner" }, /* @__PURE__ */ react_dashboard_default.createElement("header", { className: "at-dayview-head" }, /* @__PURE__ */ react_dashboard_default.createElement("h2", null, relativeDay(anchor, today) === "Today" ? "Today" : dayName(anchor, "long")), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, longDate(anchor))), /* @__PURE__ */ react_dashboard_default.createElement(DayList, { date: anchor, tasks: days[anchor] || [], overdue: anchor === today ? overdue : [], showAdd: true })));
+  }
+  function DaySection({ date, tasks, overdue }) {
+    const { today } = useApp();
+    const rel = relativeDay(date, today);
+    const named = rel === "Today" || rel === "Tomorrow" || rel === "Yesterday";
+    const empty = !tasks.length && !overdue.length;
+    return /* @__PURE__ */ react_dashboard_default.createElement("section", { className: cx("at-daysec", date === today && "is-today", empty && "is-empty") }, /* @__PURE__ */ react_dashboard_default.createElement("header", { className: "at-daysec-head" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-daysec-title" }, named ? rel : dayName(date, "long")), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, shortDate(date, today).replace(/^\w+,\s*/, ""))), /* @__PURE__ */ react_dashboard_default.createElement(DayList, { date, tasks, overdue, showAdd: !empty || date === today }));
+  }
+  function DayScroll({ anchor, onReachEnd, length }) {
+    const { today } = useApp();
+    const { days, overdue } = useTaskIndex();
+    const dates = range(anchor, addDays(anchor, length - 1));
+    const sentinel = react_dashboard_default.useRef(null);
+    react_dashboard_default.useEffect(() => {
+      const el = sentinel.current;
+      if (!el) return void 0;
+      const io = new IntersectionObserver((es) => {
+        if (es[0].isIntersecting) onReachEnd();
+      }, { rootMargin: "400px" });
+      io.observe(el);
+      return () => io.disconnect();
+    }, [onReachEnd]);
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-days" }, dates.map((d) => /* @__PURE__ */ react_dashboard_default.createElement(DaySection, { key: d, date: d, tasks: days[d] || [], overdue: d === today ? overdue : [] })), /* @__PURE__ */ react_dashboard_default.createElement("div", { ref: sentinel, className: "at-sentinel" }));
+  }
+  function TasksView({ narrow }) {
+    const { store, prefs, setPrefs, meta, today } = useApp();
+    const overlay = useOverlay();
+    const view = prefs.view || (narrow ? "day" : "week");
+    const [anchor, setAnchor] = react_dashboard_default.useState(today);
+    const [scrollLen, setScrollLen] = react_dashboard_default.useState(21);
+    const growScroll = react_dashboard_default.useCallback(() => setScrollLen((n) => Math.min(n + 14, 120)), []);
+    react_dashboard_default.useEffect(() => {
+      if (!anchor && today) setAnchor(today);
+    }, [today, anchor]);
+    const a = anchor || today;
+    const range2 = react_dashboard_default.useMemo(() => {
+      if (!a) return null;
+      if (view === "month") {
+        const w = monthGrid(a);
+        return [w[0][0], w[w.length - 1][6]];
+      }
+      if (view === "week") {
+        const s = startOfWeek(a);
+        return [s, addDays(s, 6)];
+      }
+      if (narrow) return [a, addDays(a, scrollLen - 1)];
+      return [a, a];
+    }, [a, view, narrow, scrollLen]);
+    react_dashboard_default.useEffect(() => {
+      if (!range2) return;
+      store.loadRange(range2[0], range2[1]).catch(() => {
+      });
+      store.loadOverdue().catch(() => {
+      });
+    }, [range2 && range2[0], range2 && range2[1]]);
+    const step = (n) => {
+      if (view === "month") setAnchor(addMonths(a, n));
+      else if (view === "week") setAnchor(addDays(a, 7 * n));
+      else setAnchor(addDays(a, n));
+    };
+    react_dashboard_default.useEffect(() => {
+      const key = (e) => {
+        if (e.target.closest && e.target.closest("input, textarea, [contenteditable]")) return;
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        const k = e.key.toLowerCase();
+        if (k === "t") setAnchor(today);
+        else if (k === "d") setPrefs({ view: "day" });
+        else if (k === "w") setPrefs({ view: "week" });
+        else if (k === "m") setPrefs({ view: "month" });
+        else if (e.key === "ArrowLeft") step(-1);
+        else if (e.key === "ArrowRight") step(1);
+        else return;
+        e.preventDefault();
+      };
+      window.addEventListener("keydown", key);
+      return () => window.removeEventListener("keydown", key);
+    });
+    if (!a) return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-loading" }, /* @__PURE__ */ react_dashboard_default.createElement(Spinner, { size: 18 }));
+    const periodText = view === "day" ? periodLabel("month", a, today) : periodLabel(view, a, today);
+    const areas = meta.areas || [];
+    const areaMenu = (e) => overlay.open(e.currentTarget, (close) => /* @__PURE__ */ react_dashboard_default.createElement(Menu, { close, items: [
+      { label: "All areas", icon: prefs.area ? void 0 : "check", run: () => setPrefs({ area: "" }) },
+      "-",
+      ...areas.map((ar) => ({ label: ar, icon: prefs.area === ar ? "check" : void 0, run: () => setPrefs({ area: ar }) })),
+      "-",
+      { label: prefs.hideDone ? "Show completed" : "Hide completed", run: () => setPrefs({ hideDone: !prefs.hideDone }) }
+    ] }), { width: 200, align: "end" });
+    const addMenu = (e) => overlay.open(e.currentTarget, (close) => /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-pop-add" }, /* @__PURE__ */ react_dashboard_default.createElement(QuickAdd, { date: view === "day" ? a : today, autoFocus: true, onDone: close })), { width: 320, align: "end" });
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-tasks", `is-${view}`) }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-toolbar" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-toolbar-nav" }, /* @__PURE__ */ react_dashboard_default.createElement(Button, { variant: "ghost", size: "sm", onClick: () => setAnchor(today), disabled: a === today && view !== "month" }, "Today"), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "chevL", label: "Previous", onClick: () => step(-1) }), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "chevR", label: "Next", onClick: () => step(1) }), /* @__PURE__ */ react_dashboard_default.createElement("h1", { className: "at-period" }, periodText, view !== "week" && !periodText.includes(a.slice(0, 4)) ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-period-year" }, a.slice(0, 4)) : null)), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-toolbar-right" }, /* @__PURE__ */ react_dashboard_default.createElement(
+      Segmented,
+      {
+        label: "View",
+        value: view,
+        onChange: (v) => setPrefs({ view: v }),
+        options: [{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }]
+      }
+    ), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-filter", prefs.area && "is-on"), onClick: areaMenu }, prefs.area ? /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: prefs.area }) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", null, prefs.area || "All areas"), /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "chevD", size: 14 })), narrow ? null : /* @__PURE__ */ react_dashboard_default.createElement(Button, { variant: "primary", size: "sm", icon: "plus", onClick: addMenu }, "Add"))), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-viewport" }, view === "month" ? /* @__PURE__ */ react_dashboard_default.createElement(MonthView, { anchor: a, narrow }) : null, view === "week" ? /* @__PURE__ */ react_dashboard_default.createElement(WeekView, { anchor: a, narrow, onStep: step }) : null, view === "day" && narrow ? /* @__PURE__ */ react_dashboard_default.createElement(DayScroll, { anchor: a, length: scrollLen, onReachEnd: growScroll }) : null, view === "day" && !narrow ? /* @__PURE__ */ react_dashboard_default.createElement(DayView, { anchor: a }) : null), narrow ? /* @__PURE__ */ react_dashboard_default.createElement(PhoneComposer, { date: view === "day" ? a : today }) : null);
+  }
+  function PhoneComposer({ date: initialDate }) {
+    const { actions, meta, prefs, today } = useApp();
+    const overlay = useOverlay();
+    const [open, setOpen] = react_dashboard_default.useState(false);
+    const [title, setTitle] = react_dashboard_default.useState("");
+    const [date, setDate] = react_dashboard_default.useState(initialDate);
+    const [area, setArea] = react_dashboard_default.useState("");
+    const [busy, setBusy] = react_dashboard_default.useState(false);
+    const [lift, setLift] = react_dashboard_default.useState(0);
+    const input = react_dashboard_default.useRef(null);
+    react_dashboard_default.useEffect(() => {
+      const vv = window.visualViewport;
+      if (!open || !vv) {
+        setLift(0);
+        return void 0;
+      }
+      const place = () => setLift(Math.max(0, Math.round(window.innerHeight - (vv.offsetTop + vv.height))));
+      place();
+      vv.addEventListener("resize", place);
+      vv.addEventListener("scroll", place);
+      return () => {
+        vv.removeEventListener("resize", place);
+        vv.removeEventListener("scroll", place);
+      };
+    }, [open]);
+    const start = () => {
+      if (input.current) input.current.focus();
+      setDate(initialDate);
+      setArea(prefs.area || meta.default_area || "");
+      setOpen(true);
+    };
+    const close = () => {
+      overlay.close();
+      setOpen(false);
+      setTitle("");
+      if (input.current) input.current.blur();
+    };
+    const submit = async () => {
+      const t = title.trim();
+      if (!t || busy) return;
+      setBusy(true);
+      const ok = await actions.create({ title: t, date, area: area || void 0 });
+      setBusy(false);
+      if (ok) {
+        setTitle("");
+        if (input.current) input.current.focus();
+      }
+    };
+    const refocus = () => {
+      if (input.current) input.current.focus();
+    };
+    const pickDate = (e) => overlay.open(e.currentTarget, (closePop) => /* @__PURE__ */ react_dashboard_default.createElement(DatePicker, { value: date, today, close: closePop, onPick: (d) => {
+      setDate(d);
+      refocus();
+    } }), { width: 300 });
+    const pickArea = (e) => overlay.open(e.currentTarget, (closePop) => /* @__PURE__ */ react_dashboard_default.createElement(Menu, { close: closePop, items: (meta.areas || []).map((ar) => ({
+      label: ar,
+      icon: ar === area ? "check" : void 0,
+      run: () => {
+        setArea(ar);
+        refocus();
+      }
+    })) }), { width: 220 });
+    return /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-fab", open && "is-hidden"), "aria-label": "Add a task", onClick: start }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "plus", size: 24 })), open ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-composer-scrim", onClick: close }) : null, /* @__PURE__ */ react_dashboard_default.createElement(
+      "form",
+      {
+        className: cx("at-composer", open && "is-open"),
+        style: { bottom: lift },
+        "aria-hidden": !open,
+        "data-no-drag": "",
+        onSubmit: (e) => {
+          e.preventDefault();
+          submit();
+        }
+      },
+      /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-composer-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-check is-ghost", "aria-hidden": "true" }), /* @__PURE__ */ react_dashboard_default.createElement(
+        "input",
+        {
+          ref: input,
+          className: "at-composer-input",
+          value: title,
+          placeholder: "New task",
+          enterKeyHint: "done",
+          tabIndex: open ? 0 : -1,
+          readOnly: busy,
+          "aria-label": "New task title",
+          onChange: (e) => setTitle(e.target.value),
+          onKeyDown: (e) => {
+            if (e.key === "Escape") close();
+          }
+        }
+      ), busy ? /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null) : null),
+      /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-composer-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickDate, tabIndex: open ? 0 : -1 }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "cal", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(date, today))), (meta.areas || []).length ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickArea, tabIndex: open ? 0 : -1 }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, area || "No area")) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(Button, { variant: "ghost", size: "sm", onClick: close, tabIndex: open ? 0 : -1 }, "Done"), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "submit", className: "at-composer-send", "aria-label": "Add task", disabled: !title.trim() || busy, tabIndex: open ? 0 : -1 }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "arrowR", size: 18, strokeWidth: 2.2 })))
+    ));
+  }
+
+  // ui/src/lib/markdown.js
+  var h = react_dashboard_default.createElement;
+  var SAFE_URL = /^(https?:|mailto:|obsidian:|#)/i;
+  function inline(text, keyBase = "i") {
+    const out = [];
+    let rest = String(text);
+    let k = 0;
+    const pattern = /(`[^`]+`)|(\*\*[^*]+\*\*|__[^_]+__)|(\*[^*\s][^*]*\*|_[^_\s][^_]*_)|(\[\[[^\]]+\]\])|(\[[^\]]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/;
+    while (rest) {
+      const m = rest.match(pattern);
+      if (!m) {
+        out.push(rest);
+        break;
+      }
+      if (m.index) out.push(rest.slice(0, m.index));
+      const tok = m[0];
+      const key = `${keyBase}-${k++}`;
+      if (m[1]) out.push(h("code", { key }, tok.slice(1, -1)));
+      else if (m[2]) out.push(h("strong", { key }, inline(tok.slice(2, -2), key)));
+      else if (m[3]) out.push(h("em", { key }, inline(tok.slice(1, -1), key)));
+      else if (m[4]) {
+        const inner = tok.slice(2, -2);
+        const label = inner.includes("|") ? inner.split("|").pop() : inner.split("/").pop();
+        out.push(h("span", { key, className: "at-md-wikilink", title: inner.split("|")[0] }, label));
+      } else if (m[5]) {
+        const lm = tok.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/);
+        const href = lm[2];
+        out.push(SAFE_URL.test(href) ? h("a", { key, href, target: "_blank", rel: "noreferrer noopener" }, inline(lm[1], key)) : lm[1]);
+      } else if (m[6]) {
+        out.push(h("a", { key, href: tok, target: "_blank", rel: "noreferrer noopener" }, shortUrl(tok)));
+      }
+      rest = rest.slice(m.index + tok.length);
+    }
+    return out;
+  }
+  function tableColumnClass(header) {
+    const label = String(header).replace(/[*_`]/g, "").trim();
+    return /^(time|duration|estimate|estimated time|time estimate)$/i.test(label) ? "at-md-time" : void 0;
+  }
+  function shortUrl(url) {
+    try {
+      const u = new URL(url);
+      const p = u.pathname.length > 24 ? u.pathname.slice(0, 22) + "\u2026" : u.pathname;
+      return u.host.replace(/^www\./, "") + (p === "/" ? "" : p);
+    } catch {
+      return url;
+    }
+  }
+  var LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(\[( |x|X)\]\s+)?(.*)$/;
+  function parseBlocks(src) {
+    const lines = String(src || "").replace(/\r\n?/g, "\n").split("\n");
+    const blocks = [];
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (!line.trim()) {
+        i++;
+        continue;
+      }
+      const fence = line.match(/^\s*(```|~~~)/);
+      if (fence) {
+        const body = [];
+        i++;
+        while (i < lines.length && !lines[i].trim().startsWith(fence[1])) body.push(lines[i++]);
+        i++;
+        blocks.push({ type: "code", text: body.join("\n") });
+        continue;
+      }
+      const hm = line.match(/^(#{1,6})\s+(.*)$/);
+      if (hm) {
+        blocks.push({ type: "heading", level: hm[1].length, text: hm[2].trim(), line: i });
+        i++;
+        continue;
+      }
+      if (/^\s*<!--.*-->\s*$/.test(line)) {
+        i++;
+        continue;
+      }
+      if (/^\s*([-*_])\s*\1\s*\1[\s\1]*$/.test(line)) {
+        blocks.push({ type: "hr" });
+        i++;
+        continue;
+      }
+      if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]) && lines[i + 1].includes("-")) {
+        const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+        const head = cells(line);
+        const rows = [];
+        i += 2;
+        while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(cells(lines[i++]));
+        blocks.push({ type: "table", head, rows });
+        continue;
+      }
+      if (/^\s*>/.test(line)) {
+        const body = [];
+        while (i < lines.length && /^\s*>/.test(lines[i])) body.push(lines[i++].replace(/^\s*>\s?/, ""));
+        blocks.push({ type: "quote", text: body.join(" ") });
+        continue;
+      }
+      if (LIST_RE.test(line)) {
+        const items = [];
+        while (i < lines.length && (LIST_RE.test(lines[i]) || /^\s{2,}\S/.test(lines[i]) && items.length)) {
+          const m = lines[i].match(LIST_RE);
+          if (m) {
+            items.push({
+              indent: Math.floor(m[1].replace(/\t/g, "  ").length / 2),
+              ordered: /\d/.test(m[2]),
+              checkbox: m[3] ? m[4].toLowerCase() === "x" : null,
+              text: m[5],
+              line: i
+            });
+          } else {
+            items[items.length - 1].text += " " + lines[i].trim();
+          }
+          i++;
+        }
+        blocks.push({ type: "list", items });
+        continue;
+      }
+      const para = [];
+      while (i < lines.length && lines[i].trim() && !LIST_RE.test(lines[i]) && !/^(#{1,6})\s/.test(lines[i]) && !/^\s*(```|~~~|>|\|)/.test(lines[i])) para.push(lines[i++].trim());
+      if (para.length) blocks.push({ type: "p", text: para.join(" ") });
+      else i++;
+    }
+    return blocks;
+  }
+  function renderBlocks(blocks, { onToggle } = {}) {
+    return blocks.map((b, n) => {
+      const key = `b${n}`;
+      switch (b.type) {
+        case "heading":
+          return h(`h${Math.min(6, b.level + 2)}`, { key, className: "at-md-h" }, inline(b.text, key));
+        case "p":
+          return h("p", { key }, inline(b.text, key));
+        case "hr":
+          return h("hr", { key });
+        case "code":
+          return h("pre", { key }, h("code", null, b.text));
+        case "quote":
+          return h("blockquote", { key }, inline(b.text, key));
+        case "table":
+          return h(
+            "div",
+            { key, className: "at-md-table" },
+            h(
+              "table",
+              null,
+              h("thead", null, h("tr", null, b.head.map((c, j) => h("th", { key: j, className: tableColumnClass(c) }, inline(c, `${key}h${j}`))))),
+              h("tbody", null, b.rows.map((r, j) => h("tr", { key: j }, r.map((c, x) => h("td", { key: x, className: tableColumnClass(b.head[x]) }, inline(c, `${key}r${j}${x}`))))))
+            )
+          );
+        case "list": {
+          const ordered = b.items[0] && b.items[0].ordered;
+          return h(ordered ? "ol" : "ul", { key, className: "at-md-list" }, b.items.map((it, j) => {
+            const style = it.indent ? { marginLeft: `${it.indent * 1.25}em` } : void 0;
+            if (it.checkbox === null) return h("li", { key: j, style }, inline(it.text, `${key}${j}`));
+            return h(
+              "li",
+              { key: j, style, className: "at-md-check" + (it.checkbox ? " is-done" : "") },
+              h(
+                "label",
+                null,
+                h("input", {
+                  type: "checkbox",
+                  checked: it.checkbox,
+                  disabled: !onToggle,
+                  onChange: (e) => onToggle && onToggle(it.line, e.target.checked)
+                }),
+                h("span", null, inline(it.text, `${key}${j}`))
+              )
+            );
+          }));
+        }
+        default:
+          return null;
+      }
+    });
+  }
+  function toggleLine(src, line, checked) {
+    const lines = String(src).split("\n");
+    const m = lines[line] && lines[line].match(/^(\s*(?:[-*+]|\d+[.)])\s+)\[( |x|X)\](.*)$/);
+    if (!m) return src;
+    lines[line] = `${m[1]}[${checked ? "x" : " "}]${m[3]}`;
+    return lines.join("\n");
+  }
+  var START_RE = /^\s*<!--\s*([\w-]+):start\s*-->\s*$/;
+  var END_RE = /^\s*<!--\s*([\w-]+):end\s*-->\s*$/;
+  function splitSections(body) {
+    const lines = String(body || "").replace(/\r\n?/g, "\n").split("\n");
+    const visible = lines.slice();
+    const managed = [];
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(START_RE);
+      if (!m) continue;
+      let j = i + 1;
+      while (j < lines.length && !(END_RE.test(lines[j]) && lines[j].match(END_RE)[1] === m[1])) j++;
+      if (j >= lines.length) continue;
+      managed.push({ name: m[1], text: lines.slice(i + 1, j).join("\n").trim() });
+      for (let k = i; k <= j; k++) visible[k] = "";
+      i = j;
+    }
+    const sections = [];
+    let cur = { title: "", start: 0, lines: [] };
+    visible.forEach((l, idx) => {
+      const m = l.match(/^##\s+(.*)$/);
+      if (m) {
+        sections.push(cur);
+        cur = { title: m[1].trim(), start: idx + 1, lines: [] };
+      } else cur.lines.push(l);
+    });
+    sections.push(cur);
+    return {
+      sections: sections.filter((x) => x.title || x.lines.join("").trim()).map((x) => ({
+        title: x.title,
+        text: x.lines.join("\n"),
+        start: x.start,
+        folded: /^(log|history|activity)$/i.test(x.title)
+      })),
+      managed
+    };
+  }
+  function managedTitle(name) {
+    if (/dossier|research/i.test(name)) return "Research";
+    if (/state/i.test(name)) return "Current state";
+    return name.replace(/[-_]+/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+  }
+  function extractManaged(body) {
+    const lines = String(body || "").replace(/\r\n?/g, "\n").split("\n");
+    const keep = [];
+    const top = [];
+    const bottom = [];
+    let seenContent = false;
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(START_RE);
+      if (m) {
+        let j = i + 1;
+        while (j < lines.length && !(END_RE.test(lines[j]) && lines[j].match(END_RE)[1] === m[1])) j++;
+        if (j < lines.length) {
+          ;
+          (seenContent ? bottom : top).push(lines.slice(i, j + 1).join("\n"));
+          i = j;
+          continue;
+        }
+      }
+      if (lines[i].trim()) seenContent = true;
+      keep.push(lines[i]);
+    }
+    const editable = keep.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+/, "").replace(/\s+$/, "") + "\n";
+    return { editable, top, bottom };
+  }
+  function rebuildBody(editable, top, bottom) {
+    const parts = [];
+    if (top.length) parts.push(top.join("\n\n"));
+    parts.push(String(editable).replace(/\s+$/, ""));
+    if (bottom.length) parts.push(bottom.join("\n\n"));
+    return "\n" + parts.filter((x) => x.trim()).join("\n\n") + "\n";
+  }
+
+  // ui/src/panel.jsx
+  var PRIORITIES = ["urgent", "high", "normal", "low"];
+  var PLATFORMS = {
+    gui: "the Hermes app",
+    desktop: "Hermes Desktop",
+    tui: "the terminal",
+    telegram: "Telegram",
+    discord: "Discord",
+    slack: "Slack",
+    whatsapp: "WhatsApp",
+    signal: "Signal",
+    photon: "iMessage",
+    bluebubbles: "iMessage",
+    matrix: "Matrix",
+    teams: "Teams",
+    email: "email",
+    sms: "SMS"
+  };
+  var chatLabel = (t) => {
+    const app = PLATFORMS[t && t.platform || ""] || (t && t.platform ? t.platform[0].toUpperCase() + t.platform.slice(1) : "chat");
+    return t && t.reason === "task" && t.chat_name ? `${app} (${t.chat_name})` : app;
+  };
+  var STATUSES = [["open", "Open"], ["in-progress", "In progress"], ["waiting", "Waiting"]];
+  function TaskPanel({ id, narrow, onClose }) {
+    const { store, api, actions, today, meta, host, chat } = useApp();
+    const toast = useToast();
+    const overlay = useOverlay();
+    const sel = react_dashboard_default.useCallback((s) => s.byId[id], [id]);
+    const task = useStore(store, sel);
+    const [loadError, setLoadError] = react_dashboard_default.useState(null);
+    const [editing, setEditing] = react_dashboard_default.useState(false);
+    const [stale, setStale] = react_dashboard_default.useState(false);
+    const [copied, setCopied] = react_dashboard_default.useState(false);
+    react_dashboard_default.useEffect(() => {
+      if (!copied) return void 0;
+      const hide = () => setCopied(false);
+      document.addEventListener("pointerdown", hide, true);
+      document.addEventListener("keydown", hide, true);
+      return () => {
+        document.removeEventListener("pointerdown", hide, true);
+        document.removeEventListener("keydown", hide, true);
+      };
+    }, [copied]);
+    react_dashboard_default.useEffect(() => setCopied(false), [id]);
+    const [sending, setSending] = react_dashboard_default.useState(false);
+    const load = react_dashboard_default.useCallback(() => {
+      setLoadError(null);
+      setStale(false);
+      return store.loadTask(id).catch((err) => setLoadError(err));
+    }, [id, store]);
+    react_dashboard_default.useEffect(() => {
+      setEditing(false);
+      load();
+    }, [id]);
+    const bodyMissing = !!task && task.body === void 0;
+    react_dashboard_default.useEffect(() => {
+      if (bodyMissing && !loadError) load();
+    }, [bodyMissing]);
+    react_dashboard_default.useEffect(() => {
+      if (editing) return void 0;
+      const load2 = () => store.loadTask(id).catch(() => {
+      });
+      const t = setInterval(() => {
+        if (document.visibilityState === "visible") load2();
+      }, 3e4);
+      window.addEventListener("focus", load2);
+      return () => {
+        clearInterval(t);
+        window.removeEventListener("focus", load2);
+      };
+    }, [id, editing, store]);
+    react_dashboard_default.useEffect(() => {
+      const key = (e) => {
+        if (e.key === "Escape" && !e.defaultPrevented && !editing) onClose();
+      };
+      window.addEventListener("keydown", key);
+      return () => window.removeEventListener("keydown", key);
+    }, [onClose, editing]);
+    const flushRef = react_dashboard_default.useRef(null);
+    const settle = async () => {
+      if (!editing || !flushRef.current) return true;
+      const ok = await flushRef.current();
+      if (ok) setEditing(false);
+      return ok;
+    };
+    const patch = async (changes, local) => {
+      if (!await settle()) return;
+      try {
+        await store.mutate(id, local || changes, () => api.patch(id, { ...changes, expected_revision: (store.getState().byId[id] || task || {}).revision }));
+      } catch (err) {
+        if (err.code === "stale_revision" || err.code === "retry") setStale(true);
+        toast(describeError(err), { tone: "error" });
+      }
+    };
+    const saveBody = async (body, baseRevision) => {
+      const res = await api.putBody(id, body, baseRevision);
+      store.put(res.task);
+      return res.task;
+    };
+    const toggleQueue = react_dashboard_default.useRef(Promise.resolve());
+    const toggle = (line, checked) => {
+      toggleQueue.current = toggleQueue.current.then(async () => {
+        const cur = store.getState().byId[id];
+        if (!cur || cur.body === void 0) return;
+        try {
+          await saveBody(toggleLine(cur.body, line, checked), cur.revision);
+        } catch (err) {
+          if (err.code === "stale_revision") setStale(true);
+          toast(describeError(err), { tone: "error" });
+        }
+      });
+    };
+    if (!task && loadError) {
+      return /* @__PURE__ */ react_dashboard_default.createElement(PanelShell, { narrow, onClose }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-empty" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 20 }), /* @__PURE__ */ react_dashboard_default.createElement("p", null, describeError(loadError)), /* @__PURE__ */ react_dashboard_default.createElement(Button, { onClick: load }, "Try again")));
+    }
+    if (!task) return /* @__PURE__ */ react_dashboard_default.createElement(PanelShell, { narrow, onClose }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-empty" }, /* @__PURE__ */ react_dashboard_default.createElement(Spinner, { size: 18 })));
+    const date = taskDate(task);
+    const separateDue = task.due && task.scheduled && task.due !== task.scheduled;
+    const pickDate = (e) => overlay.open(e.currentTarget, (close) => /* @__PURE__ */ react_dashboard_default.createElement(DatePicker, { value: date, today, close, onPick: async (d) => {
+      if (await settle()) actions.move(store.getState().byId[id] || task, d);
+    } }), { width: 300 });
+    const pickDue = (e) => overlay.open(e.currentTarget, (close) => /* @__PURE__ */ react_dashboard_default.createElement(
+      DatePicker,
+      {
+        value: task.due,
+        today,
+        close,
+        onPick: (d) => patch({ due: d, keep_separate: true }, { due: d })
+      }
+    ), { width: 300 });
+    const pickArea = (e) => overlay.open(e.currentTarget, (close) => /* @__PURE__ */ react_dashboard_default.createElement(Menu, { close, items: (meta.areas || []).map((ar) => ({
+      label: ar,
+      icon: ar === task.area ? "check" : void 0,
+      run: () => patch({ area: ar })
+    })) }), { width: 200 });
+    const pickPriority = (e) => overlay.open(e.currentTarget, (close) => /* @__PURE__ */ react_dashboard_default.createElement(Menu, { close, items: PRIORITIES.map((p) => ({
+      label: p[0].toUpperCase() + p.slice(1),
+      icon: p === (task.priority || "normal") ? "check" : void 0,
+      run: () => patch({ priority: p })
+    })) }), { width: 180 });
+    const pickStatus = (e) => overlay.open(e.currentTarget, (close) => /* @__PURE__ */ react_dashboard_default.createElement(Menu, { close, items: STATUSES.map(([v, l]) => ({
+      label: l,
+      icon: v === task.status ? "check" : void 0,
+      run: () => patch({ status: v, ...v === "waiting" ? { reason: "Marked waiting from the Tasks UI" } : {} })
+    })) }), { width: 180 });
+    const copyForChat = async () => {
+      const cur = store.getState().byId[id] || task;
+      const ok = await copyText(taskHandoff(cur));
+      if (ok) setCopied(true);
+      else {
+        setCopied(false);
+        toast("Could not copy. Your browser blocked the clipboard.", { tone: "error" });
+      }
+      return ok;
+    };
+    const holdRegistered = () => {
+      if (navigator.vibrate) navigator.vibrate(12);
+      setCopied(true);
+    };
+    const sendToChat = async () => {
+      if (sending) return;
+      setSending(true);
+      try {
+        if (host === "desktop" && chat) {
+          const res2 = await api.handoff(id, "desktop");
+          if (!await chat.startChat(res2.text)) toast("Could not open a new chat. Update Hermes Desktop and try again.", { tone: "error" });
+          return;
+        }
+        const newChat = "Starting a new chat for this task. Hermes will message you there in about a minute.";
+        const res = await api.handoff(id, narrow ? "phone" : "dashboard");
+        const h2 = res.handoff;
+        if (h2.route === "session") {
+          toast(newChat, { duration: 7e3 });
+          return;
+        }
+        const where = chatLabel(h2.target);
+        toast(`Sending to ${where}\u2026`);
+        for (let i = 0; i < 30; i++) {
+          await new Promise((r) => setTimeout(r, 1e3));
+          const st = (await api.handoffStatus(h2.id)).handoff;
+          if (st.state === "sent") {
+            toast(`Sent. Hermes will message you on ${where}.`);
+            return;
+          }
+          if (st.route === "session" && st.state === "started") {
+            toast(
+              `${where} did not respond, so Hermes is starting a new chat instead. It will message you there in about a minute.`,
+              { duration: 8e3 }
+            );
+            return;
+          }
+          if (st.state === "failed") {
+            toast(st.error || "Could not send it to chat.", { tone: "error" });
+            return;
+          }
+        }
+        toast("Still sending. Hermes will message you when it picks this up.", { tone: "error" });
+      } catch (err) {
+        if (err.code === "permission") {
+          const cmd = "hermes config set plugins.entries.alchemy-task.allow_gateway_injection true";
+          toast(
+            "Alchemy Task needs permission to message you in chat. Ask Hermes to allow it, or run the command.",
+            { tone: "error", duration: 12e3, action: { label: "Copy command", run: () => copyText(cmd) } }
+          );
+        } else toast(describeError(err), { tone: "error", duration: 9e3 });
+      } finally {
+        setSending(false);
+      }
+    };
+    return /* @__PURE__ */ react_dashboard_default.createElement(PanelShell, { narrow, onClose, footer: isDone(task) ? null : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-cta", sending && "is-busy"), onClick: sendToChat, disabled: sending }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "chat", size: 19, strokeWidth: 2 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, sending ? "Starting\u2026" : "Start in chat")), actions: /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, task.loading ? /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null) : null, /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "clipboard", label: "Copy title and ID for chat", onClick: copyForChat }), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Reload", onClick: load })) }, stale ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-banner at-tone-late" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, "This task changed somewhere else."), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", onClick: load }, "Reload")) : null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-titlerow" }, /* @__PURE__ */ react_dashboard_default.createElement(Check, { checked: isDone(task), onChange: async () => {
+      if (await settle()) actions.toggle(store.getState().byId[id] || task);
+    }, label: isDone(task) ? "Mark not done" : "Mark done", size: "lg" }), /* @__PURE__ */ react_dashboard_default.createElement(
+      TitleField,
+      {
+        value: task.title,
+        done: isDone(task),
+        onSave: (title) => patch({ title }),
+        onHold: holdRegistered,
+        onLongPress: copyForChat,
+        copied
+      }
+    )), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-fields" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field", date && date < today && !isDone(task) && "is-late"), onClick: pickDate }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "cal", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, date ? relativeDay(date, today) : "No date")), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickArea }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: task.area }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, task.area || "No area")), isDone(task) ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-field at-status is-static", "data-s": task.status }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, task.status === "cancelled" ? "Cancelled" : "Done")) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field at-status", "data-s": task.status || "open", onClick: pickStatus }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, (STATUSES.find(([v]) => v === task.status) || [0, "Open"])[1])), separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickDue }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(task.due, today))) : null), /* @__PURE__ */ react_dashboard_default.createElement(SummaryField, { value: task.summary || "", onSave: (summary) => patch({ summary }) }), task.research === "pending" || task.research === "running" ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-research-note" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "spark", size: 14 }), " Hermes is researching this task. Findings will appear here.") : null, editing ? /* @__PURE__ */ react_dashboard_default.createElement(BodyEditor, { task, onSave: saveBody, onDone: () => setEditing(false), onStale: () => setStale(true), flushRef }) : task.body === void 0 ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-loading" }, /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null)) : /* @__PURE__ */ react_dashboard_default.createElement(BodyView, { task, onEdit: () => setEditing(true), onToggle: toggle }), /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "More", className: "at-more" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-more-grid" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Priority"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field is-plain", (task.priority === "high" || task.priority === "urgent") && "is-high"), onClick: pickPriority }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-prio-glyph", "data-p": task.priority || "normal" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, (task.priority || "normal").replace(/^\w/, (c) => c.toUpperCase())))), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due date"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field is-plain", onClick: pickDue }, shortDate(task.due, today)) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-link", onClick: pickDue }, "Set a separate due date")), task.completed ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Completed"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, shortDate(task.completed, today))) : null, task.project ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Project"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono" }, String(task.project).replace(/^\[\[|\]\]$/g, "").split("/").slice(-2, -1)[0] || task.project)) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "File"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono at-break" }, task.path))));
+  }
+  function PanelShell({ narrow, onClose, actions, footer, children }) {
+    const ref = react_dashboard_default.useRef(null);
+    useSheetDismiss(ref, narrow, onClose);
+    return /* @__PURE__ */ react_dashboard_default.createElement("aside", { ref, className: cx("at-panel", narrow ? "is-sheet" : "is-side"), "aria-label": "Task" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-bar" }, narrow ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-grabber" }) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), actions, /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "x", label: "Close", onClick: onClose })), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-panel-body at-scroll", footer && "has-foot"), onScroll: markScrolled }, children), footer ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-foot" }, footer) : null);
+  }
+  function TitleField({ value, done, onSave, onHold, onLongPress, copied }) {
+    const [v, setV] = react_dashboard_default.useState(value);
+    const [editing, setEditing] = react_dashboard_default.useState(false);
+    const [armed, setArmed] = react_dashboard_default.useState(false);
+    const ref = react_dashboard_default.useRef(null);
+    const press = react_dashboard_default.useRef(null);
+    react_dashboard_default.useEffect(() => setV(value), [value]);
+    react_dashboard_default.useLayoutEffect(() => {
+      const el = ref.current;
+      if (el) {
+        el.style.height = "auto";
+        el.style.height = el.scrollHeight + "px";
+      }
+    }, [v]);
+    const commit = () => {
+      const t = v.replace(/\s+/g, " ").trim();
+      if (t && t !== value) onSave(t);
+      else setV(value);
+    };
+    const cancelPress = () => {
+      if (press.current) clearTimeout(press.current.timer);
+      press.current = null;
+      setArmed(false);
+    };
+    const down = (e) => {
+      if (editing || e.pointerType === "mouse" && e.button !== 0) return;
+      const p = { x: e.clientX, y: e.clientY, armed: false, timer: 0 };
+      p.timer = setTimeout(() => {
+        p.armed = true;
+        setArmed(true);
+        onHold();
+      }, 450);
+      press.current = p;
+    };
+    const move = (e) => {
+      const p = press.current;
+      if (p && !p.armed && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 8) cancelPress();
+    };
+    const pointerCancel = () => {
+      if (!(press.current && press.current.armed)) cancelPress();
+    };
+    const release = (e) => {
+      const p = press.current;
+      if (!p) return;
+      const fire = p.armed;
+      cancelPress();
+      if (fire) {
+        e.preventDefault();
+        press.current = { swallowClick: true };
+        onLongPress();
+      }
+    };
+    const click = (e) => {
+      if (press.current && press.current.swallowClick) {
+        press.current = null;
+        e.preventDefault();
+        return;
+      }
+      if (editing) return;
+      const el = e.currentTarget;
+      el.readOnly = false;
+      el.focus();
+      setEditing(true);
+    };
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-title-wrap" }, /* @__PURE__ */ react_dashboard_default.createElement(
+      "textarea",
+      {
+        ref,
+        rows: 1,
+        className: cx("at-title-input", done && "is-done", armed && "is-armed", !editing && "is-idle"),
+        value: v,
+        "aria-label": "Title",
+        readOnly: !editing,
+        title: editing ? void 0 : "Tap to edit. Press and hold to copy for chat.",
+        onChange: (e) => setV(e.target.value),
+        onFocus: () => {
+          if (!editing && !press.current) setEditing(true);
+        },
+        onBlur: () => {
+          setEditing(false);
+          commit();
+        },
+        onPointerDown: down,
+        onPointerMove: move,
+        onPointerUp: release,
+        onPointerCancel: pointerCancel,
+        onTouchEnd: (e) => {
+          if (press.current && press.current.armed) release(e);
+        },
+        onClick: click,
+        onContextMenu: (e) => {
+          if (!editing) e.preventDefault();
+        },
+        onKeyDown: (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.currentTarget.blur();
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            setV(value);
+            e.currentTarget.blur();
+          }
+        }
+      }
+    ), copied ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-copied", role: "status" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "check", size: 13, strokeWidth: 2.4 }), "Copied") : null);
+  }
+  function SummaryField({ value, onSave }) {
+    const [v, setV] = react_dashboard_default.useState(value);
+    const ref = react_dashboard_default.useRef(null);
+    react_dashboard_default.useEffect(() => setV(value), [value]);
+    react_dashboard_default.useLayoutEffect(() => {
+      const el = ref.current;
+      if (el) {
+        el.style.height = "auto";
+        el.style.height = el.scrollHeight + "px";
+      }
+    }, [v]);
+    return /* @__PURE__ */ react_dashboard_default.createElement(
+      "textarea",
+      {
+        ref,
+        rows: 1,
+        className: "at-summary-input",
+        value: v,
+        placeholder: "Add a short summary",
+        "aria-label": "Summary",
+        onChange: (e) => setV(e.target.value),
+        onBlur: () => {
+          const t = v.trim();
+          if (t !== value.trim()) onSave(t);
+        },
+        onKeyDown: (e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            setV(value);
+            e.currentTarget.blur();
+          }
+        }
+      }
+    );
+  }
+  function BodyView({ task, onEdit, onToggle }) {
+    const { sections, managed: allManaged } = react_dashboard_default.useMemo(() => splitSections(task.body || ""), [task.body]);
+    const stateBlock = allManaged.find((m) => /current-state/.test(m.name));
+    const managed = allManaged.filter((m) => m !== stateBlock);
+    const state = stateBlock ? { title: "Current state", text: stateBlock.text, start: 0, managed: true } : sections.find((s) => /^current state$/i.test(s.title));
+    const rest = sections.filter((s) => s !== state);
+    const logAt = rest.findIndex((s) => /^log$/i.test((s.title || "").trim()));
+    const before = logAt >= 0 ? rest.slice(0, logAt) : rest;
+    const after = logAt >= 0 ? rest.slice(logAt) : [];
+    const renderSection = (s) => renderBlocks(parseBlocks(s.text), { onToggle: (line, checked) => onToggle(s.start + line, checked) });
+    const hasContent = sections.some((s) => s.text.trim());
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-body" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-body-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-body-label" }, "Notes"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", icon: "edit", onClick: onEdit }, "Edit")), state && state.text.trim() ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-state" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-state-label" }, "Current state"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, state.managed ? renderBlocks(parseBlocks(state.text)) : renderSection(state))) : null, !hasContent && !managed.length ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-empty-notes", onClick: onEdit }, "Add notes") : null, before.map((s, i) => /* @__PURE__ */ react_dashboard_default.createElement(BodySection, { key: `b${i}`, s, render: renderSection })), managed.map((m, i) => /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { key: `m${i}`, title: managedTitle(m.name), defaultOpen: managedTitle(m.name) === "Research", className: "at-fold", right: /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "spark", size: 13 }) }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, renderBlocks(parseBlocks(m.text))))), after.map((s, i) => /* @__PURE__ */ react_dashboard_default.createElement(BodySection, { key: `a${i}`, s, render: renderSection })));
+  }
+  function BodySection({ s, render }) {
+    return s.folded ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: s.title, className: "at-fold" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, render(s))) : /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-section" }, s.title && !/^notes$/i.test(s.title) ? /* @__PURE__ */ react_dashboard_default.createElement("h3", { className: "at-section-title" }, s.title) : null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, render(s)));
+  }
+  function BodyEditor({ task, onSave, onDone, onStale, flushRef }) {
+    const toast = useToast();
+    const parts = react_dashboard_default.useMemo(() => extractManaged(task.body || ""), []);
+    const baseRev = react_dashboard_default.useRef(task.revision);
+    const inFlight = react_dashboard_default.useRef(Promise.resolve(true));
+    const [text, setText] = react_dashboard_default.useState(parts.editable);
+    const [status, setStatus] = react_dashboard_default.useState("saved");
+    const latest = react_dashboard_default.useRef(text);
+    const saved = react_dashboard_default.useRef(parts.editable);
+    const timer = react_dashboard_default.useRef(null);
+    const ref = react_dashboard_default.useRef(null);
+    const save = react_dashboard_default.useCallback(() => {
+      clearTimeout(timer.current);
+      inFlight.current = inFlight.current.then(async () => {
+        const body = latest.current;
+        if (body === saved.current) {
+          setStatus((st) => st === "error" ? st : "saved");
+          return true;
+        }
+        setStatus("saving");
+        try {
+          const t = await onSave(rebuildBody(body, parts.top, parts.bottom), baseRev.current);
+          baseRev.current = t.revision;
+          saved.current = body;
+          setStatus(latest.current === body ? "saved" : "dirty");
+          return true;
+        } catch (err) {
+          setStatus("error");
+          if (err.code === "stale_revision") onStale();
+          toast(describeError(err), { tone: "error" });
+          return false;
+        }
+      });
+      return inFlight.current;
+    }, [onSave, onStale, toast, parts]);
+    react_dashboard_default.useEffect(() => {
+      if (!flushRef) return void 0;
+      flushRef.current = save;
+      return () => {
+        flushRef.current = null;
+      };
+    }, [flushRef, save]);
+    const changedElsewhere = task.revision && baseRev.current && task.revision !== baseRev.current && status !== "saving";
+    react_dashboard_default.useEffect(() => {
+      if (ref.current) ref.current.focus();
+    }, []);
+    react_dashboard_default.useEffect(() => () => clearTimeout(timer.current), []);
+    const change = (v) => {
+      setText(v);
+      latest.current = v;
+      setStatus("dirty");
+      clearTimeout(timer.current);
+      timer.current = setTimeout(save, 1500);
+    };
+    const done = async () => {
+      if (await save()) onDone();
+    };
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-body is-editing" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-body-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-body-label" }, "Notes"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx("at-save", `is-${status}`) }, status === "saving" ? "Saving\u2026" : status === "saved" ? "Saved" : status === "error" ? "Not saved" : "Editing"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), status === "error" ? /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", onClick: onDone }, "Discard changes") : null, status === "error" && !changedElsewhere ? /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", onClick: save }, "Retry") : null, /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "primary", onClick: done }, "Done")), changedElsewhere ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-banner at-tone-late" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, "This task changed while you were editing. Your text is kept here and will not overwrite it. Copy what you need, then choose Discard changes to see the latest version.")) : null, /* @__PURE__ */ react_dashboard_default.createElement(
+      "textarea",
+      {
+        ref,
+        className: "at-editor",
+        value: text,
+        spellCheck: true,
+        onChange: (e) => change(e.target.value),
+        onKeyDown: (e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+            e.preventDefault();
+            save();
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            done();
+          }
+        }
+      }
+    ), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-editor-hint" }, "Markdown. Saves as you type.", parts.top.length + parts.bottom.length ? " Research added by Hermes is kept as it is." : ""));
+  }
+
+  // ui/src/discovery.jsx
+  var pendingCount = (runs) => (runs || []).reduce((n, r) => n + (r.proposals || []).filter((p) => p.state === "pending" && !p.expired).length, 0);
+  var titleCase = (s) => String(s || "").replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  function runTime(r) {
+    const t = r.time;
+    const d = typeof t === "number" ? new Date(t * (t < 1e12 ? 1e3 : 1)) : new Date(t);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleTimeString(void 0, { hour: "numeric", minute: "2-digit" });
+  }
+  function sourcesLine(r) {
+    const cov = r.coverage || [];
+    if (!cov.length) return r.sources_checked && r.sources_checked.length ? `${r.sources_checked.length} sources` : "";
+    const ok = cov.filter((c) => c.status === "complete").length;
+    return ok === cov.length ? `${ok} ${ok === 1 ? "source" : "sources"} checked` : `${ok} of ${cov.length} sources checked`;
+  }
+  function DiscoveryView({ runs, error, loading, reload }) {
+    const { today } = useApp();
+    const [filter, setFilter] = react_dashboard_default.useState("waiting");
+    if (error && error.code === "not_found") {
+      return /* @__PURE__ */ react_dashboard_default.createElement(
+        Empty,
+        {
+          icon: "inbox",
+          title: "Discovery is not available yet",
+          text: "This version of Alchemy Task has no discovery runs to show. Update the plugin to review discovery here."
+        }
+      );
+    }
+    if (!runs && loading) return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-loading" }, /* @__PURE__ */ react_dashboard_default.createElement(Spinner, { size: 18 }));
+    if (error && !runs) {
+      return /* @__PURE__ */ react_dashboard_default.createElement(Empty, { icon: "alert", title: "Could not load discovery", text: describeError(error), action: /* @__PURE__ */ react_dashboard_default.createElement(Button, { onClick: reload }, "Try again") });
+    }
+    const all = runs || [];
+    if (!all.length) {
+      return /* @__PURE__ */ react_dashboard_default.createElement(
+        Empty,
+        {
+          icon: "spark",
+          title: "No discovery runs yet",
+          text: /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, "Discovery reads the sources you choose and proposes tasks. To start one, ask Hermes:", /* @__PURE__ */ react_dashboard_default.createElement("br", null), /* @__PURE__ */ react_dashboard_default.createElement("q", null, "Set up a daily digest from my email and Slack at 7 AM."))
+        }
+      );
+    }
+    const needs = (r) => (r.summary ? r.summary.pending : (r.proposals || []).filter((p) => p.state === "pending").length) > 0 || (r.conflicts || []).length || (r.failures || []).length;
+    const shown = filter === "waiting" ? all.filter(needs) : all;
+    const latest = all[0];
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-disco" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disco-inner" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disco-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("h1", { className: "at-period" }, "Discovery"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(
+      Segmented,
+      {
+        label: "Show",
+        value: filter,
+        onChange: setFilter,
+        options: [{ value: "waiting", label: "Waiting for you" }, { value: "all", label: "All runs" }]
+      }
+    ), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Refresh", onClick: reload })), !shown.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "check", size: 18 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup-title" }, "All caught up"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, "Last run: ", titleCase(latest.stream), ", ", relativeDay(latest.day, today), " ", runTime(latest)))) : null, shown.map((r) => /* @__PURE__ */ react_dashboard_default.createElement(RunCard, { key: r.run_id, run: r, filter, reload }))));
+  }
+  function Empty({ icon, title, text, action }) {
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-disco" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-emptystate" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-emptystate-icon" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: icon, size: 22 })), /* @__PURE__ */ react_dashboard_default.createElement("h2", null, title), /* @__PURE__ */ react_dashboard_default.createElement("p", null, text), action));
+  }
+  function RunCard({ run, filter, reload }) {
+    const { today } = useApp();
+    const proposals = run.proposals || [];
+    const visible = filter === "waiting" ? proposals.filter((p) => p.state === "pending") : proposals;
+    const outcomes = (run.outcomes || []).filter((o) => o.status !== "noop");
+    const attention = [...(run.conflicts || []).map((c) => ({ ...c, kind: "conflict" })), ...run.failures || []];
+    const test = run.mode && run.mode !== "production";
+    return /* @__PURE__ */ react_dashboard_default.createElement("article", { className: "at-run" }, /* @__PURE__ */ react_dashboard_default.createElement("header", { className: "at-run-head" }, /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-title" }, titleCase(run.stream)), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-sub" }, /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(run.day, today), runTime(run) ? ` \xB7 ${runTime(run)}` : ""), sourcesLine(run) ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx(run.degraded && "is-late") }, sourcesLine(run)) : null, test ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-badge" }, "Test run") : null)), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), run.summary && run.summary.pending ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-count is-accent" }, run.summary.pending, " waiting") : null), visible.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-proposals" }, visible.map((p) => /* @__PURE__ */ react_dashboard_default.createElement(ProposalCard, { key: p.proposal_id, p, run, reload, readOnly: test }))) : filter === "all" && !proposals.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-none" }, "No new proposals in this run.") : null, outcomes.length ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Updated automatically", count: outcomes.length, className: "at-run-fold" }, outcomes.map((o) => /* @__PURE__ */ react_dashboard_default.createElement(Outcome, { key: o.unit_id, o, run, reload }))) : null, attention.length ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Needs attention", count: attention.length, tone: "late", className: "at-run-fold", defaultOpen: true }, attention.map((a, i) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: i, className: "at-attn" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 14 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-attn-title" }, a.title || (a.kind === "conflict" ? "Several tasks match one item" : "Research follow-up")), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, a.kind === "conflict" ? "Nothing was changed. Ask Hermes which task this belongs to." : a.reason))))) : null, /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Run details", className: "at-run-fold is-quiet" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-details" }, (run.coverage || []).map((c, i) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: i, className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx("at-statusdot", c.status === "complete" ? "is-ok" : "is-late") }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, c.source_key || c.source || "Source"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, c.status === "complete" ? "Checked" : c.status || "Unknown"))), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Run"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono" }, String(run.run_id).slice(0, 12))), run.delivery && run.delivery.state ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Digest"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, deliveryLabel(run.delivery.state))) : null)));
+  }
+  var deliveryLabel = (s) => ({ delivered: "Sent", host_pending: "Sent by Hermes", prepared: "Prepared", not_prepared: "Not sent", unknown: "Unknown", inflight: "Sending" })[s] || s;
+  function Outcome({ o, run, reload }) {
+    const { actions, api } = useApp();
+    const toast = useToast();
+    const [busy, setBusy] = react_dashboard_default.useState(false);
+    const resume = async () => {
+      setBusy(true);
+      try {
+        await api.resume(run.run_id, o.unit_id);
+        await reload();
+      } catch (err) {
+        toast(describeError(err), { tone: "error" });
+      }
+      setBusy(false);
+    };
+    const done = o.status === "complete";
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-outcome" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx("at-statusdot", done ? "is-ok" : "is-late") }), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-outcome-title", onClick: () => o.task_id && actions.open(o.task_id) }, o.title), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), done ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Updated") : o.resume_action ? /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", onClick: resume, disabled: busy }, busy ? "Finishing\u2026" : "Finish update") : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, o.status));
+  }
+  function ProposalCard({ p, run, reload, readOnly }) {
+    const { api, actions, today, meta, store } = useApp();
+    const toast = useToast();
+    const overlay = useOverlay();
+    const targets = p.targets || [];
+    const multi = p.kind === "selection" || targets.length > 1;
+    const [mode, setMode] = react_dashboard_default.useState(p.kind === "new" || !targets.length ? "create" : "update");
+    const [target, setTarget] = react_dashboard_default.useState(targets.length === 1 ? targets[0].task_id : null);
+    const streamAreas = (meta.streams || {})[run.stream] || [];
+    const [date, setDate] = react_dashboard_default.useState(p.due || p.due_hint || today);
+    const [area, setArea] = react_dashboard_default.useState(p.area || (streamAreas.length === 1 ? streamAreas[0] : meta.default_area) || "");
+    const [busy, setBusy] = react_dashboard_default.useState(null);
+    const [gone, setGone] = react_dashboard_default.useState(false);
+    if (p.state === "approved" || p.state === "complete") {
+      const r = p.result || {};
+      const finished = p.state === "complete" || r.state === "complete";
+      return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-prop is-resolved" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx("at-statusdot", finished ? "is-ok" : "is-late") }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-prop-resolved" }, r.operation === "updated" ? "Updated" : "Created", " ", /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-linkish", onClick: () => r.task_id && actions.open(r.task_id) }, r.title || p.title)), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), finished ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, p.ref) : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Saving\u2026"));
+    }
+    if (p.state === "dismissed" || gone) {
+      return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-prop is-resolved is-dismissed" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-prop-resolved" }, p.title), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Dismissed"));
+    }
+    const approve = async (choice) => {
+      if (choice === "create" && !area) {
+        toast("Pick an area first.", { tone: "error" });
+        return;
+      }
+      const t = targets.find((x) => x.task_id === target);
+      if (choice === "update" && !t) {
+        toast("Pick the task to update.", { tone: "error" });
+        return;
+      }
+      const body = choice === "create" ? { choice, due: date, area } : { choice, target_task_id: t.task_id, expected_revision: t.revision };
+      if (p.expired) body.allow_expired = true;
+      setBusy(choice);
+      try {
+        const res = await api.approve(p.proposal_id, body);
+        const receipt = res.receipt || {};
+        toast(choice === "create" ? "Task created" : "Task updated", receipt.task_id ? { action: { label: "Open", run: () => actions.open(receipt.task_id) } } : {});
+        await reload();
+        store.refresh();
+      } catch (err) {
+        toast(describeError(err), { tone: "error" });
+        if (err.code === "already_resolved" || err.code === "stale_revision") reload();
+      }
+      setBusy(null);
+    };
+    const dismiss = async () => {
+      setBusy("dismiss");
+      try {
+        await api.dismiss(p.proposal_id);
+        setGone(true);
+        toast("Proposal dismissed");
+        reload();
+      } catch (err) {
+        toast(describeError(err), { tone: "error" });
+      }
+      setBusy(null);
+    };
+    const pickDate = (e) => overlay.open(e.currentTarget, (close) => /* @__PURE__ */ react_dashboard_default.createElement(DatePicker, { value: date, today, onPick: setDate, close }), { width: 300 });
+    const pickArea = (e) => overlay.open(e.currentTarget, (close) => /* @__PURE__ */ react_dashboard_default.createElement(Menu, { close, items: (meta.areas || []).map((ar) => ({ label: ar, icon: ar === area ? "check" : void 0, run: () => setArea(ar) })) }), { width: 200 });
+    const additions = [].concat(p.new_information || []).filter(Boolean);
+    const links = [].concat(p.source_links || []).filter(Boolean);
+    const uncertain = p.research_disposition === "uncertain";
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-prop", p.expired && "is-expired") }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-prop-head" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-prop-ref" }, p.ref), /* @__PURE__ */ react_dashboard_default.createElement("h3", { className: "at-prop-title" }, p.title), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "x", label: "Dismiss", className: "at-prop-dismiss", onClick: dismiss, disabled: !!busy || readOnly })), p.current_understanding ? /* @__PURE__ */ react_dashboard_default.createElement("p", { className: "at-prop-text" }, p.current_understanding) : null, p.substantive_next_action ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-prop-next" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-prop-label" }, "Next"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, p.substantive_next_action)) : null, uncertain ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-prop-uncertain" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 14 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, [].concat(p.uncertainty || []).join(" ") || "Hermes was not sure about this one. Check it before you add it.")) : null, links.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-prop-links" }, links.slice(0, 4).map((l, i) => /* @__PURE__ */ react_dashboard_default.createElement(SourceLink, { key: i, href: l }))) : null, targets.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-prop-targets", mode === "create" && "is-muted") }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-prop-label" }, multi ? "Could update one of these tasks" : "May update an existing task"), targets.map((t) => /* @__PURE__ */ react_dashboard_default.createElement("label", { key: t.task_id, className: cx("at-target", target === t.task_id && mode === "update" && "is-on") }, multi ? /* @__PURE__ */ react_dashboard_default.createElement(
+      "input",
+      {
+        type: "radio",
+        name: p.proposal_id,
+        checked: target === t.task_id && mode === "update",
+        onChange: () => {
+          setTarget(t.task_id);
+          setMode("update");
+        }
+      }
+    ) : /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "arrowR", size: 14 }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-target-main" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-target-title" }, t.title), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-target-meta" }, t.area ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: t.area }), t.area) : null, taskDate(t) ? /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(taskDate(t), today)) : null, t.status && t.status !== "open" ? /* @__PURE__ */ react_dashboard_default.createElement("span", null, t.status) : null)), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-link", onClick: (e) => {
+      e.preventDefault();
+      actions.open(t.task_id);
+    } }, "Open"))), additions.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-prop-addition" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-prop-label" }, "Would add"), /* @__PURE__ */ react_dashboard_default.createElement("ul", null, additions.map((a, i) => /* @__PURE__ */ react_dashboard_default.createElement("li", { key: i }, a)))) : null) : additions.length ? /* @__PURE__ */ react_dashboard_default.createElement("ul", { className: "at-prop-list" }, additions.map((a, i) => /* @__PURE__ */ react_dashboard_default.createElement("li", { key: i }, a))) : null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-prop-actions" }, mode === "create" ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickDate }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "cal", size: 14 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(date, today))), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field", !area && "is-late"), onClick: pickArea }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, area || "Pick area")), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), targets.length ? /* @__PURE__ */ react_dashboard_default.createElement(Button, { variant: "ghost", size: "sm", onClick: () => setMode("update"), disabled: !!busy }, "Update instead") : null, /* @__PURE__ */ react_dashboard_default.createElement(Button, { variant: "primary", size: "sm", icon: "plus", onClick: () => approve("create"), disabled: !!busy || readOnly }, busy === "create" ? "Creating\u2026" : "Create task")) : /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement(Button, { variant: "ghost", size: "sm", onClick: () => setMode("create"), disabled: !!busy }, "Create new instead"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(Button, { variant: "primary", size: "sm", icon: "check", onClick: () => approve("update"), disabled: !!busy || !target || readOnly }, busy === "update" ? "Updating\u2026" : multi ? "Update selected" : "Update task"))), p.expired ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-prop-foot at-muted" }, "Expired ", relativeDay(p.expires, today).toLowerCase(), ". You can still add it.") : null);
+  }
+  function SourceLink({ href }) {
+    let label = href;
+    try {
+      const u = new URL(href);
+      const host = u.host.replace(/^www\./, "");
+      label = /slack/.test(host) ? "Slack" : /mail\.google|gmail/.test(host) ? "Gmail" : /notion/.test(host) ? "Notion" : /github/.test(host) ? "GitHub" : host;
+    } catch {
+    }
+    return /* @__PURE__ */ react_dashboard_default.createElement("a", { className: "at-srclink", href, target: "_blank", rel: "noreferrer noopener" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "link", size: 12 }), label);
+  }
+
+  // ui/src/settings.jsx
+  var FREQUENCIES = [
+    ["daily", "Every day"],
+    ["weekdays", "Weekdays"],
+    ["every 4 hours", "Every 4 hours"],
+    ["every 3 hours", "Every 3 hours"],
+    ["every 2 hours", "Every 2 hours"],
+    ["hourly", "Every hour"]
+  ];
+  var timed = (f) => f === "daily" || f === "weekdays";
+  function to24(t) {
+    const m = String(t || "").trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
+    if (!m) return "07:00";
+    let h2 = Number(m[1]) % 24;
+    if (m[3] === "pm" && h2 < 12) h2 += 12;
+    if (m[3] === "am" && h2 === 12) h2 = 0;
+    return `${String(h2).padStart(2, "0")}:${m[2] || "00"}`;
+  }
+  function to12(hhmm) {
+    const [h2, m] = hhmm.split(":").map(Number);
+    return `${(h2 + 11) % 12 + 1}:${String(m).padStart(2, "0")} ${h2 < 12 ? "AM" : "PM"}`;
+  }
+  function SettingsPanel({ onClose, inline: inline2, narrow }) {
+    const { api } = useApp();
+    const [data, setData] = react_dashboard_default.useState(null);
+    const [error, setError] = react_dashboard_default.useState(null);
+    const sheetRef = react_dashboard_default.useRef(null);
+    useSheetDismiss(sheetRef, narrow && !inline2, onClose);
+    const load = react_dashboard_default.useCallback(() => {
+      setError(null);
+      return api.settings().then(setData, setError);
+    }, [api]);
+    react_dashboard_default.useEffect(() => {
+      load();
+    }, [load]);
+    const body = !data ? error ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-empty" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 20 }), /* @__PURE__ */ react_dashboard_default.createElement("p", null, describeError(error)), /* @__PURE__ */ react_dashboard_default.createElement(Button, { onClick: load }, "Try again")) : /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-empty" }, /* @__PURE__ */ react_dashboard_default.createElement(Spinner, { size: 18 })) : /* @__PURE__ */ react_dashboard_default.createElement(SettingsBody, { data, reload: load });
+    if (inline2) return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-settings-inline" }, body);
+    return /* @__PURE__ */ react_dashboard_default.createElement("aside", { ref: sheetRef, className: cx("at-panel", narrow ? "is-sheet" : "is-side", "at-settings"), "aria-label": "Settings" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-bar" }, narrow ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-grabber" }) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-panel-heading" }, "Settings"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "x", label: "Close", onClick: onClose })), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-body at-scroll", onScroll: markScrolled }, body));
+  }
+  function SettingsBody({ data, reload }) {
+    const streams = data.streams || [];
+    const t = data.tasks || {};
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-settings-body" }, /* @__PURE__ */ react_dashboard_default.createElement("section", { className: "at-set-sec" }, /* @__PURE__ */ react_dashboard_default.createElement("h3", null, "Discovery"), /* @__PURE__ */ react_dashboard_default.createElement("p", { className: "at-muted" }, "When each discovery stream reads its sources and proposes tasks."), streams.length ? streams.map((s) => /* @__PURE__ */ react_dashboard_default.createElement(StreamRow, { key: s.name, s, reload })) : /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-set-empty" }, "No streams yet. Ask Hermes: ", /* @__PURE__ */ react_dashboard_default.createElement("q", null, "Set up a daily digest from my email at 7 AM."))), /* @__PURE__ */ react_dashboard_default.createElement("section", { className: "at-set-sec" }, /* @__PURE__ */ react_dashboard_default.createElement("h3", null, "Tasks"), /* @__PURE__ */ react_dashboard_default.createElement(TaskDefaults, { t, reload })), /* @__PURE__ */ react_dashboard_default.createElement("section", { className: "at-set-sec" }, /* @__PURE__ */ react_dashboard_default.createElement("h3", null, "Sync and storage"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-set-grid" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Workspace"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono at-break" }, t.workspace_root || "Not set up"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Time zone"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, t.timezone || "Hermes default"), data.sync && data.sync.git ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Git"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, data.sync.git)) : null, data.sync && data.sync.reminders ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "iOS Reminders"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, data.sync.reminders)) : null), /* @__PURE__ */ react_dashboard_default.createElement("p", { className: "at-muted at-set-hint" }, "To change sources, accounts or areas, ask Hermes in chat, for example ", /* @__PURE__ */ react_dashboard_default.createElement("q", null, "add my team Slack channel to the work digest"), ".")));
+  }
+  function StreamRow({ s, reload }) {
+    const { api } = useApp();
+    const toast = useToast();
+    const overlay = useOverlay();
+    const [freq, setFreq] = react_dashboard_default.useState(s.frequency || "daily");
+    const [time, setTime] = react_dashboard_default.useState(to24(s.time || "7 AM"));
+    const [busy, setBusy] = react_dashboard_default.useState(null);
+    const dirty = freq !== (s.frequency || "daily") || timed(freq) && time !== to24(s.time || "7 AM");
+    const save = async () => {
+      setBusy("save");
+      try {
+        const res = await api.patchStream(s.name, timed(freq) ? { frequency: freq, time: to12(time) } : { frequency: freq });
+        toast(res.message || "Schedule updated");
+        await reload();
+      } catch (err) {
+        toast(describeError(err), { tone: "error" });
+      }
+      setBusy(null);
+    };
+    const runNow = async () => {
+      setBusy("run");
+      try {
+        const res = await api.runStream(s.name);
+        toast(res.message || "Discovery run started");
+      } catch (err) {
+        toast(describeError(err), { tone: "error" });
+      }
+      setBusy(null);
+    };
+    const pickFreq = (e) => overlay.open(e.currentTarget, (close) => /* @__PURE__ */ react_dashboard_default.createElement(Menu, { close, items: FREQUENCIES.map(([v, l]) => ({ label: l, icon: v === freq ? "check" : void 0, run: () => setFreq(v) })) }), { width: 200 });
+    const blocked = s.setup_blocked_reason || (s.activation_state && !/active|ok|ready/i.test(s.activation_state) ? s.activation_state : "");
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-stream" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-stream-head" }, /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-stream-name" }, String(s.name).replace(/\b\w/g, (c) => c.toUpperCase())), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, (s.areas || []).map((a) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: a, className: "at-inline-area" }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: a }), a)), s.last_run ? /* @__PURE__ */ react_dashboard_default.createElement("span", null, " \xB7 last ran ", lastRun(s.last_run)) : null)), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", icon: "play", onClick: runNow, disabled: !!busy }, busy === "run" ? "Starting\u2026" : "Run now")), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-stream-sched" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickFreq }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "clock", size: 14 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, (FREQUENCIES.find(([v]) => v === freq) || [0, freq])[1]), /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "chevD", size: 13 })), timed(freq) ? /* @__PURE__ */ react_dashboard_default.createElement("label", { className: "at-field at-timefield" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "at"), /* @__PURE__ */ react_dashboard_default.createElement("input", { type: "time", value: time, step: 300, onChange: (e) => setTime(e.target.value || time) })) : null, s.timezone ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted at-tz" }, s.timezone.replace(/_/g, " ")) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), dirty ? /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "primary", onClick: save, disabled: !!busy }, busy === "save" ? "Saving\u2026" : "Save") : null), (s.sources || []).length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-stream-sources" }, (s.sources || []).map((src) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: src.name, className: "at-chip", title: src.scope }, src.name))) : null, blocked ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-banner at-tone-late" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 14 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, blocked)) : null);
+  }
+  function lastRun(v) {
+    const d = typeof v === "number" ? new Date(v * (v < 1e12 ? 1e3 : 1)) : new Date(v);
+    if (Number.isNaN(d.getTime())) return "";
+    const mins = Math.round((Date.now() - d.getTime()) / 6e4);
+    if (mins < 60) return `${Math.max(1, mins)} min ago`;
+    if (mins < 60 * 24) return `${Math.round(mins / 60)} h ago`;
+    return d.toLocaleDateString(void 0, { month: "short", day: "numeric" });
+  }
+  function TaskDefaults({ t, reload }) {
+    const { api, meta } = useApp();
+    const toast = useToast();
+    const overlay = useOverlay();
+    const set = async (changes) => {
+      try {
+        await api.patchTaskSettings(changes);
+        toast("Saved");
+        await reload();
+      } catch (err) {
+        toast(describeError(err), { tone: "error" });
+      }
+    };
+    const pickArea = (e) => overlay.open(e.currentTarget, (close) => /* @__PURE__ */ react_dashboard_default.createElement(Menu, { close, items: (meta.areas || []).map((a) => ({ label: a, icon: a === t.default_area ? "check" : void 0, run: () => set({ default_area: a }) })) }), { width: 200 });
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-set-grid" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Default area"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickArea }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: t.default_area }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, t.default_area || "None"), /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "chevD", size: 13 }))), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Research new tasks"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, /* @__PURE__ */ react_dashboard_default.createElement(
+      "button",
+      {
+        type: "button",
+        role: "switch",
+        "aria-checked": !!t.research_by_default,
+        className: cx("at-switch", t.research_by_default && "is-on"),
+        onClick: () => set({ research_by_default: !t.research_by_default })
+      },
+      /* @__PURE__ */ react_dashboard_default.createElement("i", null)
+    )));
+  }
+
+  // ui/src/App.jsx
+  var NARROW = 720;
+  var POLL_MS = 3e4;
+  function App(props) {
+    return /* @__PURE__ */ react_dashboard_default.createElement(ToastHost, null, /* @__PURE__ */ react_dashboard_default.createElement(AppInner, { ...props }));
+  }
+  function AppInner({ transport: transport2, host, initialView, settingsOnly, chat }) {
+    const api = transport2;
+    const toast = useToast();
+    const rootRef = react_dashboard_default.useRef(null);
+    const width = useWidth(rootRef);
+    const narrow = width < NARROW;
+    const store = react_dashboard_default.useMemo(() => createTaskStore(api), [api]);
+    const today = useStore(store, selToday2);
+    const busy = useStore(store, selLoading);
+    const [meta, setMeta] = react_dashboard_default.useState(null);
+    const [metaError, setMetaError] = react_dashboard_default.useState(null);
+    const [tab, setTab] = react_dashboard_default.useState(initialView === "discovery" ? "discovery" : "tasks");
+    const [settingsOpen, setSettingsOpen] = react_dashboard_default.useState(initialView === "settings");
+    const [selectedId, setSelectedId] = react_dashboard_default.useState(null);
+    const [prefsRaw, setPrefsRaw] = usePref("prefs", { view: null, area: "", hideDone: false });
+    const prefs = prefsRaw;
+    const setPrefs = react_dashboard_default.useCallback((p) => setPrefsRaw((cur) => ({ ...cur, ...p })), [setPrefsRaw]);
+    const [runs, setRuns] = react_dashboard_default.useState(null);
+    const [runsError, setRunsError] = react_dashboard_default.useState(null);
+    const [runsLoading, setRunsLoading] = react_dashboard_default.useState(false);
+    const loadMeta = react_dashboard_default.useCallback(() => api.meta().then((m) => {
+      setMeta(m);
+      setMetaError(null);
+      store.setToday(m.today);
+    }, setMetaError), [api, store]);
+    const loadRuns = react_dashboard_default.useCallback(async () => {
+      setRunsLoading(true);
+      try {
+        const res = await api.runs();
+        setRuns(res.runs || []);
+        setRunsError(null);
+      } catch (err) {
+        setRunsError(err);
+      }
+      setRunsLoading(false);
+    }, [api]);
+    react_dashboard_default.useEffect(() => {
+      loadMeta();
+      loadRuns();
+    }, [loadMeta, loadRuns]);
+    react_dashboard_default.useEffect(() => {
+      const refresh = () => {
+        loadMeta();
+        store.refresh();
+        loadRuns();
+      };
+      const id = setInterval(() => {
+        if (document.visibilityState === "visible") refresh();
+      }, POLL_MS);
+      window.addEventListener("focus", refresh);
+      return () => {
+        clearInterval(id);
+        window.removeEventListener("focus", refresh);
+      };
+    }, [loadMeta, loadRuns, store]);
+    react_dashboard_default.useEffect(() => {
+      const open = (e) => {
+        const v = e.detail;
+        if (v === "discovery" || v === "tasks") setTab(v);
+        if (v === "settings") setSettingsOpen(true);
+      };
+      window.addEventListener("alchemy-task:open", open);
+      return () => window.removeEventListener("alchemy-task:open", open);
+    }, []);
+    const actions = react_dashboard_default.useMemo(() => {
+      const done = (t) => t.status === "done" || t.status === "cancelled";
+      const fail = (err) => toast(describeError(err), { tone: "error" });
+      const complete = (t) => store.mutate(t.task_id, { status: "done", completed: store.getState().today }, () => api.complete(t.task_id));
+      const reopen = (t) => store.mutate(t.task_id, { status: "open", completed: null }, () => api.reopen(t.task_id));
+      const setDates = (t, scheduled, due) => store.mutate(
+        t.task_id,
+        { scheduled, due },
+        () => api.patch(t.task_id, scheduled === due ? { date: scheduled } : { scheduled, due, keep_separate: true })
+      );
+      const a = {
+        open: (id) => setSelectedId(id),
+        async toggle(t) {
+          try {
+            if (done(t)) {
+              await reopen(t);
+              toast("Marked not done", { undo: () => complete(t).catch(fail) });
+            } else {
+              await complete(t);
+              toast(`Done: ${t.title}`, { undo: () => reopen(t).catch(fail) });
+            }
+          } catch (err) {
+            fail(err);
+          }
+        },
+        async move(t, date) {
+          const before = { scheduled: t.scheduled || null, due: t.due || null };
+          if (taskDate(t) === date && (!t.due || t.due === date)) return;
+          try {
+            await setDates(t, date, date);
+            toast(`Moved to ${relativeDay(date, store.getState().today)}`, {
+              undo: () => setDates({ ...t, scheduled: date, due: date }, before.scheduled || before.due, before.due || before.scheduled).catch(fail)
+            });
+          } catch (err) {
+            fail(err);
+          }
+        },
+        async moveMany(tasks, date) {
+          const list = tasks.slice();
+          let moved = 0;
+          for (const t of list) {
+            try {
+              await setDates(t, date, date);
+              moved++;
+            } catch (err) {
+              fail(err);
+              break;
+            }
+          }
+          if (moved) {
+            toast(`Moved ${moved} ${moved === 1 ? "task" : "tasks"} to ${relativeDay(date, store.getState().today).toLowerCase()}`, {
+              undo: async () => {
+                for (const t of list.slice(0, moved)) {
+                  try {
+                    await setDates({ ...t, scheduled: date, due: date }, t.scheduled || t.due, t.due || t.scheduled);
+                  } catch (err) {
+                    fail(err);
+                    break;
+                  }
+                }
+              }
+            });
+          }
+        },
+        async create({ title, date, area }) {
+          try {
+            const res = await api.create({ title, date, area });
+            if (res.task) store.put(res.task);
+            toast(res.task && res.task.research === "pending" ? "Added. Hermes is researching it." : "Added", {
+              action: res.task ? { label: "Open", run: () => setSelectedId(res.task.task_id) } : void 0
+            });
+            return true;
+          } catch (err) {
+            fail(err);
+            return false;
+          }
+        }
+      };
+      return a;
+    }, [api, store, toast]);
+    const onDrop = react_dashboard_default.useCallback((task, date) => actions.move(task, date), [actions]);
+    const pending = pendingCount(runs);
+    const ctx = react_dashboard_default.useMemo(() => ({
+      api,
+      store,
+      meta: meta || {},
+      today: today || meta && meta.today,
+      prefs,
+      setPrefs,
+      actions,
+      selectedId,
+      narrow,
+      host,
+      chat
+    }), [api, store, meta, today, prefs, setPrefs, actions, selectedId, narrow, host, chat]);
+    const [height, setHeight] = react_dashboard_default.useState(null);
+    react_dashboard_default.useLayoutEffect(() => {
+      const el = rootRef.current;
+      if (!el || settingsOnly) return void 0;
+      const fit = () => {
+        const parent = el.parentElement;
+        const ph = parent ? parent.getBoundingClientRect().height : 0;
+        if (host === "desktop" && ph > 300) {
+          setHeight(null);
+          return;
+        }
+        const top = el.getBoundingClientRect().top;
+        const vh = window.visualViewport && window.visualViewport.height || window.innerHeight;
+        setHeight(Math.max(420, Math.round(vh - Math.max(0, top) - 8)));
+      };
+      fit();
+      window.addEventListener("resize", fit);
+      if (window.visualViewport) window.visualViewport.addEventListener("resize", fit);
+      return () => {
+        window.removeEventListener("resize", fit);
+        if (window.visualViewport) window.visualViewport.removeEventListener("resize", fit);
+      };
+    }, [host, settingsOnly]);
+    const content = (() => {
+      if (!meta && metaError) {
+        return /* @__PURE__ */ react_dashboard_default.createElement(Centered, { icon: "alert", title: "Alchemy Task is not responding", text: describeError(metaError) });
+      }
+      if (!meta || !ctx.today) return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-loading" }, /* @__PURE__ */ react_dashboard_default.createElement(Spinner, { size: 18 }));
+      if (meta.configured === false) {
+        return /* @__PURE__ */ react_dashboard_default.createElement(Centered, { icon: "list", title: "Set up your tasks", text: /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, "Alchemy Task is installed but not set up yet. In chat, ask Hermes: ", /* @__PURE__ */ react_dashboard_default.createElement("q", null, "Set up my tasks.")) });
+      }
+      if (settingsOnly) return /* @__PURE__ */ react_dashboard_default.createElement(SettingsPanel, { inline: true, narrow });
+      return /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("nav", { className: "at-appbar" }, narrow ? null : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-brand" }, /* @__PURE__ */ react_dashboard_default.createElement("i", { className: "at-brand-mark", "aria-hidden": "true" }), "Alchemy Task"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-tabs", role: "tablist" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", role: "tab", "aria-selected": tab === "tasks", className: cx("at-tab", tab === "tasks" && "is-on"), onClick: () => setTab("tasks") }, "Tasks"), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", role: "tab", "aria-selected": tab === "discovery", className: cx("at-tab", tab === "discovery" && "is-on"), onClick: () => setTab("discovery") }, "Discovery", pending ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-badge-dot" }, pending) : null)), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), busy ? /* @__PURE__ */ react_dashboard_default.createElement(Spinner, { size: 12 }) : null, /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "gear", label: "Settings", className: cx(settingsOpen && "is-on"), onClick: () => {
+        setSelectedId(null);
+        setSettingsOpen((v) => !v);
+      } })), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-main", selectedId && !narrow && "has-panel", settingsOpen && !narrow && "has-panel") }, tab === "tasks" ? /* @__PURE__ */ react_dashboard_default.createElement(TasksView, { narrow }) : /* @__PURE__ */ react_dashboard_default.createElement(DiscoveryView, { runs, error: runsError, loading: runsLoading, reload: loadRuns })), selectedId ? /* @__PURE__ */ react_dashboard_default.createElement(TaskPanel, { id: selectedId, narrow, onClose: () => setSelectedId(null) }) : null, settingsOpen && !selectedId ? /* @__PURE__ */ react_dashboard_default.createElement(SettingsPanel, { narrow, onClose: () => setSettingsOpen(false) }) : null);
+    })();
+    return /* @__PURE__ */ react_dashboard_default.createElement(AppContext.Provider, { value: ctx }, /* @__PURE__ */ react_dashboard_default.createElement(
+      "div",
+      {
+        ref: rootRef,
+        className: cx("at-root at-vars", narrow && "is-narrow", `host-${host}`, settingsOnly && "is-settings-only"),
+        style: height ? { height } : void 0
+      },
+      /* @__PURE__ */ react_dashboard_default.createElement(DragProvider, { onDrop }, /* @__PURE__ */ react_dashboard_default.createElement(OverlayHost, { rootRef }, content)),
+      /* @__PURE__ */ react_dashboard_default.createElement(ToastOutlet, null)
+    ));
+  }
+  var selToday2 = (s) => s.today;
+  var selLoading = (s) => s.loading > 0;
+  function Centered({ icon, title, text }) {
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-emptystate is-full" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-emptystate-icon" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: icon, size: 22 })), /* @__PURE__ */ react_dashboard_default.createElement("h2", null, title), /* @__PURE__ */ react_dashboard_default.createElement("p", null, text));
+  }
+
+  // ui/hosts/dashboard.jsx
+  var SDK = window.__HERMES_PLUGIN_SDK__;
+  var BASE = "/api/plugins/alchemy-task";
+  var transport = makeTransport(async (method, path, body) => {
+    const init = { method, headers: {} };
+    if (body !== void 0) {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
+    return SDK.fetchJSON(BASE + path, init);
+  });
+  function DashboardTasks() {
+    return /* @__PURE__ */ react_dashboard_default.createElement(App, { transport, host: "dashboard" });
+  }
+  window.__HERMES_PLUGINS__.register("alchemy-task", DashboardTasks);
+})();

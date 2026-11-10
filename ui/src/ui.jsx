@@ -133,7 +133,7 @@ const AREA_HUES = [212, 152, 28, 280, 340, 188, 48, 252]
 export function areaColor(area) {
   if (!area) return 'var(--at-faint)'
   let h = 0
-  for (const c of String(area)) h = (h * 31 + c.charCodeAt(0)) >>> 0
+  for (const c of String(area)) h = (h * 31 + c.codePointAt(0)) >>> 0
   return `hsl(${AREA_HUES[h % AREA_HUES.length]} 78% 68%)`
 }
 

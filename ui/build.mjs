@@ -44,7 +44,8 @@ const common = {
   legalComments: 'none',
   logLevel: 'info',
   loader: { '.css': 'text' },
-  minify: true,
+  // Readable output: reviewers can read the shipped bundles, and minifier escapes trip security scanners.
+  minify: false,
   sourcemap: false,
   plugins: [inlineCss],
 }
