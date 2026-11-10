@@ -50,7 +50,7 @@ def register(ctx):
         run = store.init_run(origin={'session_id': session_id})
         store.add_candidates(run, [{'title': 'Synthetic work', 'source_ids': ['source:source:account:thread:one']}])
         store.freeze_index(run, rubric='Full synthetic evidence only')
-        runner = DiscoveryRunner(ctx, SimpleNamespace(data_dir=ctx.state.data_dir), store=store, transport_receipt={'sequential_call': 2040, 'concurrent_batch': 2040})
+        runner = DiscoveryRunner(ctx, SimpleNamespace(data_dir=ctx.state.data_dir), store=store)
         result = make_tool_handlers(runner)['discovery_research_run']({'run_id': run}, session_id=session_id)
         return json.dumps({'result': json.loads(result), 'attempts': store.get_run(run)['attempts']})
     ctx.register_tool(name='runner_contract', toolset='runner-contract', handler=invoke, schema={'name': 'runner_contract', 'description': 'Synthetic runner negative contract', 'parameters': {'type': 'object', 'properties': {}}})
@@ -71,7 +71,10 @@ finally:
     data = json.loads(proc.stdout.strip().splitlines()[-1])
     assert 'result' in data, (data, proc.stderr)
     assert data['result']['ok'] is True, data
-    assert data['result']['result']['status'] == 'pending'
+    # The unknown launch is fenced: research is complete but join will need
+    # an explicit degraded acknowledgement; nothing is relaunched.
+    assert data['result']['result']['status'] == 'complete'
+    assert len(data['result']['result']['unknown_candidates']) == 1
     attempts = list(data['attempts'].values())
     assert len(attempts) == 1 and attempts[0]['state'] == 'launch_unknown'
     assert attempts[0]['ordinal'] == 1 and not attempts[0]['terminal']

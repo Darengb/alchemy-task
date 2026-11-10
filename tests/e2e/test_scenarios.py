@@ -178,7 +178,8 @@ def test_b3_default_install_researches_in_short_calls_under_the_default_host_dea
     host.subagent_lifecycle.child_seconds = 500  # every child outlives one parent call
     day = P.run_day(host)
     research = [elapsed for name, elapsed in host.call_durations if name == 'discovery_research_run']
-    assert len(research) >= 2 and max(research) <= 300 < host.tool_deadline
+    # The 300 s call budget plus a few real seconds of handler work, far inside the deadline.
+    assert len(research) >= 2 and max(research) <= 305 and max(research) + 60 < host.tool_deadline
     assert host.deadline_violations == []
     assert max(elapsed for _, elapsed in host.call_durations) < 600  # cron inactivity watchdog default
     assert day['rounds'][0]['status'] == 'running' and day['rounds'][-1]['status'] == 'complete'
