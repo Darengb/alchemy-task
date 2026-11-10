@@ -130,3 +130,43 @@ def test_git_output_is_redacted(tmp_path):
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "init"], check=True, env=env)
     out = rg._git(repo, ["show", "HEAD"])
     assert "sk-abcdefghijklmnop" not in out and "ghp_aaaa" not in out and "[redacted]" in out
+
+
+# R1: relative paths, globs and patterns are not judged by the gateway's working directory
+def test_relative_paths_allowed_even_from_a_dot_hermes_cwd(tmp_path, monkeypatch):
+    d = tmp_path / ".hermes"
+    d.mkdir()
+    monkeypatch.chdir(d)
+    assert rg.refuse_file_read("read_file", {"path": "notes/x.md"}) is None
+    assert rg.refuse_file_read("search_files", {"pattern": "def", "path": "."}) is None
+    assert rg.refuse_file_read("search_files", {"pattern": "*.md", "target": "files", "file_glob": "*.py"}) is None
+    assert rg.refuse_file_read("read_file", {"path": ".env"})  # still refused by name
+    assert rg.refuse_file_read("search_files", {"pattern": "*.pem", "target": "files"})
+
+
+# R2: redaction is fast on adversarial input and still masks
+def test_redact_is_linear_on_adversarial_input():
+    import time
+    t = time.time()
+    rg.redact("KEY" * 70000)
+    rg.redact("key_" * 50000 + "=")
+    assert time.time() - t < 2
+    assert "hunter2hunter2" not in rg.redact("API_KEY = 'hunter2hunter2'")
+
+
+# R3: ordinary code files about tokens and credentials stay readable
+@pytest.mark.parametrize("path", ["src/refresh_token_flow.py", "tests/test_access_token.py", "docs/api_token.md",
+                                  "app/credentials.py", "app/tokenizer.py", "app/auth.py"])
+def test_token_named_code_files_readable(path):
+    assert not rg.is_secret_path(path)
+
+
+# R4: camelCase and noun-first read tools pass; risky verbs are blocked
+@pytest.mark.parametrize("tool,blocked", [("mcp__linear__getIssues", False), ("mcp__notion__notion-search", False),
+                                          ("mcp__shop__catalog_search", False), ("mcp__x__export_and_delete", True),
+                                          ("mcp__x__status_set", True), ("mcp__x__check_in", True),
+                                          ("mcp__x__delete_search", True), ("connectors__gmail__SEND_EMAIL", True),
+                                          ("connectors__gmail__GMAIL_FETCH_EMAILS", False),
+                                          ("connectors__gmail__GMAIL_SEND_EMAIL", True)])
+def test_mcp_verb_rules(tool, blocked):
+    assert ra.is_write_like(tool) is blocked

@@ -54,8 +54,7 @@ WRITE_BLOCKED_TOOLS = frozenset({
 # with a read verb; everything else (sends, creates, flag changes, generic "call") is refused. Browser,
 # kanban and Home Assistant tools are refused outright. Fail closed: unknown verbs are blocked.
 READ_VERBS = ("get", "list", "read", "search", "query", "fetch", "describe", "find", "view", "lookup",
-              "retrieve", "show", "count", "check", "status", "info", "browse", "inspect", "summarize",
-              "summarise", "export", "download", "preview")
+              "retrieve", "show", "count", "info", "browse", "inspect", "summarize", "summarise", "preview")
 _PREFIX_BLOCKED = ("browser", "kanban", "ha_")
 
 
@@ -70,8 +69,25 @@ def is_write_like(tool_name: Any) -> bool:
             return True
         if low.startswith("mcp_") or low.startswith("connectors__"):
             tool = re.split(r"__", low)[-1] if "__" in low else low[4:]
-            first = re.split(r"[_\-.]", tool, maxsplit=1)[0]
-            return first not in READ_VERBS
+            raw = re.split(r"__", name)[-1] if "__" in name else name[4:]
+            words = re.findall(r"[A-Z]?[a-z0-9]+|[A-Z]+(?![a-z])", raw)
+            parts = name.split("__")
+            app = parts[1].lower() if len(parts) >= 3 else ""
+            if app and len(words) > 1 and words[0].lower() == app:
+                words = words[1:]  # connector tools often repeat the app name: GMAIL_FETCH_EMAILS
+            first = words[0].lower() if words else ""
+            if first in READ_VERBS:
+                return False
+            # noun-first read tools such as notion-search or catalog_search: allowed only when the LAST word is a
+            # read verb and no write word appears anywhere in the name.
+            low_words = [w.lower() for w in words]
+            write_words = {"create", "update", "delete", "remove", "send", "post", "set", "put", "write", "add",
+                           "edit", "move", "call", "run", "exec", "execute", "publish", "upload", "invite", "approve",
+                           "cancel", "archive", "merge", "push", "submit", "reply", "forward", "trigger", "start",
+                           "stop", "toggle", "enable", "disable", "assign", "close", "open", "reset", "pay", "charge"}
+            if low_words and low_words[-1] in READ_VERBS and not write_words.intersection(low_words):
+                return False
+            return True
         return False
     except Exception:  # noqa: BLE001 - a guard must never throw; fail closed
         return True

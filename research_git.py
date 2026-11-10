@@ -28,9 +28,10 @@ LOG_DEFAULT, LOG_MAX = 30, 200
 
 SECRET_NAMES = (".env", ".env.*", "*.env", "auth.json", "*.pem", "*.key", "*.p12", "*.pfx", "*.keystore", "*.jks",
                 "id_rsa*", "id_ed25519*", "id_ecdsa*", "id_dsa*", ".netrc", ".npmrc", ".pypirc", ".pgpass",
-                ".git-credentials", "credentials", "credentials.*", "*credentials.json", "*secret", "*secrets",
-                "*secret.json", "*secrets.json", "secrets.*", "*.secrets", "client_secret*", "*token", "*tokens",
-                "*token.json", "*tokens.json", "*-token*", "*_token*", "*.token", "*_history",
+                ".git-credentials", "credentials", "credentials.json", "credentials.y*ml", "credentials.ini",
+                "credentials.toml", "credentials.db", "*credentials.json", "*secret", "*secrets", "*secret.json",
+                "*secrets.json", "secrets.*", "*.secrets", "client_secret*", "*token", "*tokens", "*token.json",
+                "*tokens.json", "*token.txt", "*.token", "*_history",
                 ".history", "cookies", "cookies-journal", "login data", "login data-journal", "web data",
                 "key4.db", "logins.json", "kubeconfig", "service-account*.json", "*.kdbx")
 SECRET_DIRS = (".ssh", ".aws", ".hermes", ".gnupg", ".supabase", ".docker", ".kube", ".azure", ".password-store",
@@ -55,7 +56,7 @@ _SECRET_VALUE = re.compile(
     r"|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|sbp_[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_\-]{30,}|glpat-[A-Za-z0-9_\-]{20,}"
     r"|-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)"
     r"|eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,})")
-_SECRET_ASSIGN = re.compile(r"(?i)\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD)[A-Z0-9_]*\s*[:=]\s*)"
+_SECRET_ASSIGN = re.compile(r"(?i)\b([A-Z0-9_]{0,40}(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD)[A-Z0-9_]{0,40}\s{0,5}[:=]\s{0,5})"
                             r"(['\"]?)[^\s'\"]{8,}\2")
 
 
@@ -86,7 +87,12 @@ def is_secret_path(path: str) -> bool:
     try:
         if _secret_text(path):
             return True
-        real = os.path.realpath(os.path.expanduser(str(path or "")))
+        expanded = os.path.expanduser(str(path or ""))
+        if not os.path.isabs(expanded):
+            # Relative paths resolve against the tool's working directory, not ours (the gateway runs inside
+            # ~/.hermes): judge them by their text only.
+            return False
+        real = os.path.realpath(expanded)
         if _secret_text(real):
             return True
         home = os.path.realpath(os.path.expanduser("~"))
@@ -105,10 +111,14 @@ def refuse_file_read(tool_name: str, args: Any) -> str | None:
     try:
         if tool_name not in ("read_file", "search_files") or not isinstance(args, dict):
             return None
-        for key in ("path", "file_glob", "pattern" if tool_name == "search_files" and
-                    args.get("target") == "files" else ""):
-            if key and args.get(key) and is_secret_path(str(args[key])):
-                return "Refused: research workers do not read credential files or folders (keys, tokens, .env)."
+        refusal = "Refused: research workers do not read credential files or folders (keys, tokens, .env)."
+        if args.get("path") and is_secret_path(str(args["path"])):
+            return refusal
+        globs = [args.get("file_glob")]
+        if tool_name == "search_files" and args.get("target") == "files":
+            globs.append(args.get("pattern"))
+        if any(g and _secret_text(str(g)) for g in globs):
+            return refusal
         return None
     except Exception:  # noqa: BLE001 - a guard must never throw
         return "Refused: could not check this path."
@@ -214,8 +224,10 @@ def _git_capped(repo: Path, argv: list[str], cap: int = OUTPUT_CAP) -> tuple[str
     if proc.returncode not in (0, 1):  # grep exits 1 for "no match"
         err = proc.stderr.decode("utf-8", "replace").strip().splitlines()
         raise Refused("git: " + (err[-1] if err else f"exit {proc.returncode}")[:300])
-    text = redact(proc.stdout.decode("utf-8", "replace"))
-    return (text[:cap], True) if len(text) > cap else (text, False)
+    raw = proc.stdout.decode("utf-8", "replace")
+    cut = len(raw) > cap
+    text = redact(raw[:cap + 1])[:cap]
+    return text, cut
 
 
 def _result(repo: Path, argv: list[str]) -> dict[str, Any]:
