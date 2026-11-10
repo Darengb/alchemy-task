@@ -172,3 +172,132 @@ def test_settings_task_defaults(client, ctx):
     s = client.get("/settings").json()["tasks"]
     assert s["research_by_default"] is True and s["default_area"] == "home"
     assert client.patch("/settings/tasks", json={"default_area": "mars"}).json()["error"]["code"] == "area"
+
+
+# ------------------------------------------------------------------ research button
+
+def _set_research(workspace_task_path, enrichment):
+    doc = tf.parse_file(workspace_task_path)
+    fm = dict(doc.fm)
+    if enrichment is None:
+        fm.pop("enrichment", None)
+    else:
+        fm["enrichment"] = enrichment
+    tf.atomic_write(doc.path, tf.render(fm, doc.body, seq_offset=doc.seq_offset, keep_blank=doc.blank_keys).encode(),
+                    expect=doc.raw)
+
+
+def _task_path(ctx, task_id):
+    return runtime.Runtime(ctx).store().resolve(task_id).path
+
+
+def _enrichment(ctx, task_id):
+    return tf.parse_file(_task_path(ctx, task_id)).fm.get("enrichment") or {}
+
+
+class RunCtx(SetupCtx):
+    """Records sweep runs fired through the public cronjob_manage tool."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.runs: list[str] = []
+
+    def dispatch_tool(self, name, args):
+        if name == "cronjob_manage" and args.get("action") == "run":
+            self.runs.append(args["job_id"])
+            return json.dumps({"success": True, "job": {"id": args["job_id"]}})
+        return super().dispatch_tool(name, args)
+
+
+@pytest.fixture
+def rclient(home, settings, data_dir, monkeypatch):  # noqa: F811
+    monkeypatch.setenv("ALCHEMY_TASK_NO_SWEEPER", "1")
+    c = RunCtx({"workspace_root": settings.workspace_root, "timezone": "America/New_York",
+                "research_by_default": False}, data_dir)
+    c.state.set("timezone_confirmed", True)
+    make = lambda: runtime.Runtime(c)  # noqa: E731
+    monkeypatch.setattr(tasks_api, "runtime", make)
+    monkeypatch.setattr(ui_common, "admit", lambda request: None)
+    monkeypatch.setattr(tasks_api, "_background", lambda fn: fn())  # run the sweep trigger inline in tests
+    app = FastAPI()
+    app.include_router(tasks_api.router)
+    return TestClient(app), c
+
+
+def test_research_button_queues_a_never_researched_task_and_starts_the_sweep(rclient):
+    client, c = rclient
+    c.state.set("jobs", {"research-sweep": {"job_id": "sweep1", "hash": "x"}})
+    t = make_task(client)
+    _set_research(_task_path(c, t["task_id"]), None)
+    assert client.get(f"/tasks/{t['task_id']}").json()["task"]["research"] == "none"
+    out = client.post(f"/tasks/{t['task_id']}/research").json()
+    assert out["ok"] and out["queued"] is True and out["starts"] == "now", out
+    assert out["task"]["research"] == "pending"
+    assert c.runs == ["sweep1"]
+    assert _enrichment(c, t["task_id"])["status"] == "pending"
+    assert "Research requested in the Tasks view." in tf.parse_file(_task_path(c, t["task_id"])).body
+
+
+def test_research_button_refreshes_complete_and_retries_skipped_or_failed(rclient):
+    client, c = rclient  # no sweep job registered: queue only, the next sweep starts it
+    for status in ("complete", "skipped", "failed"):
+        t = make_task(client, title=f"Task {status}")
+        _set_research(_task_path(c, t["task_id"]), {"status": status, "attempts": 3, "updated": "2026-11-01T00:00:00Z"})
+        out = client.post(f"/tasks/{t['task_id']}/research").json()
+        assert out["ok"] and out["queued"] is True and out["starts"] == "within 30 minutes", out
+        st = _enrichment(c, t["task_id"])
+        assert st["status"] == "pending" and st["attempts"] == 0
+    assert c.runs == []
+
+
+def test_research_button_refuses_pending_or_running(rclient):
+    client, c = rclient
+    c.state.set("jobs", {"research-sweep": {"job_id": "sweep1", "hash": "x"}})
+    t = make_task(client)
+    path = _task_path(c, t["task_id"])
+    _set_research(path, {"status": "pending", "attempts": 0, "updated": "2026-11-01T00:00:00Z"})
+    r = client.post(f"/tasks/{t['task_id']}/research")
+    assert r.status_code == 409 and r.json()["error"]["code"] == "research_busy"
+    from alchemy_task.core import research as rs
+    _set_research(path, {"status": "running", "attempts": 1, "run_id": "r1", "claimed_at": rs.now_iso(),
+                         "updated": rs.now_iso()})
+    before = tf.parse_file(path).raw
+    r = client.post(f"/tasks/{t['task_id']}/research")
+    assert r.status_code == 409 and r.json()["error"]["code"] == "research_busy"
+    assert tf.parse_file(path).raw == before and c.runs == []
+
+
+def test_research_button_unknown_task_and_closed_task(rclient):
+    client, c = rclient
+    r = client.post("/tasks/00000000-0000-4000-8000-000000000000/research")
+    assert r.status_code == 404 and r.json()["error"]["code"] == "not_found"
+    t = make_task(client)
+    client.post(f"/tasks/{t['task_id']}/complete")
+    r = client.post(f"/tasks/{t['task_id']}/research")
+    assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_request"
+
+
+def test_research_button_requires_admission_and_rejects_extra_fields(rclient, monkeypatch):
+    client, c = rclient
+    t = make_task(client)
+    assert client.post(f"/tasks/{t['task_id']}/research", json={"bogus": 1}).json()["error"]["code"] == "invalid_request"
+
+    def refuse(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    monkeypatch.setattr(ui_common, "admit", refuse)
+    r = client.post(f"/tasks/{t['task_id']}/research")
+    assert r.status_code == 401 and r.json()["error"]["code"] == "unauthorized"
+    assert _enrichment(c, t["task_id"])["status"] == "skipped"
+
+
+def test_research_button_still_queues_when_the_sweep_cannot_start(rclient):
+    client, c = rclient
+    c.state.set("jobs", {"research-sweep": {"job_id": "sweep1", "hash": "x"}})
+
+    def boom(name, args):
+        raise RuntimeError("cron unavailable")
+    c.dispatch_tool = boom
+    t = make_task(client)
+    out = client.post(f"/tasks/{t['task_id']}/research").json()
+    assert out["ok"] and out["queued"] is True
+    assert _enrichment(c, t["task_id"])["status"] == "pending"
