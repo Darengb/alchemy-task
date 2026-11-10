@@ -60,6 +60,79 @@ Sources: Slack #packaging thread (3 messages).
 <!-- discovery-dossier:end dos-demo1 -->
 `,
     }),
+    T('Answer "when is it back?" for the Winter Spice Chai', 'work', 5, {
+      priority: 'high',
+      summary: "Customers keep asking when the Winter Spice Chai is back. Show the December 2 date on the page, collect Notify me signups and email them when it lands.",
+      body: `
+## Notes
+
+Jordan in #support: "Also, can we get back-in-stock alerts on the Winter Spice Chai? We've had 30+ 'when is it back?' emails this week."
+
+## From discovery (${d(-1)})
+
+- Supplier confirmed 400 tins of Winter Spice Chai arrive December 2.
+
+## Log
+
+- ${d(-2)}: Created from discovery (Slack #support, Monday standup transcript).
+- ${d(-1)}: Updated from discovery: restock date from the supplier email.
+- ${d(-1)}: Research complete.
+
+<!-- task-research-dossier:start -->
+## Research dossier
+
+**Content revision:** \`sha256:9be4c7eaff7eab79326365c75ecfb8bfc7e5d31a796ebe1c7fb0133ad51a0cd7\`
+
+*Researched ${d(-1)}.*
+
+**Can Hermes do this?** Hermes needs decisions or information from you before it can finish.
+
+### Recommended approach
+
+- Show "Back December 2" on the Winter Spice Chai page, with a "Notify me" button on the sold-out tin.
+- Use Klaviyo's back-in-stock flow, since Klaviyo already sends your email. It needs no new app or subscription.
+- Email everyone who signed up when the 400 tins arrive, using your existing brand template.
+- Give the support team a saved reply with the December 2 date, so they can answer the emails already waiting.
+- Test the button and the alert on a sold-out test product before you publish.
+
+### Useful context
+
+- Jordan reports 30+ "when is it back?" emails this week in #support.
+- At Monday's standup you said you'd set this up before the restock.
+- The supplier confirmed 400 tins arrive December 2.
+- You connected Klaviyo and built the welcome flow in a past session on October 14.
+- The product template lives in the lumen-leaf-theme repo: sections/main-product.liquid.
+
+### Dependencies and risks
+
+- Preorders would capture sales now, but if the shipment slips, customers have already paid.
+- If the supplier date moves, update the page message and the saved reply the same day.
+
+### Open questions
+
+- Do you want to take preorders, or only collect "Notify me" signups?
+- Approve the alert email copy before it goes live.
+
+### Access plan
+
+- ✅ **Klaviyo** (available): Klaviyo MCP server
+- ✅ **Theme code** (available): ~/code/lumen-leaf-theme
+- ⛔ **Publish theme changes** (missing): Shopify Admin API. To set up: Create a theme access token in Shopify admin and add it to Hermes
+- ❔ **Shopify admin** (unverified): logged-in browser profile. To set up: Sign in once in the Lumen & Leaf browser profile
+
+### Established approaches
+
+- \`shopify-theme\`
+- \`klaviyo-flows\`
+
+### Sources
+
+- [Klaviyo Help Center: back in stock](https://help.klaviyo.com/) - Setting up back-in-stock signups and the alert flow
+- [Shopify Help Center: preorders](https://help.shopify.com/) - Preorder options and their payment tradeoffs
+- [Shopify theme docs](https://shopify.dev/docs/storefronts/themes) - Where to add the button in the product template
+<!-- task-research-dossier:end -->
+`,
+    }),
     T('Reply to Northwind Grocers about Q1 wholesale pricing', 'work', 0, { summary: 'Their buyer asked for the Q1 price sheet and case-pack minimums.' }),
     T('Review November ad spend against plan', 'work', 0, { research: 'running' }),
     T('Book the photographer for the spring lookbook', 'studio', 0),
@@ -124,13 +197,14 @@ Three bundles: Starter, Classic and Collector. Use the new lifestyle photos.
   const bundle = byTitle('Launch the holiday bundle')
   const catalog = byTitle('Prepare the wholesale catalog')
   const newsletter = byTitle('Draft the January newsletter')
+  const chai = byTitle('Answer "when is it back?"')
   const target = (t) => ({ task_id: t.task_id, title: t.title, area: t.area, due: t.due, scheduled: t.scheduled, status: t.status, path: t.path })
 
   const runs = [
     {
       run_id: 'run-work-today', stream: 'work', day: today, time: `${today}T12:02:00Z`, status: 'complete', mode: 'production',
       timezone: 'America/New_York', degraded: false,
-      coverage: [{ source_key: 'Gmail inbox', status: 'complete' }, { source_key: 'Slack #ops', status: 'complete' }, { source_key: 'Slack #marketing', status: 'complete' }],
+      coverage: [{ source_key: 'Gmail inbox', status: 'complete' }, { source_key: 'Slack #ops', status: 'complete' }, { source_key: 'Slack #marketing', status: 'complete' }, { source_key: 'Slack #support', status: 'complete' }],
       proposals: [
         {
           proposal_id: 'p_new1', unit_id: 'u1', ref: 'A1', number: 1, kind: 'new', day: today, expires: d(7), state: 'pending', expired: false,
@@ -195,11 +269,31 @@ Three bundles: Starter, Classic and Collector. Use the new lifestyle photos.
     {
       run_id: 'run-work-yesterday', stream: 'work', day: d(-1), time: `${d(-1)}T12:01:00Z`, status: 'complete', mode: 'production',
       timezone: 'America/New_York', degraded: false,
-      coverage: [{ source_key: 'Gmail inbox', status: 'complete' }, { source_key: 'Slack #ops', status: 'complete' }, { source_key: 'Slack #marketing', status: 'complete' }],
+      coverage: [{ source_key: 'Gmail inbox', status: 'complete' }, { source_key: 'Slack #ops', status: 'complete' }, { source_key: 'Slack #marketing', status: 'complete' }, { source_key: 'Slack #support', status: 'complete' }],
       proposals: [
         { proposal_id: 'p_old1', unit_id: 'o1', ref: 'A1', number: 1, kind: 'new', day: d(-1), expires: d(6), state: 'complete', expired: false,
           title: 'Fix the broken link in the welcome email', targets: [],
           result: { task_id: byTitle('Fix the broken link').task_id, title: 'Fix the broken link in the welcome email', operation: 'created', state: 'complete' } },
+        { proposal_id: 'p_chai2', unit_id: 'o2', ref: 'A2', number: 2, kind: 'semantic', day: d(-1), expires: d(6), state: 'complete', expired: false,
+          title: 'Winter Spice Chai restock arrives December 2',
+          current_understanding: 'The supplier confirmed 400 tins of Winter Spice Chai arrive December 2.',
+          new_information: ['400 tins arrive December 2'],
+          source_links: ['https://mail.google.com/mail/u/0/#inbox/demo-supplier'], targets: [target(chai)],
+          result: { task_id: chai.task_id, title: chai.title, operation: 'updated', state: 'complete' } },
+      ],
+      outcomes: [], conflicts: [], failures: [], delivery: { state: 'host_pending' },
+    },
+    {
+      run_id: 'run-work-2days', stream: 'work', day: d(-2), time: `${d(-2)}T12:01:00Z`, status: 'complete', mode: 'production',
+      timezone: 'America/New_York', degraded: false,
+      coverage: [{ source_key: 'Gmail inbox', status: 'complete' }, { source_key: 'Slack #support', status: 'complete' }, { source_key: 'Zoom transcripts', status: 'complete' }],
+      proposals: [
+        { proposal_id: 'p_chai1', unit_id: 'c1', ref: 'A1', number: 1, kind: 'new', day: d(-2), expires: d(5), state: 'complete', expired: false,
+          title: chai.title,
+          current_understanding: 'Customers keep emailing support to ask when the sold-out Winter Spice Chai is back. Jordan asked for back-in-stock alerts, and you said at Monday\u2019s standup that you would set it up before the restock.',
+          substantive_next_action: 'Tell customers when it is back and let them sign up to be notified.',
+          source_links: ['https://example.slack.com/archives/C0SUPPORT/p3', 'https://mail.google.com/mail/u/0/#inbox/demo-standup'], targets: [],
+          result: { task_id: chai.task_id, title: chai.title, operation: 'created', state: 'complete' } },
       ],
       outcomes: [], conflicts: [], failures: [], delivery: { state: 'host_pending' },
     },
@@ -215,7 +309,7 @@ Three bundles: Starter, Classic and Collector. Use the new lifestyle photos.
   const settings = {
     streams: [
       { name: 'work', when: 'weekdays at 7:00 AM', frequency: 'weekdays', time: '7:00 AM', timezone: 'America/New_York', areas: ['work'],
-        sources: [{ name: 'Gmail inbox', type: 'email', scope: 'Inbox, last 24 hours' }, { name: 'Slack #ops', type: 'chat', scope: '#ops' }, { name: 'Slack #marketing', type: 'chat', scope: '#marketing' }, { name: 'Zoom transcripts', type: 'transcript', scope: 'Emailed after meetings' }],
+        sources: [{ name: 'Gmail inbox', type: 'email', scope: 'Inbox, last 24 hours' }, { name: 'Slack #ops', type: 'chat', scope: '#ops' }, { name: 'Slack #marketing', type: 'chat', scope: '#marketing' }, { name: 'Slack #support', type: 'chat', scope: '#support' }, { name: 'Zoom transcripts', type: 'transcript', scope: 'Emailed after meetings' }],
         last_run: `${today}T12:02:00Z`, activation_state: 'active' },
       { name: 'home', when: 'daily at 6:00 PM', frequency: 'daily', time: '6:00 PM', timezone: 'America/New_York', areas: ['home'],
         sources: [{ name: 'Personal email', type: 'email', scope: 'Inbox' }, { name: 'Family calendar', type: 'other', scope: 'Next 14 days' }],
