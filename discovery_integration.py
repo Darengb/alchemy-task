@@ -1068,7 +1068,7 @@ class DiscoveryIntegration:
                     raise UserError('semantic proposal requires explicit update or create choice')
                 if kind == 'selection' and choice == 'update' and not edit.get('target_task_id'):
                     raise UserError('select one of ALL nominated target_task_id options')
-                allowed = {'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated', 'scope_notes', 'priority', 'scheduled', 'execution_method', 'notes', 'plan', 'checklist', 'active_goal', 'correction_overlay'}
+                allowed = {'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated', 'scope_notes', 'priority', 'scheduled', 'execution_method', 'notes', 'plan', 'checklist', 'active_goal', 'correction_overlay', 'summary', 'subtasks', 'subtasks_skipped_reason'}
                 if set(edit) - allowed: raise UserError('unsupported approval edits: ' + ', '.join(sorted(set(edit) - allowed)))
                 self.conversion.prepare(run_id, unit_id, choice=choice, reason='User approved exact immutable proposal ' + proposal['proposal_id'],
                                         user_approved=True, **edit)
