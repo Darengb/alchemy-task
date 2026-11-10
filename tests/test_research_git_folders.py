@@ -97,3 +97,27 @@ def test_listing_failure_is_an_error_not_empty_success(repo, monkeypatch):
     # a folder holding only credential files is still a clean empty, not an error
     res = call(rg.t_git_ls_files, repo=str(repo), path="claude-api/only-keys")
     assert res["ok"] and res["output"].strip() == ""
+
+
+def test_quoted_and_non_ascii_credential_names_never_listed(repo):
+    """git quotes names with non-ASCII or quote characters; the credential filter must see the raw name."""
+    for folder in ("donn\u00e9es", 'q"x', "caf\u00e9 app"):
+        (repo / folder).mkdir()
+        (repo / folder / ".env").write_text("TOKEN=x\n")
+        (repo / folder / "notes.txt").write_text("hi\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "more")
+    res = call(rg.t_git_ls_files, repo=str(repo))
+    assert res["ok"]
+    out = res["output"]
+    assert ".env" not in out and "\\303" not in out, out
+    lines = out.splitlines()
+    assert "donn\u00e9es/notes.txt" in lines and 'q"x/notes.txt' in lines and "caf\u00e9 app/notes.txt" in lines
+
+
+def test_name_cut_by_the_cap_is_dropped(repo, monkeypatch):
+    real = rg._git_capped
+    monkeypatch.setattr(rg, "_git_capped", lambda repo_, argv, cap=rg.OUTPUT_CAP: (
+        ("README.md\0keys/id_rs", True) if argv[:1] == ["ls-files"] else real(repo_, argv, cap)))
+    res = call(rg.t_git_ls_files, repo=str(repo))
+    assert res["ok"] and res["truncated"] and res["output"].splitlines() == ["README.md"]

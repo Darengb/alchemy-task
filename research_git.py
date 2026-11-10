@@ -176,7 +176,18 @@ def _folder(repo: Path, path: str) -> str:
 def _ls_listing(repo: Path, path: str) -> tuple[str, bool]:
     """Tracked files under *path*. Credential names are filtered in Python by the caller: some git versions
     (2.34) drop every file of a folder when ls-files is given the icase exclude pathspecs."""
-    return _git_capped(repo, ["ls-files", "--", path or "."])
+    return _ls_names(repo, path or ".")
+
+
+def _ls_names(repo: Path, path: str, cap: int = OUTPUT_CAP) -> tuple[str, bool]:
+    """``ls-files -z`` so each name is raw (git quotes non-ASCII or odd names otherwise, which hides them from
+    the credential filter). Credential names are dropped, and so is a last name cut short by the cap."""
+    raw, cut = _git_capped(repo, ["ls-files", "-z", "--", path], cap=cap)
+    names = raw.split("\0")
+    if cut or (names and names[-1] == ""):
+        names = names[:-1]
+    keep = [n.replace("\n", "\\n") for n in names if n and not is_secret_path(n)]
+    return "".join(n + "\n" for n in keep), cut
 
 
 def _run(fn):
@@ -307,7 +318,7 @@ def _ls_files(args: dict[str, Any]) -> dict[str, Any]:
         res["hint"] = f"Output cut at {OUTPUT_CAP} characters; narrow with path, rev or max_count."
     if path and not res["output"].strip():
         # Safety net: never report an empty folder when git does track readable files there.
-        probe, _ = _git_capped(repo, ["ls-files", "--", path.rstrip("/") or "."], cap=4000)
+        probe, _ = _ls_names(repo, path.rstrip("/") or ".", cap=4000)
         if _visible(probe).strip():
             return {"ok": False, "repo": str(repo), "error": (
                 f"Listing failed: git returned no files for '{path}' but it does track files there. "
