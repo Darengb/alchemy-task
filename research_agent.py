@@ -379,9 +379,68 @@ def _json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, default=str)
 
 
+SKILLS_PAGE_CHARS = 12000      # JSON budget per page, well under the tool-result cap
+SKILL_DESC_CHARS = 1500        # longer descriptions are shortened (marked) so one entry always fits a page
+SKILL_VIEW_CHARS = 30000       # longer skill_view results are paged by offset, never cut silently
+
+
+def _page_arg(args: dict[str, Any]) -> int:
+    try:
+        return max(1, int(args.get("page") or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _skill_pages(skills: list[Any]) -> list[list[dict[str, str]]]:
+    """Pack compact entries into pages by size; an entry is never split across pages."""
+    pages: list[list[dict[str, str]]] = [[]]
+    used = 0
+    for s in skills:
+        if not isinstance(s, dict) or not s.get("name"):
+            continue
+        desc = str(s.get("description") or "")
+        if len(desc) > SKILL_DESC_CHARS:
+            desc = desc[:SKILL_DESC_CHARS] + " [shortened; skill_view has the full text]"
+        entry = {"name": str(s["name"]), "category": str(s.get("category") or ""), "description": desc}
+        size = len(_json(entry)) + 2
+        if pages[-1] and used + size > SKILLS_PAGE_CHARS:
+            pages.append([])
+            used = 0
+        pages[-1].append(entry)
+        used += size
+    return pages
+
+
 def t_skills_list(args: dict[str, Any] | None = None, **_: Any) -> str:
+    """The user's complete skills listing, paged. Every skill appears on exactly one page."""
+    args = args or {}
     rt = Runtime()
-    return str(rt.ctx.dispatch_tool("skills_list", {}))[:20000]
+    page = _page_arg(args)
+    call = {"category": str(args["category"])} if args.get("category") else {}
+    raw = str(rt.ctx.dispatch_tool("skills_list", call))
+    try:
+        listing = json.loads(raw)
+        skills = listing["skills"]
+        assert isinstance(skills, list)
+    except Exception:  # noqa: BLE001 - not the expected JSON; page the raw text instead of cutting it
+        size = SKILLS_PAGE_CHARS
+        pages = max(1, -(-len(raw) // size))
+        return _json({"ok": True, "page": page, "pages": pages, "raw": raw[(page - 1) * size:page * size],
+                      "next_page": page + 1 if page < pages else None,
+                      "hint": "Listing was not in the usual format; call again with next_page until it is null."})
+    pages = _skill_pages(skills)
+    total = sum(len(p) for p in pages)
+    out = {"ok": True, "page": page, "pages": len(pages), "total": total,
+           "skills": pages[page - 1] if page <= len(pages) else [],
+           "next_page": page + 1 if page < len(pages) else None}
+    if page == 1 and isinstance(listing.get("categories"), list):
+        out["categories"] = listing["categories"]
+    out["hint"] = (f"Page {page} of {len(pages)}. Call again with page={page + 1} until next_page is null; "
+                   "then use research_skill_view for full skills and their reference files."
+                   if out["next_page"] else
+                   f"Last page ({len(pages)} pages, {total} skills). Use research_skill_view to read skills and "
+                   "their reference files.")
+    return _json(out)
 
 
 def t_skill_view(args: dict[str, Any] | None = None, **_: Any) -> str:
@@ -390,7 +449,17 @@ def t_skill_view(args: dict[str, Any] | None = None, **_: Any) -> str:
     call = {"name": str(args.get("name") or "")}
     if args.get("file_path"):
         call["file_path"] = str(args["file_path"])
-    return str(rt.ctx.dispatch_tool("skill_view", call))[:30000]
+    raw = str(rt.ctx.dispatch_tool("skill_view", call))
+    if len(raw) <= SKILL_VIEW_CHARS and not args.get("offset"):
+        return raw
+    try:
+        offset = max(0, int(args.get("offset") or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    end = offset + SKILL_VIEW_CHARS
+    return _json({"ok": True, "total_chars": len(raw), "offset": offset, "content": raw[offset:end],
+                  "next_offset": end if end < len(raw) else None,
+                  "hint": "Long result: call again with offset=next_offset until it is null."})
 
 
 def t_capabilities(args: dict[str, Any] | None = None, **_: Any) -> str:
@@ -415,11 +484,21 @@ def t_submit(args: dict[str, Any] | None = None, task_id: str = "", **_: Any) ->
 
 _STRS = {"type": "array", "items": {"type": "string"}}
 RESEARCH_TOOLS = (
-    ({"name": "research_skills_list", "description": "Alchemy Task research agents only: list the user's skills "
-      "(read-only).", "parameters": {"type": "object", "properties": {}}}, t_skills_list),
-    ({"name": "research_skill_view", "description": "Alchemy Task research agents only: read one skill or one of "
-      "its files (read-only).", "parameters": {"type": "object", "properties": {
-          "name": {"type": "string"}, "file_path": {"type": "string"}}, "required": ["name"]}}, t_skill_view),
+    ({"name": "research_skills_list", "description": "Alchemy Task research agents only: the user's complete "
+      "skills listing (name, category, description), read-only and paged. Returns page, pages, total and "
+      "next_page; keep calling with page=next_page until next_page is null so you see every skill.",
+      "parameters": {"type": "object", "properties": {
+          "page": {"type": "integer", "minimum": 1, "description": "Page to read, starting at 1."},
+          "category": {"type": "string", "description": "Optional: only skills in this category."}}}},
+     t_skills_list),
+    ({"name": "research_skill_view", "description": "Alchemy Task research agents only: read one skill, or one of "
+      "its linked reference files with file_path (read-only).", "parameters": {"type": "object", "properties": {
+          "name": {"type": "string"},
+          "file_path": {"type": "string", "description": "Optional linked file inside the skill, for example "
+                                                         "references/api.md, as listed in the skill's linked files."},
+          "offset": {"type": "integer", "minimum": 0, "description": "Only for long results: continue from "
+                                                                     "the next_offset you were given."}},
+          "required": ["name"]}}, t_skill_view),
     ({"name": "research_capabilities", "description": "Alchemy Task research agents only: names of the toolsets, "
       "tools and MCP servers this Hermes has, and whether each is usable. Cached for an hour; pass refresh=true "
       "before reporting anything as missing.", "parameters": {"type": "object", "properties": {
