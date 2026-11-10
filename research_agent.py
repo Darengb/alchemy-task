@@ -352,26 +352,71 @@ def request_again(rt: Runtime, ref: str, origin_session: str = "") -> dict[str, 
 
 # ------------------------------------------------------------------ research-agent tools
 
+_ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
+_ENV_IN_TEXT = re.compile(r"\b[A-Z][A-Z0-9]*_(?:[A-Z0-9]+_)*(?:API_KEY|KEY|TOKEN|SECRET|PASSWORD|PAT|ID|"
+                          r"CREDENTIALS?)\b")
+_ACCESS_WORDS = re.compile(r"\b(api[ -]?keys?|tokens?|credentials?|oauth|log ?in|sign ?in|password|"
+                           r"service account|access key|secret key|env(?:ironment)? var(?:iable)?s?)\b", re.I)
+
+
+def _env_names(requirements: Any) -> list[str]:
+    """Environment variable NAMES from Hermes's registry metadata. Anything not shaped like a name is dropped,
+    so a value can never be echoed even if a registry entry is malformed."""
+    items = requirements if isinstance(requirements, (list, tuple, set)) else []
+    out: list[str] = []
+    for item in items:
+        name = item.get("name") if isinstance(item, dict) else item
+        if isinstance(name, str) and _ENV_NAME.match(name) and name not in out:
+            out.append(name)
+    return out[:20]
+
+
+def _skill_access_hints(rt: Runtime, limit: int = 60) -> list[dict[str, Any]]:
+    """Skills whose name or description mentions keys, logins or accounts (hints, from the listing text only)."""
+    try:
+        skills = json.loads(str(rt.ctx.dispatch_tool("skills_list", {})))["skills"]
+    except Exception:  # noqa: BLE001 - hints are optional
+        return []
+    hints = []
+    for s in skills if isinstance(skills, list) else []:
+        if not isinstance(s, dict) or not s.get("name"):
+            continue
+        text = f"{s.get('name')} {s.get('description') or ''}"
+        mentions = list(dict.fromkeys(_ENV_IN_TEXT.findall(text) + [m.lower() for m in _ACCESS_WORDS.findall(text)]))
+        if mentions:
+            hints.append({"skill": str(s["name"]), "mentions": mentions[:8]})
+        if len(hints) >= limit:
+            break
+    return hints
+
+
 def _inventory(rt: Runtime, refresh: bool) -> dict[str, Any]:
     cached = None if refresh else rt.ctx.state.get("inventory", default=None)
     if cached and time.time() - float(cached.get("at") or 0) < INVENTORY_TTL:
         return {**cached["data"], "cached_minutes_ago": int((time.time() - cached["at"]) / 60)}
     toolsets = _registry_toolsets()
     skip = {RESEARCH_TOOLSET}
-    out_sets, mcp = [], []
+    out_sets, mcp, missing = [], [], []
     for name, meta in sorted(toolsets.items()):
         if name in skip:
             continue
         tools = sorted(meta.get("tools") or [])
         entry = {"toolset": name, "available": bool(meta.get("available")), "tools": tools[:25]}
-        if not meta.get("available") and meta.get("requirements"):
-            entry["needs_env"] = sorted(meta["requirements"])[:5] if isinstance(meta["requirements"], (list, set,
-                                                                                              tuple)) else []
+        if not meta.get("available"):
+            needs = _env_names(meta.get("requirements"))
+            if needs:
+                entry["needs_env"] = needs
+            missing.append({"toolset": name, **({"needs_env": needs} if needs else {})})
         (mcp if name.startswith("mcp-") else out_sets).append(entry)
-    data = {"toolsets": out_sets, "mcp_servers": [{"server": m["toolset"][4:], "available": m["available"],
-                                                   "tools": m["tools"]} for m in mcp],
-            "note": "Names only. Hosted connectors, API keys and browser profiles are not listed here; "
-                    "check skills for how the user reaches those systems."}
+    data = {"toolsets": out_sets,
+            "mcp_servers": [{"server": m["toolset"][4:], "available": m["available"], "tools": m["tools"],
+                             **({"needs_env": m["needs_env"]} if m.get("needs_env") else {})} for m in mcp],
+            "missing_access": missing,
+            "skill_access_hints": _skill_access_hints(rt),
+            "note": "Names only, never values. missing_access lists toolsets Hermes reports as unusable and the "
+                    "environment variable names Hermes says they need. skill_access_hints are skills whose text "
+                    "mentions keys, logins or accounts; read them with research_skill_view to learn how the user "
+                    "reaches those systems. Hosted connectors and browser profiles are not listed here."}
     rt.ctx.state.set("inventory", {"at": time.time(), "data": data})
     return {**data, "cached_minutes_ago": 0}
 
@@ -501,8 +546,9 @@ RESEARCH_TOOLS = (
                                                                      "the next_offset you were given."}},
           "required": ["name"]}}, t_skill_view),
     ({"name": "research_capabilities", "description": "Alchemy Task research agents only: names of the toolsets, "
-      "tools and MCP servers this Hermes has, and whether each is usable. Cached for an hour; pass refresh=true "
-      "before reporting anything as missing.", "parameters": {"type": "object", "properties": {
+      "tools and MCP servers this Hermes has, whether each is usable, missing_access (unusable toolsets with the "
+      "environment variable names they need, never values) and skill_access_hints (skills that mention keys or "
+      "logins). Cached for an hour; pass refresh=true before reporting anything as missing.", "parameters": {"type": "object", "properties": {
           "refresh": {"type": "boolean"}}}}, t_capabilities),
     ({"name": "research_submit", "description": "Alchemy Task research agents only: submit the research result "
       "once, then stop.", "parameters": {"type": "object", "properties": {
