@@ -24,7 +24,7 @@ function sourcesLine(r) {
   return ok === cov.length ? `${ok} ${ok === 1 ? 'source' : 'sources'} checked` : `${ok} of ${cov.length} sources checked`
 }
 
-export function DiscoveryView({ runs, error, loading, reload }) {
+export function DiscoveryView({ runs, streams, error, loading, reload }) {
   const { today } = useApp()
   const [filter, setFilter] = React.useState('waiting')
   if (error && error.code === 'not_found') {
@@ -36,6 +36,26 @@ export function DiscoveryView({ runs, error, loading, reload }) {
     return <Empty icon="alert" title="Could not load discovery" text={describeError(error)} action={<Button onClick={reload}>Try again</Button>} />
   }
   const all = runs || []
+  const configured = Array.isArray(streams) && streams.length > 0
+  if (!all.length && configured) {
+    // Set up but not run yet: show what it will read and when, not the setup prompt.
+    return (
+      <div className="at-scroll at-disco">
+        <div className="at-disco-inner">
+          <div className="at-disco-bar"><h1 className="at-period">Discovery</h1><span className="at-flex" />
+            <IconButton icon="refresh" label="Refresh" onClick={reload} /></div>
+          <SourcesBar streams={streams} />
+          <div className="at-caughtup">
+            <Icon name="clock" size={18} />
+            <div>
+              <div className="at-caughtup-title">Waiting for the first run</div>
+              <div className="at-muted">{streams.map((s) => `${titleCase(s.name)}: ${s.when || 'scheduled'}`).join(' · ')}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
   if (!all.length) {
     return <Empty icon="spark" title="No discovery runs yet"
                   text="Discovery reads the sources you choose and proposes tasks. Setup takes a few minutes in chat."
@@ -55,6 +75,7 @@ export function DiscoveryView({ runs, error, loading, reload }) {
                      options={[{ value: 'waiting', label: 'Waiting for you' }, { value: 'all', label: 'All runs' }]} />
           <IconButton icon="refresh" label="Refresh" onClick={reload} />
         </div>
+        {configured ? <SourcesBar streams={streams} /> : null}
         {!shown.length ? (
           <div className="at-caughtup">
             <Icon name="check" size={18} />
@@ -71,6 +92,50 @@ export function DiscoveryView({ runs, error, loading, reload }) {
 }
 
 export const SETUP_PROMPT = 'Set up task discovery'
+export const ADD_SOURCE_PROMPT = 'I want to add a new source to task discovery'
+
+const SOURCE_ICONS = { email: 'inbox', chat: 'chat', transcript: 'list', meeting_notes: 'list', document: 'edit', tracker: 'check' }
+
+// What discovery reads: one row per stream, each source with an icon for its type. "Add a source" reveals
+// the message to send Hermes, with a copy button (sources are connected in chat, not here).
+function SourcesBar({ streams }) {
+  const [adding, setAdding] = React.useState(false)
+  const many = streams.length > 1
+  return (
+    <div className="at-sources">
+      <div className="at-sources-rows">
+        {streams.map((s) => (
+          <div key={s.name} className="at-sources-row">
+            <span className="at-sources-label">{many ? `${titleCase(s.name)} reads` : 'Reads'}</span>
+            <div className="at-sources-chips">
+              {(s.sources || []).length ? (s.sources || []).map((src, i) => (
+                <span key={`${src.name}-${i}`} className="at-source-chip" title={src.scope || src.name}>
+                  <Icon name={SOURCE_ICONS[src.type] || 'link'} size={13} />{src.name}
+                </span>
+              )) : <span className="at-muted">No sources yet</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+      <Button size="sm" variant="ghost" icon="plus" onClick={() => setAdding((v) => !v)} aria-expanded={adding}>Add a source</Button>
+      {adding ? <CopyPrompt className="is-compact" text={ADD_SOURCE_PROMPT} /> : null}
+    </div>
+  )
+}
+
+function CopyPrompt({ text, className }) {
+  const toast = useToast()
+  const copy = async () => toast((await copyText(text)) ? 'Copied. Paste it into a chat with Hermes.' : 'Could not copy')
+  return (
+    <div className={cx('at-copy-prompt', className)}>
+      <span className="at-setup-prompt-label"><Icon name="chat" size={15} /> Tell Hermes in chat</span>
+      <div className="at-copy-prompt-row">
+        <q className="at-copy-prompt-text">{text}</q>
+        <Button size="sm" icon="clipboard" onClick={copy}>Copy</Button>
+      </div>
+    </div>
+  )
+}
 
 // The one message that starts discovery setup, shown big enough that it cannot be missed. Click to copy.
 function SetupPrompt() {
