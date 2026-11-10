@@ -53,5 +53,21 @@ test('editing the body keeps every dossier verbatim', () => {
 test('blocks with two ids (discovery context) round trip too', () => {
   const ctx = '<!-- discovery-context:start dos-a 3 -->\nctx\n<!-- discovery-context:end dos-a 3 -->'
   const parts = extractManaged(`## Notes\n\nx\n\n${ctx}\n`)
-  assert.deepEqual(parts.bottom, [ctx])
+  assert.deepEqual(parts.bottom, [])
+  assert.ok(parts.editable.includes(ctx))
+})
+
+test('a discovery context block inside Notes keeps its place through an edit; dossiers still lift out', () => {
+  const ctx = '<!-- discovery-context:start dos-a sha256:ab12 -->\n### Discovery context\n\n- new fact\n<!-- discovery-context:end dos-a sha256:ab12 -->'
+  const dossier = '<!-- discovery-dossier:start dos-a -->\nD\n<!-- discovery-dossier:end dos-a -->'
+  const body = `\n## Notes\n\nmine\n\n${ctx}\n\n## Plan\n\n1. x\n\n## Log\n\n- 2026-11-10: made\n\n${dossier}\n`
+  const parts = extractManaged(body)
+  assert.deepEqual(parts.bottom, [dossier])
+  const out = rebuildBody(parts.editable.replace('mine', 'mine edited'), parts.top, parts.bottom)
+  const at = (s) => out.indexOf(s)
+  assert.ok(at('mine edited') < at(ctx) && at(ctx) < at('## Plan') && at('## Plan') < at('## Log') && at('## Log') < at(dossier), out)
+  // display still folds the context block out of the Notes text
+  const { sections, managed } = splitSections(out)
+  assert.ok(managed.some((m) => m.name === 'discovery-context'))
+  assert.doesNotMatch(sections.find((x) => x.title === 'Notes').text, /discovery-context|new fact/)
 })

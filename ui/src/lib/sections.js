@@ -60,7 +60,9 @@ export function managedTitle(name) {
 }
 
 /** Split a body into the text people edit and the managed blocks Hermes owns (kept verbatim).
- *  Blocks before any other content stay on top; the rest go back at the end, in order. */
+ *  Blocks before any other content stay on top. Dossier blocks after content go back at the end, in order;
+ *  any other block inside a section (such as discovery context in Notes) stays in the editable text at its
+ *  place, so an edit never moves it under a later section. */
 export function extractManaged(body) {
   const lines = String(body || '').replace(/\r\n?/g, '\n').split('\n')
   const keep = []
@@ -70,7 +72,7 @@ export function extractManaged(body) {
   for (let i = 0; i < lines.length; i++) {
     if (START_RE.test(lines[i])) {
       const j = blockEnd(lines, i)
-      if (j >= 0) {
+      if (j >= 0 && (!seenContent || /-dossier$/.test(lines[i].match(START_RE)[1]))) {
         ;(seenContent ? bottom : top).push(lines.slice(i, j + 1).join('\n'))
         i = j
         continue

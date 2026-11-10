@@ -1564,7 +1564,7 @@ function extractManaged(body) {
   for (let i = 0; i < lines.length; i++) {
     if (START_RE.test(lines[i])) {
       const j = blockEnd(lines, i);
-      if (j >= 0) {
+      if (j >= 0 && (!seenContent || /-dossier$/.test(lines[i].match(START_RE)[1]))) {
         ;
         (seenContent ? bottom : top).push(lines.slice(i, j + 1).join("\n"));
         i = j;
