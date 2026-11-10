@@ -35,3 +35,11 @@ test('a click shows Queued at once, then the server message', () => {
   assert.equal(researchStartedMessage({ starts: 'within 30 minutes' }), 'Queued, starts within 30 minutes')
   assert.equal(researchStartedMessage({}), 'Queued, starts within 30 minutes')
 })
+
+test('the server message wins, so a paused or missing sweep job is never shown as Starting now', () => {
+  const paused = { starts: 'when the research sweep job is resumed',
+    message: 'Queued. Research starts when the research sweep job is resumed.' }
+  assert.equal(researchStartedMessage(paused), paused.message)
+  assert.equal(researchStartedMessage({ starts: 'when the research sweep job is resumed' }),
+    'Queued, starts when the research sweep job is resumed')
+})

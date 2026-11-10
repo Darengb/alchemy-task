@@ -1771,7 +1771,9 @@ function researchButton(status, click = null) {
   return { label, disabled: false, note: null };
 }
 function researchStartedMessage(res) {
-  return res && res.starts === "now" ? "Starting now" : "Queued, starts within 30 minutes";
+  if (res && typeof res.message === "string" && res.message) return res.message;
+  if (res && res.starts === "now") return "Starting now";
+  return `Queued, starts ${res && res.starts || "within 30 minutes"}`;
 }
 
 // ui/src/panel.jsx

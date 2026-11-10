@@ -201,8 +201,11 @@ class RunCtx(SetupCtx):
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
         self.runs: list[str] = []
+        self.sweep_jobs = {"sweep1": {"enabled": True, "state": "scheduled"}}
 
     def dispatch_tool(self, name, args):
+        if name == "cronjob_manage" and args.get("action") == "list":
+            return json.dumps({"jobs": [{"job_id": k, **v} for k, v in self.sweep_jobs.items()]})
         if name == "cronjob_manage" and args.get("action") == "run":
             self.runs.append(args["job_id"])
             return json.dumps({"success": True, "job": {"id": args["job_id"]}})
@@ -244,7 +247,8 @@ def test_research_button_refreshes_complete_and_retries_skipped_or_failed(rclien
         t = make_task(client, title=f"Task {status}")
         _set_research(_task_path(c, t["task_id"]), {"status": status, "attempts": 3, "updated": "2026-11-01T00:00:00Z"})
         out = client.post(f"/tasks/{t['task_id']}/research").json()
-        assert out["ok"] and out["queued"] is True and out["starts"] == "within 30 minutes", out
+        assert out["ok"] and out["queued"] is True and out["starts"] != "now", out
+        assert "scheduled jobs are set up" in out["message"], out
         st = _enrichment(c, t["task_id"])
         assert st["status"] == "pending" and st["attempts"] == 0
     assert c.runs == []
@@ -301,3 +305,19 @@ def test_research_button_still_queues_when_the_sweep_cannot_start(rclient):
     out = client.post(f"/tasks/{t['task_id']}/research").json()
     assert out["ok"] and out["queued"] is True
     assert _enrichment(c, t["task_id"])["status"] == "pending"
+
+
+def test_research_button_does_not_say_starting_now_for_a_paused_or_missing_sweep_job(rclient):
+    client, c = rclient
+    c.state.set("jobs", {"research-sweep": {"job_id": "sweep1", "hash": "x"}})
+    for jobs, words in (({"sweep1": {"enabled": False, "state": "paused"}}, "research sweep job is resumed"),
+                        ({"sweep1": {"paused": True}}, "research sweep job is resumed"),
+                        ({}, "scheduled jobs are set up")):
+        c.sweep_jobs = jobs
+        t = make_task(client, title=f"Task {words} {len(jobs)}")
+        _set_research(_task_path(c, t["task_id"]), None)
+        out = client.post(f"/tasks/{t['task_id']}/research").json()
+        assert out["ok"] and out["queued"] is True and out["starts"] != "now", out
+        assert words in out["message"] and "Starting now" not in out["message"], out
+        assert _enrichment(c, t["task_id"])["status"] == "pending"
+    assert c.runs == []

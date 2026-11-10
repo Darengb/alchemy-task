@@ -46,7 +46,7 @@ follow-up clearly matches a task you already have, discovery adds the new detail
   writes ends with *(from research, date)*, and "research it again" refreshes only research-written sections
   nobody has edited since. Say "no research needed" to skip it, "research it again" to refresh it, or use the
   **Start research** / **Refresh research** button at the top of a task's research section in the dashboard,
-  which queues research and starts the research sweep job right away (or within 30 minutes if the job is off).
+  which queues research and starts the research sweep job right away (if the job is paused, research starts when it is resumed).
 - **Bounded and safe research:** the research agent is read-only. It cannot run commands, write or edit
   files, change skills, or change accounts or settings; the plugin blocks those tools for every research agent
   it starts, discovery research included. It never reads credential files (keys, tokens, `.env`, `.ssh`,

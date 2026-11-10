@@ -6,6 +6,7 @@ the UI is committed, pushed and logged exactly like one made in chat.
 from __future__ import annotations
 
 import datetime as dt
+import json
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -249,6 +250,14 @@ async def create(request: Request):
 # ------------------------------------------------------------------ research button
 
 SWEEP_INTERVAL = "within 30 minutes"
+SWEEP_STARTS = {
+    "now": "Starting now",
+    "paused": "Queued. Research starts when the research sweep job is resumed.",
+    "missing": "Queued. Research starts when Alchemy Task's scheduled jobs are set up.",
+    "unknown": f"Queued, starts {SWEEP_INTERVAL}",
+}
+SWEEP_WHEN = {"now": "now", "paused": "when the research sweep job is resumed",
+              "missing": "when Alchemy Task's scheduled jobs are set up", "unknown": SWEEP_INTERVAL}
 
 
 def _background(fn: Any) -> None:
@@ -256,9 +265,29 @@ def _background(fn: Any) -> None:
     threading.Thread(target=fn, name="alchemy-task-research-sweep", daemon=True).start()
 
 
-def _start_sweep(rt: Any) -> bool:
+def _sweep_job_state(rt: Any, job_id: str) -> str:
+    """'enabled', 'paused', 'missing' or 'unknown', read through ``cronjob_manage`` ``list`` (as jobs.py does)."""
+    try:
+        raw = rt.ctx.dispatch_tool("cronjob_manage", {"action": "list", "include_disabled": True})
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        jobs = [j for j in (data or {}).get("jobs", []) if j.get("job_id") == job_id or j.get("id") == job_id]
+    except Exception:  # noqa: BLE001 - cron unreadable: the task stays queued
+        return "unknown"
+    if not jobs:
+        return "missing"
+    job = jobs[0]
+    if job.get("paused") is True or job.get("enabled") is False or job.get("state") == "paused":
+        return "paused"
+    return "enabled"
+
+
+def _start_sweep(rt: Any) -> str:
     """Fire the research sweep job now through Hermes's public ``cronjob_manage`` tool (action ``run``),
-    the same way the discovery "Run now" button fires its job. Returns False when there is no sweep job.
+    the same way the discovery "Run now" button fires its job. Returns a key of ``SWEEP_STARTS``: 'now' only
+    when the job exists, is enabled and the run was handed to a background thread.
+
+    Hermes refuses to run a paused or missing job, so those are checked first and reported honestly: a paused
+    job also never sweeps on schedule, so the task waits until it is resumed.
 
     A dashboard request has no agent turn, so research workers cannot launch here, and ``run`` from a
     dashboard request executes the job in this process for minutes. It runs on a background thread so the
@@ -266,7 +295,10 @@ def _start_sweep(rt: Any) -> bool:
     reg = (rt.ctx.state.get("jobs", default={}) or {}).get("research-sweep") or {}
     job_id = reg.get("job_id")
     if not job_id:
-        return False
+        return "missing"
+    state = _sweep_job_state(rt, job_id)
+    if state != "enabled":
+        return state
 
     def fire() -> None:
         try:
@@ -277,8 +309,8 @@ def _start_sweep(rt: Any) -> bool:
     try:
         _background(fire)
     except Exception:  # noqa: BLE001 - same fallback as above
-        return False
-    return True
+        return "unknown"
+    return "now"
 
 
 @router.post("/tasks/{task_id}/research")
@@ -298,9 +330,8 @@ async def research(request: Request, task_id: str):
         except rs.ResearchError as exc:
             raise UIError("invalid_request", str(exc)) from exc
         receipt = _deliver(rt, [store.rel(path)], f"task: research {new.title[:64]}")
-        now = _start_sweep(rt)
-        return {"ok": True, "queued": True, "starts": "now" if now else SWEEP_INTERVAL,
-                "message": "Starting now" if now else f"Queued, starts {SWEEP_INTERVAL}",
+        when = _start_sweep(rt)
+        return {"ok": True, "queued": True, "starts": SWEEP_WHEN[when], "message": SWEEP_STARTS[when],
                 "task": _row(store, new, body=True), "git": receipt}
     return await handle(request, run, set())
 
