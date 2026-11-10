@@ -165,7 +165,7 @@ Setup fills them in for you.
   folders only, not the rest of the repository.
 - **Shell commands:** runs local `git` subprocesses in the workspace (add, commit of task paths only, fetch,
   rebase, push, ls-remote) with a minimal environment and no interactive prompts. In `deploy_key` mode it
-  runs `ssh-keygen` once.
+  also runs OpenSSH's key generator once, to create the deploy key described under Credentials.
 - **Network:** Git traffic goes only to the remote you configure.
 - **Credentials:** in `system` mode your own Git and SSH configuration authenticates the push, and the plugin
   never reads your keys or credential helpers. It refuses to push when the repository's own config names
