@@ -255,18 +255,10 @@
   color: var(--at-fg);
 }
 .at-brand-mark {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
   flex: none;
-  background:
-    radial-gradient(
-      circle at 38% 34%,
-      #fff 0 18%,
-      #c9ccff 30%,
-      #4d55ff 62%,
-      #1d22b8 100%);
-  box-shadow: 0 0 14px rgba(110, 120, 255, .75), 0 0 2px rgba(255, 255, 255, .8);
+  color: #eef0ff;
+  transform: translateY(0.35px);
+  filter: drop-shadow(0 0 5px rgba(120, 130, 255, .85)) drop-shadow(0 0 12px rgba(80, 90, 255, .55));
 }
 .at-tabs {
   display: flex;

@@ -9,7 +9,7 @@ import { TasksView } from './tasks.jsx'
 import { TaskPanel } from './panel.jsx'
 import { DiscoveryView, discoveryBadge } from './discovery.jsx'
 import { SettingsPanel } from './settings.jsx'
-import { Icon, IconButton, OverlayHost, Spinner, ToastHost, ToastOutlet, cx, useToast } from './ui.jsx'
+import { BrandMark, Icon, IconButton, OverlayHost, Spinner, ToastHost, ToastOutlet, cx, useToast } from './ui.jsx'
 
 const NARROW = 720
 const POLL_MS = 30000
@@ -170,7 +170,7 @@ function AppInner({ transport, host, initialView, settingsOnly, chat }) {
     return (
       <>
         <nav className="at-appbar">
-          {narrow ? null : <span className="at-brand"><i className="at-brand-mark" aria-hidden="true" />Alchemy Task</span>}
+          {narrow ? null : <span className="at-brand"><BrandMark size={20} />Alchemy Task</span>}
           <div className="at-tabs" role="tablist">
             <button type="button" role="tab" aria-selected={tab === 'tasks'} className={cx('at-tab', tab === 'tasks' && 'is-on')} onClick={() => setTab('tasks')}>Tasks</button>
             <button type="button" role="tab" aria-selected={tab === 'discovery'} className={cx('at-tab', tab === 'discovery' && 'is-on')} onClick={() => setTab('discovery')}>
