@@ -264,3 +264,94 @@ def test_child_error_status_is_classified(ctx, settings, data_dir):  # noqa: F81
     ra.subagent_start(child_session_id="child-1", child_subagent_id=out["subagent_id"])
     ra.subagent_stop(child_session_id="child-1", child_status="error", child_summary="Unknown model deepseek-v4-flash")
     assert _enrichment(doc)["status"] == "failed"
+
+
+def _auto_submit(runner, store, pool, run):
+    from test_discovery_runner import callback_all
+    original, submitted = pool.status, set()
+
+    def status(h):
+        if not pool.fail and h["subagent_id"] not in submitted:
+            submitted.add(h["subagent_id"])
+            callback_all(runner, store, pool, run, h)
+        return original(h)
+    pool.status = status
+
+
+def _budget_units(tmp_path):
+    files = list((tmp_path / "discovery").rglob("budgets/*.json"))
+    return sum(len(json.loads(f.read_text())["charged"]) for f in files)
+
+
+def test_discovery_model_launch_error_relaunches_after_release(tmp_path):
+    from test_discovery_runner import drive, setup_runner
+    runner, store, pool, run = setup_runner(tmp_path, count=1)
+    runner.rt.settings = SimpleNamespace(research_model="old-model-v1", research_provider="nous")
+    real = pool.launch
+
+    def broken(request):
+        raise RuntimeError("Unknown provider 'nous' for model old-model-v1")
+    pool.launch = broken
+    first = runner.run(run, session_id="parent")
+    # the call that set the hold reports it
+    assert first["status"] == "held" and "research_model" in first["holds"]
+    assert "old-model-v1 could not be used" in first["research_model_error"]
+    attempts = list(store.get_run(run)["attempts"].values())
+    assert not any(a["fenced"] for a in attempts)
+    runner.rt.settings = SimpleNamespace(research_model="new-model-flash", research_provider="openrouter")
+    pool.launch = real
+    _auto_submit(runner, store, pool, run)
+    runner.release_hold(run, "user changed the research model", session_id="parent")
+    drive(runner, store, run)
+    assert len(pool.requests) == 1 and pool.requests[0]["model"] == "new-model-flash"
+    cid = store.get_run(run)["candidates"][0]["candidate_id"]
+    assert store.accepted_bundle(run, cid)
+    joined = runner.join(run, session_id="parent")
+    assert joined["joined"] and not joined["degraded"]
+    assert _budget_units(tmp_path) == 1
+
+
+def test_discovery_child_model_failure_holds_without_retry(tmp_path):
+    from test_discovery_runner import drive, setup_runner
+    runner, store, pool, run = setup_runner(tmp_path, count=1)
+    runner.rt.settings = SimpleNamespace(research_model="old-model-v1", research_provider="nous")
+    pool.fail = True
+    real_result = pool.result
+    pool.result = lambda h: {**real_result(h), "summary": "Error: unknown model old-model-v1"}
+    reports = [runner.run(run, session_id="parent") for _ in range(3)]
+    assert len(pool.requests) == 1  # not retried on the same model
+    held = next(r for r in reports if r["status"] == "held")
+    assert "old-model-v1 could not be used" in held["research_model_error"]
+    assert "set my research model" in held["next_action"]
+    pool.fail = False
+    pool.result = real_result
+    runner.rt.settings = SimpleNamespace(research_model="new-model-flash", research_provider="")
+    _auto_submit(runner, store, pool, run)
+    runner.release_hold(run, "user changed the research model", session_id="parent")
+    drive(runner, store, run)
+    assert len(pool.requests) == 2 and pool.requests[1]["model"] == "new-model-flash"
+    cid = store.get_run(run)["candidates"][0]["candidate_id"]
+    assert store.accepted_bundle(run, cid)
+
+
+def test_discovery_ordinary_child_failure_still_retries(tmp_path):
+    from test_discovery_runner import setup_runner
+    runner, store, pool, run = setup_runner(tmp_path, count=1)
+    runner.rt.settings = SimpleNamespace(research_model="glm-5-flash", research_provider="")
+    pool.fail = True
+    reports = [runner.run(run, session_id="parent") for _ in range(4)]
+    assert len(pool.requests) == 2 and all(r["status"] != "held" for r in reports)
+
+
+def test_model_hold_message_keeps_reconcile_step_when_other_holds_exist(tmp_path):
+    from test_discovery_runner import setup_runner
+    runner, store, pool, run = setup_runner(tmp_path, count=1)
+    with runner._state(run) as state:
+        state["holds"] = ["research_model", "interrupted"]
+        state["research_model_error"] = "the research model x could not be used: boom."
+    out = runner.run(run, session_id="parent")
+    assert out["status"] == "held" and "could not be used" in out["next_action"]
+    assert "discovery_recover" in out["next_action"]
+    with runner._state(run) as state:
+        state["holds"] = ["research_model"]
+    assert "discovery_recover" not in runner.run(run, session_id="parent")["next_action"]

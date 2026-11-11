@@ -609,6 +609,25 @@ class DiscoveryStore:
             self._save(run_id, ledger)
             return attempt
 
+    def withdraw_launch(self, run_id: str, token: str, *, reason: str) -> dict[str, Any]:
+        """Remove an attempt whose launch was refused synchronously, so no child exists.
+
+        Used when the configured research model cannot be used: the candidate keeps its daily unit and
+        its attempt budget, and launches fresh once the hold is released. The withdrawal is kept for audit;
+        a late submit with the withdrawn token is refused as an unknown attempt.
+        """
+        reason = _str(reason, 'withdrawal reason', allow_empty=False, limit=500)
+        with self._lock(self._run_lock_name(run_id)):
+            ledger = self._load(run_id, open_only=True)
+            attempt = ledger['attempts'].get(token)
+            if not attempt or attempt['terminal'] or attempt['fenced'] or attempt['handle'] or attempt['state'] != 'launch_intent':
+                raise UserError('only an unbound launch intent can be withdrawn')
+            self._assert_no_accept_intent(run_id, attempt['candidate_id'])
+            del ledger['attempts'][token]
+            ledger.setdefault('withdrawn_launches', []).append({'token_sha256': _hash(token.encode()), 'candidate_id': attempt['candidate_id'], 'ordinal': attempt['ordinal'], 'reason': reason, 'at': now()})
+            self._save(run_id, ledger)
+            return attempt
+
     def recover_owner(self, run_id: str, *, owner_session: str, owner_restarted: bool = False, orphan_seconds: float | None = None) -> list[str]:
         """Adopt a run for a new or restarted owner; returns the fenced tokens.
 
