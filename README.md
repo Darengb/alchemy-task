@@ -35,6 +35,8 @@ Because of this, Alchemy Task works with most tools your agent already uses. Whe
 
 ## What it does
 
+**Use it entirely in chat, or in the dashboard.** Every feature works through plain conversation with your agent on any platform Hermes supports. The web dashboard and the desktop app add a visual way to do the same day-to-day work: browse and edit tasks, review discovery, start research and change settings. Use either one, or both; they read and write the same task files. Setup, and choosing which sources discovery reads, happen in chat.
+
 ### 1. Research on every task
 
 When a task is created, in chat, from discovery or in the dashboard, a research agent starts in the background on your own model. It reads:
@@ -74,7 +76,17 @@ You never need a command. Say "add a task to renew the domain by Friday", "move 
 - **Plain Markdown you own:** one file per task with YAML frontmatter, compatible with Obsidian and TaskNotes. Edits touch only the fields they change.
 - **Git delivery:** every change is its own commit and is pushed to your remote. The plugin never force-pushes, stashes or resets your work.
 - **Work sessions:** say "work on X". The chat links to the task and your agent starts with the notes, research, access plan and next step. When it stops, it records a **Current state** with what was done and what comes next, so nobody re-explains anything later.
-- **Apple Reminders (optional, beta):** sync open tasks with Reminders through the Hermes mobile app.
+
+### 5. iPhone Reminders sync (optional, beta)
+
+If you use the Hermes mobile app (beta) on your iPhone and give it access to Reminders, your tasks can appear in Apple's Reminders app.
+
+- **Set it up:** in a chat in the Hermes app, ask your agent to sync your tasks with Reminders. It asks which areas to include and which Reminders list to use (your default list unless you name another), shows a preview and waits for your approval.
+- **Sync whenever you want:** say **"sync reminders"**. Say it in a chat in the Hermes app on your iPhone, because the phone only answers while the app is open. There is no background sync.
+- **What syncs:** the title, the due date and the checkbox, in both directions. Checking a reminder off marks the task done. Each reminder's notes show the task's summary and next step; everything else stays in the task file.
+- **What it leaves alone:** only open tasks get a reminder (not ones more than 14 days overdue), and your own reminders are never touched.
+
+Tested end to end on a real iPhone with self-hosted Hermes. On Nous Cloud agents, the current beta of the Hermes app does not yet offer the phone access this needs.
 
 ![The week view](docs/screenshots/tasks-week.png)
 
