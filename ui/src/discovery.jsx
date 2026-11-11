@@ -8,6 +8,7 @@ import { AreaDot, Button, DatePicker, Disclosure, Icon, IconButton, Menu, Segmen
 
 export { pendingCount, discoveryBadge } from './lib/discovery.js'
 import { nextRunLabel } from './lib/discovery.js'
+import { digestField, fullResearch } from './lib/digestText.js'
 
 const titleCase = (s) => String(s || '').replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
@@ -406,7 +407,10 @@ function ProposalCard({ p, run, reload, readOnly }) {
     <Menu close={close} items={(meta.areas || []).map((ar) => ({ label: ar, icon: ar === area ? 'check' : undefined, run: () => setArea(ar) }))} />
   ), { width: 200 })
 
-  const additions = [].concat(p.new_information || []).filter(Boolean)
+  const addition = digestField(p, 'digest_addition')
+  const state = digestField(p, 'digest_current_state')
+  const next = digestField(p, 'digest_next_action')
+  const full = fullResearch(p)
   const links = [].concat(p.source_links || []).filter(Boolean)
   const uncertain = p.research_disposition === 'uncertain'
   return (
@@ -416,9 +420,9 @@ function ProposalCard({ p, run, reload, readOnly }) {
         <h3 className="at-prop-title">{p.title}</h3>
         <IconButton icon="x" label="Dismiss" className="at-prop-dismiss" onClick={dismiss} disabled={!!busy || readOnly} />
       </div>
-      {p.current_understanding ? <p className="at-prop-text">{p.current_understanding}</p> : null}
-      {p.substantive_next_action ? (
-        <div className="at-prop-next"><span className="at-prop-label">Next</span><span>{p.substantive_next_action}</span></div>
+      {state ? <p className="at-prop-text">{state}</p> : null}
+      {next ? (
+        <div className="at-prop-next"><span className="at-prop-label">Next</span><span>{next}</span></div>
       ) : null}
       {uncertain ? (
         <div className="at-prop-uncertain"><Icon name="alert" size={14} />
@@ -446,13 +450,22 @@ function ProposalCard({ p, run, reload, readOnly }) {
               <button type="button" className="at-link" onClick={(e) => { e.preventDefault(); actions.open(t.task_id) }}>Open</button>
             </label>
           ))}
-          {additions.length ? (
+          {addition ? (
             <div className="at-prop-addition"><span className="at-prop-label">Would add</span>
-              <ul>{additions.map((a, i) => <li key={i}>{a}</li>)}</ul></div>
+              <p>{addition}</p></div>
           ) : null}
         </div>
-      ) : additions.length ? (
-        <ul className="at-prop-list">{additions.map((a, i) => <li key={i}>{a}</li>)}</ul>
+      ) : null}
+
+      {full.length ? (
+        <Disclosure title="Full research" className="at-prop-full is-quiet">
+          {full.map((sec) => (
+            <div key={sec.label} className="at-prop-full-sec">
+              <div className="at-prop-label">{sec.label}</div>
+              {sec.items ? <ul>{sec.items.map((a, i) => <li key={i}>{a}</li>)}</ul> : <p>{sec.text}</p>}
+            </div>
+          ))}
+        </Disclosure>
       ) : null}
 
       <div className="at-prop-actions">

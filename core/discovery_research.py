@@ -16,6 +16,8 @@ RESEARCH_KEYS = {
     "sources_unavailable", "existing_task_candidates", "new_information", "errors",
     "represented_candidate_ids",
 }
+OPTIONAL_RESEARCH_KEYS = {"existing_task_already_current", "digest_current_state", "digest_next_action", "digest_addition"}
+DIGEST_FIELD_CHARS = 300
 DISPOSITIONS = {"retain", "exclude_pure_chase", "exclude_resolved", "uncertain"}
 EXECUTIONS = {"hermes_independent", "user_collaboration_or_approval", "other_owner_or_access", "no_action"}
 ROLES = {"owner", "collaborator", "approver", "dependency"}
@@ -60,6 +62,16 @@ def _privacy_walk(value: Any, path: str = "payload") -> None:
         raise UserError(f"raw-corpus canary or secret rejected at {path}")
 
 def validate_research(payload: Any, cid: str, expected_sources: list[str]) -> dict[str, Any]:
+    # Optional digest fields: older bundles without them stay valid.
+    if isinstance(payload, dict): _privacy_walk(payload)
+    if isinstance(payload, dict) and set(payload) & OPTIONAL_RESEARCH_KEYS:
+        for key in set(payload) & OPTIONAL_RESEARCH_KEYS:
+            if key == "existing_task_already_current":
+                if type(payload[key]) is not bool: raise UserError(f"{key} must be a boolean")
+            else:
+                _str(payload[key], key, limit=DIGEST_FIELD_CHARS)
+        rest = validate_research({k: v for k, v in payload.items() if k not in OPTIONAL_RESEARCH_KEYS}, cid, expected_sources)
+        return {**rest, **{k: payload[k] for k in payload if k in OPTIONAL_RESEARCH_KEYS}}
     if not isinstance(payload, dict) or set(payload) != RESEARCH_KEYS:
         missing = sorted(RESEARCH_KEYS - set(payload)) if isinstance(payload, dict) else sorted(RESEARCH_KEYS)
         unknown = sorted(set(payload) - RESEARCH_KEYS) if isinstance(payload, dict) else []

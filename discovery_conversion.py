@@ -254,6 +254,12 @@ class DiscoveryConversion:
             raise UserError('explicit user approval required')
         outcome = self.match(run, wid)
         candidate, research = self.joined(run, wid)
+        if target_task_id:
+            # Matching tolerates another task that merely mentions a marker; writing into a task
+            # whose own dossier markers are malformed is still refused.
+            for item in self.rt.store().scan().tasks:
+                if item.fm.get("task_id") == target_task_id:
+                    self._validate_dossiers(tf.parse_file(item.path).body)
         if outcome['kind'] == 'conflict':
             raise UserError('multiple exact destinations conflict; no mutation')
         if choice in {'auto', 'noop'} and outcome['kind'] != 'exact':

@@ -16,7 +16,7 @@ from e2e.conftest import DAY1
 from e2e.outcomes import dossier_ids, frontmatter, numbered_lines, snapshot
 
 ITEMS = [('101', 'Draft Q1 vendor contract'), ('102', 'Plan onboarding for new analyst'), ('103', 'Fix login timeout')]
-NORMAL_HEADER = 'Tuesday: 2 new proposals; 1 existing-task outcomes; 0 failures'
+NORMAL_HEADER = '**2 follow-ups** · **1 existing task outcome** · **0 need attention**'
 
 
 def seed_normal(world, host, *, existing_status='open'):
@@ -33,7 +33,8 @@ def proposal_titles(digest):
 
 
 def header(day):
-    return day['digest']['text'].splitlines()[1]
+    # Counts after the Review code on the digest's fourth line.
+    return day['digest']['text'].splitlines()[3].split(' · ', 1)[1]
 
 
 def new_task_files(world, before):
@@ -65,9 +66,9 @@ def test_a_normal_day_two_proposals_one_enrichment_then_approve_one(world, host_
     assert header(day) == NORMAL_HEADER
     assert set(proposal_titles(day['digest']).values()) == {'Draft Q1 vendor contract', 'Plan onboarding for new analyst'}
     assert sorted(proposal_titles(day['digest'])) == [1, 2]
-    assert 'Existing task: Fix login timeout: complete; git=verified' in text
-    assert 'Coverage: feed: complete' in text and 'degraded' not in text
-    assert text.rstrip().endswith('Reply with the numbers you want. Other items remain replyable for seven days.')
+    assert '**Existing task:** Fix login timeout: complete; git=verified' in text
+    assert '**Coverage:**' not in text and 'No tasks were created or changed.' not in text
+    assert text.rstrip().endswith('Items stay open for seven days.')
     # Automatic enrichment landed in the file, kept the user's words and status, and is on the remote.
     enriched = existing.read_text()
     assert enriched != original_existing
@@ -231,8 +232,8 @@ def test_c1_empty_completed_day(world, host_factory):
     text = day['digest']['text']
     lines = text.splitlines()
     assert 'No new follow-ups found.' in lines
-    assert 'Reply with the numbers' not in text and 'degraded' not in text
-    assert lines[1] == 'Tuesday: 0 new proposals; 0 existing-task outcomes; 0 failures'
+    assert 'Reply with the item numbers' not in text
+    assert lines[3].endswith(' · **0 follow-ups** · **0 need attention**')
     assert day['send']['final_text'] == text and snapshot(world) == before
     assert day['record']['degraded'] is False
 
@@ -246,8 +247,8 @@ def test_c2_incomplete_first_collection_is_degraded_and_next_run_rereads_the_win
     day = P.run_day(host)
     text = day['digest']['text']
     assert 'No new follow-ups found.' not in text
-    assert 'degraded' in text.splitlines()[1]
-    assert any(line.startswith('Coverage: feed: ') and not line.endswith(': complete') for line in text.splitlines())
+    assert day['digest']['items'] or 'No new proposals to review.' in text.splitlines()
+    assert any(line.startswith('**Coverage:** ') for line in text.splitlines())
     assert day['record']['degraded'] is True
     # Coverage did not advance: the next run re-reads from the same window start.
     first_start = src.calls[0]['start']
@@ -282,13 +283,13 @@ def test_c4_item_in_failed_first_window_is_surfaced_by_the_next_run(world, host_
     src.timed = [(lost_at, src.item('301', 'Answer auditor request'))]
     src.pages = ['ERROR']
     day1 = P.run_day(host)
-    assert 'degraded' in header(day1)
+    assert '**Coverage:** ' in day1['digest']['text'] and day1['record']['degraded'] is True
     P.set_clock(host, DAY1 + dt.timedelta(days=1))
     src.pages = [[]]
     day2 = P.run_day(host)
     assert [i['title'] for i in day2['digest']['items']] == ['Answer auditor request'], day2['digest']['text']
     assert 'No new follow-ups found.' not in day2['digest']['text']
-    assert 'Coverage: feed: complete' in day2['digest']['text']
+    assert '**Coverage:**' not in day2['digest']['text']
 
 
 # --------------------------------------------------------------------------- d
@@ -298,10 +299,10 @@ def test_d_one_child_fails_siblings_preserved_failure_visible(world, host_factor
     host.behaviors = {'102': 'fail', '101': {1: 'invalid', 2: 'valid'}}
     day = P.run_day(host)
     text = day['digest']['text']
-    assert header(day) == 'Tuesday: 1 new proposals; 1 existing-task outcomes; 1 failures; degraded'
+    assert header(day) == '**1 follow-up** · **1 existing task outcome** · **1 needs attention**'
     assert list(proposal_titles(day['digest']).values()) == ['Draft Q1 vendor contract']  # repaired on the 2nd ordinal
-    assert any(line.startswith('Attention: Plan onboarding for new analyst: ') for line in text.splitlines())
-    assert 'Existing task: Fix login timeout: complete' in text
+    assert any(line.startswith('**Needs attention:** Plan onboarding for new analyst: ') for line in text.splitlines())
+    assert '**Existing task:** Fix login timeout: complete' in text
     rec = day['record']
     assert rec['summary']['failures'] == 1 and rec['degraded'] is True
     assert any(f.get('title') == 'Plan onboarding for new analyst' for f in rec['failures'])
@@ -349,11 +350,11 @@ def test_e3_cap_deferral_is_a_distinct_state_not_a_failure(world, host_factory):
     day1 = P.run_day(host)
     deferred_title = ({t for _, t in ITEMS} - set(proposal_titles(day1['digest']).values())).pop()
     head = header(day1)
-    assert '0 failures' in head and 'degraded' not in head, head
+    assert '**0 need attention**' in head, head
     assert day1['record']['summary']['failures'] == 0 and day1['record']['failures'] == []
     deferred_lines = [line for line in day1['digest']['text'].splitlines() if deferred_title in line]
     assert deferred_lines and all('eferred' in line for line in deferred_lines), day1['digest']['text']
-    assert not any(line.startswith('Attention: ' + deferred_title) for line in deferred_lines)
+    assert not any(line.startswith('**Needs attention:** ' + deferred_title) for line in deferred_lines)
 
 
 # --------------------------------------------------------------------------- f
@@ -370,7 +371,7 @@ def test_f1_semantic_update_refused_after_concurrent_user_edit(world, host_facto
     tid, path = semantic_world(world, host)
     day = P.run_day(host)
     item = day['digest']['items'][0]
-    assert item['kind'] == 'semantic' and 'Task type: Potential existing task update' in day['digest']['text']
+    assert item['kind'] == 'semantic' and '**Task type:** Potential existing task update' in day['digest']['text']
     target = item['targets'][0]
     # The user edits the task in their editor after the digest arrives.
     edited = path.read_text() + '\nUser added a line after the digest.\n'
@@ -471,7 +472,7 @@ def test_h_completed_exact_task_is_enriched_not_duplicated_or_reopened(world, ho
     files_before = len(world.task_files())
     day = P.run_day(host)
     assert day['digest']['items'] == []
-    assert 'Existing task: Fix login timeout: complete' in day['digest']['text']
+    assert '**Existing task:** Fix login timeout: complete' in day['digest']['text']
     text = existing.read_text()
     assert frontmatter(text)['status'] == 'done' and len(dossier_ids(text)) == 1
     assert len(world.task_files()) == files_before
@@ -507,7 +508,7 @@ def test_j_noop_only_completed_check_says_no_new_followups(world, host_factory):
     assert snapshot(world) == before  # noop: no task byte change, log, sync or commit
     assert 'No new follow-ups found.' in text.splitlines(), text
     assert 'noop' not in text and 'Fix login timeout' not in text, text
-    assert 'degraded' not in text and 'Reply with the numbers' not in text
+    assert 'Reply with the item numbers' not in text
 
 
 def test_k_multiple_exact_destinations_are_blocked_not_failures(world, host_factory):
@@ -521,6 +522,6 @@ def test_k_multiple_exact_destinations_are_blocked_not_failures(world, host_fact
     assert snapshot(world) == before  # never a guessed mutation
     assert day['digest']['items'] == []  # unnumbered
     head = header(day)
-    assert '0 failures' in head and 'degraded' not in head, text
-    assert any('Fix login timeout' in line and not line.startswith('Attention:') for line in text.splitlines()), text
+    assert '**0 need attention**' in head, text
+    assert any('Fix login timeout' in line and not line.startswith('**Needs attention:**') for line in text.splitlines()), text
     assert day['record']['summary']['conflicts'] == 1 and day['record']['summary']['failures'] == 0

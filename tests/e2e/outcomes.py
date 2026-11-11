@@ -20,7 +20,7 @@ def numbered_lines(text: str) -> dict:
     """{number: title} for every numbered item as the user sees it in the delivered digest."""
     shown = {}
     for line in text.splitlines():
-        m = re.match(r'^\*\*(\d+)\.\*\* (.+?)(?: \[|$)', line)
+        m = re.match(r'^### [A-Za-z]*(\d+)\. (.+?)(?: \[|$)', line)
         if m:
             shown[int(m.group(1))] = m.group(2).strip()
     return shown

@@ -42,7 +42,7 @@ def test_long_slack_thread_is_partial_and_keeps_sibling_followups(settings, data
     joined = integration.runner.join(run, session_id='parent', degraded={c['candidate_id']: 'not researched in this test' for c in candidates})
     assert joined['joined'] is True
     text = integration.finalize(run, session_id='parent')['text']
-    assert 'Coverage: feed: partial' in text and 'degraded' in text
+    assert '**Coverage:** Feed:' in text and 'No new proposals to review.' in text
     assert 'No new follow-ups found.' not in text
 
 
@@ -152,7 +152,7 @@ def test_failed_first_run_window_is_reread_by_the_next_run(settings, data_dir, t
     first = integration.start('work', session_id='parent')
     assert integration.collect(first['run_id'], 'feed', session_id='parent')['status'] == 'failed'
     text1 = _close_run(integration, first['run_id'])['text']
-    assert 'Coverage: feed: failed' in text1 and 'No new follow-ups found.' not in text1
+    assert '**Coverage:** Feed: could not be read' in text1 and 'No new follow-ups found.' not in text1
     # Day 2: the reader works again. The failed interval must be read again.
     integration.utcnow = lambda: day2
     reader = _window_reader([item])
@@ -242,7 +242,7 @@ def test_busy_slack_thread_is_partial_once_then_the_window_moves_on(settings, da
     assert backlog['C1']['candidate'].get('partial') is True and 'partial' not in backlog['C2']['candidate']
     assert integration.store.source_state('work', 'feed')['watermark'] == day1.isoformat()
     text1 = _close_run(integration, first['run_id'])['text']
-    assert 'Coverage: feed: partial' in text1 and 'degraded' in text1
+    assert '**Coverage:** Feed:' in text1 and 'No new proposals to review.' in text1
     day2 = day1 + dt.timedelta(days=1)
     integration.utcnow = lambda: day2
     second = integration.start('work', session_id='parent')
@@ -253,7 +253,7 @@ def test_busy_slack_thread_is_partial_once_then_the_window_moves_on(settings, da
     receipt2 = integration.collect(second['run_id'], 'feed', session_id='parent')
     assert receipt2['status'] == 'complete'
     text2 = _close_run(integration, second['run_id'])['text']
-    assert 'Coverage: feed: complete' in text2 and 'degraded' not in text2
+    assert '**Coverage:**' not in text2
     assert 'No new follow-ups found.' in text2
 
 
@@ -331,11 +331,11 @@ def test_one_bad_slack_thread_is_skipped_with_an_error_and_siblings_survive(sett
     assert backlog[0]['candidate']['title'] == 'Separate ask in quiet channel'
     assert integration.store.source_state('work', 'feed').get('watermark') == receipt['end']
     text = _close_run(integration, run)['text']
-    assert 'Coverage: feed: partial' in text and 'degraded' in text
+    assert '**Coverage:** Feed:' in text and 'No new proposals to review.' in text
     assert 'No new follow-ups found.' not in text
     # The digest names the actual skip reason, not a generic read failure.
-    coverage = [l for l in text.splitlines() if l.startswith('Coverage: feed:')]
-    assert coverage == ['Coverage: feed: partial: skipped thread: ' + _SKIP_REASON[defect]]
+    coverage = [l for l in text.splitlines() if l.startswith('**Coverage:** Feed:')]
+    assert coverage == ['**Coverage:** Feed: skipped thread: ' + _SKIP_REASON[defect]]
 
 
 @_pytest.mark.parametrize('violation', ['account_mismatch', 'nonstructured'])

@@ -37,7 +37,7 @@ def test_unknown_delivery_retains_number_and_cannot_blind_resend(tmp_path):
     d = digest.prepare('run', stream='work', day='2030-01-01', origin={'session_id': 'chat'},
                        items=[{'unit_id': 'w_x', 'research_revision': 'r', 'title': 'X', 'kind': 'new', 'targets': []}],
                        failures=[{'reason': 'Research exhausted'}], coverage=[{'status': 'partial', 'source_key': 'feed'}])
-    assert 'Research exhausted' in d['text'] and 'partial' in d['text']
+    assert 'Research exhausted' in d['text'] and '**Coverage:** feed: could not be read' in d['text']
     digest.begin_delivery('run')
     assert digest.delivery('run')['state'] == 'inflight'
     digest.delivery_unknown('run', 'transport lost')
@@ -55,7 +55,7 @@ def test_newest_same_day_digest_does_not_depend_on_run_id_sort_order(tmp_path):
     old = prepare('z-old', 'old')
     new = prepare('a-new', 'new')
     assert old['items'][0]['number'] == 1 and new['items'][0]['number'] == 2
-    assert new['text'].splitlines()[0] == 'Task Discovery: work (2030-01-01)'
+    assert new['text'].splitlines()[0] == '## work Task Discovery'
     assert digest.resolve('2', stream='work', session_id='anywhere', today='2030-01-03')['unit_id'] == 'new'
     # Same-day numbers continue across invocations. An empty/no-new-items rerun
     # must not close earlier pending items or prevent idempotent re-approval.

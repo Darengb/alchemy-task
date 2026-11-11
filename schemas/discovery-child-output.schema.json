@@ -533,6 +533,25 @@
           "maxItems": 50,
           "uniqueItems": true
         },
+        "existing_task_already_current": {
+          "description": "Optional. Set true only when a task you nominated in existing_task_candidates already records this work's current state and next step, so nothing would be added to it. The digest then lists the item once under Already in your tasks instead of offering it as a proposal. Omit or set false otherwise.",
+          "type": "boolean"
+        },
+        "digest_current_state": {
+          "description": "Optional but expected. One or two plain, complete sentences for the user: what is happening and what is still open. It must stand alone; no hedging lists. current_understanding stays the full research.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "digest_next_action": {
+          "description": "Optional but expected. One or two plain, complete sentences naming the one next step. substantive_next_action stays the full research.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "digest_addition": {
+          "description": "Optional. For an existing-task match, one or two plain sentences on what is new compared with that task. new_information stays the full research.",
+          "type": "string",
+          "maxLength": 300
+        },
         "action_key": {
           "type": "string",
           "minLength": 1,

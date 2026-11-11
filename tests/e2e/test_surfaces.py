@@ -21,7 +21,17 @@ def dashboard_client():
     return TestClient(app), {web_server._SESSION_HEADER_NAME: web_server._SESSION_TOKEN}
 
 
-def test_dashboard_http_approval_after_scheduled_run_then_chat_reply_is_idempotent(world, host_factory):
+def test_dashboard_http_approval_after_scheduled_run_then_chat_reply_is_idempotent(world, host_factory, monkeypatch):
+    from e2e.conftest import DAY1
+    from alchemy_task.discovery_integration import DiscoveryIntegration
+    # The dashboard builds its own service; pin its business day too, or the proposal
+    # looks expired once the real date is more than seven days after DAY1.
+    original = DiscoveryIntegration.__init__
+
+    def pinned(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        self.utcnow = lambda: DAY1
+    monkeypatch.setattr(DiscoveryIntegration, '__init__', pinned)
     host = started_host(host_factory)
     host.source.pages = [[host.source.item(o, t) for o, t in ITEMS[:2]]]
     day = P.run_day(host)

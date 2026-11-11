@@ -125,8 +125,8 @@ def test_completed_check_with_only_true_noops_says_no_new_followups(settings, da
     digest = integration.finalize(run, session_id='parent')
     body = digest['text'].splitlines()
     assert 'No new follow-ups found.' in body
-    assert '0 new proposals; 0 existing-task outcomes; 0 failures' in digest['text']
-    assert 'noop' not in digest['text'] and 'Existing task' not in digest['text'] and 'degraded' not in digest['text']
+    assert '**0 follow-ups** · **0 need attention**' in digest['text']
+    assert 'noop' not in digest['text'] and 'Existing task' not in digest['text'] and 'No new follow-ups found.' in digest['text']
     assert not digest['items'] and task.path.read_bytes() == before
     assert integration.reconcile_endstate(run)['pending_operations'] == ['digest_delivery']
 
@@ -146,10 +146,10 @@ def test_multiple_exact_conflict_is_an_unnumbered_blocked_update_not_a_failure(s
     integration.record_decision(run, wid, decision='conflict', reason='Two exact tasks.', session_id='parent')
     digest = integration.finalize(run, session_id='parent')
     text = digest['text']
-    assert '0 new proposals; 1 existing-task outcomes; 0 failures' in text
+    assert '**0 follow-ups** · **1 needs attention**' in text
     assert 'degraded' not in text and 'Attention' not in text and 'No new follow-ups found.' not in text
-    assert 'Existing task update blocked: Workstream 1: multiple exact task matches conflict; nothing was changed' in text
-    assert not digest['items'] and '**1.**' not in text and task_files(settings) == before
+    assert '**Existing task update blocked:** Workstream 1: multiple exact task matches conflict; nothing was changed' in text
+    assert not digest['items'] and '### 1.' not in text and task_files(settings) == before
 
 
 # ---------------------------------------------------------------- F3 inaccessible sources stay internal
@@ -161,7 +161,7 @@ def test_inaccessible_supporting_source_is_kept_in_the_record_but_not_printed(se
     _own(store, run); _coverage_complete(store, run)
     integration.record_decision(run, wid, decision='propose', reason='No task exists.', session_id='parent')
     digest = integration.finalize(run, session_id='parent')
-    assert '**1.** Workstream 1' in digest['text']
+    assert '### 1. Workstream 1' in digest['text']
     assert 'access denied' not in digest['text'] and 'Unavailable' not in digest['text']
     assert digest['items'][0]['sources_unavailable'] == ['Linked planning page: access denied for this account']
 
@@ -175,14 +175,14 @@ def test_new_unsure_and_potential_update_items_carry_source_labels_and_choice(se
     _own(store, run); _coverage_complete(store, run)
     integration.record_decision(run, wid, decision='propose', reason='No task exists.', session_id='parent')
     new = integration.finalize(run, session_id='parent')['text']
-    assert 'Task type: New task' in new and 'Why unsure' not in new and 'Choice:' not in new
+    assert '**Task type:** New task' in new and 'Why unsure' not in new and 'Choice:' not in new
     # Unsure: uncertain disposition, no plausible existing task.
     _, store, run, wid, _ = custom_joined(settings, data_dir, tmp_path / 'u', [], disposition='uncertain',
         decisions_and_open_questions={'decisions': [], 'open_questions': ['Who owns the launch page?']})
     _own(store, run); _coverage_complete(store, run)
     integration.record_decision(run, wid, decision='propose', reason='Owner unclear.', session_id='parent')
     unsure = integration.finalize(run, session_id='parent')['text']
-    assert 'Task type: Unsure' in unsure and 'Why unsure: Who owns the launch page?' in unsure
+    assert '**Task type:** Unsure' in unsure and '**Why unsure:** Who owns the launch page?' in unsure
     # Potential existing task update: related-only nomination of a real task.
     doc = rt.store().create(title='Plan the launch page', area='work', undated=True, research=False)
     _, store, run, wid, _ = custom_joined(settings, data_dir, tmp_path / 's',
@@ -192,8 +192,8 @@ def test_new_unsure_and_potential_update_items_carry_source_labels_and_choice(se
     digest = integration.finalize(run, session_id='parent')
     ref = digest['items'][0]['ref']
     text = digest['text']
-    assert 'Task type: Potential existing task update' in text and 'Existing task: Plan the launch page' in text
-    assert f'Choice: reply "{ref}, update" to add this to the existing task, or "{ref}, create" for a separate task' in text
+    assert '**Task type:** Potential existing task update' in text and '**Existing task:** Plan the launch page' in text
+    assert f'**Choice:** Reply "{ref}, update" to add this to the existing task, or "{ref}, create" for a separate task' in text
 
 
 # ---------------------------------------------------------------- streams sharing a chat
@@ -234,7 +234,7 @@ def test_two_streams_created_in_one_chat_from_different_sessions_get_distinct_pr
     assert (streams['work']['label'], streams['home']['label']) == ('W', 'H')
     work = _finalized(integration, data_dir, stream='work', origin_session='s-old', title='Ask 0')
     home_digest = _finalized(integration, data_dir, stream='home', origin_session='s-new', title='Ask 0')
-    assert '**W1.** Ask 0' in work['text'] and '**H1.** Ask 0' in home_digest['text']
+    assert '### W1. Ask 0' in work['text'] and '### H1. Ask 0' in home_digest['text']
     with pytest.raises(UserError, match='ambiguous'):        # bare number: ask which stream
         integration.decide({'dismiss': ['1']}, session_id='s-reply', today='2030-01-01')
     out = integration.decide({'dismiss': ['H1']}, session_id='s-reply', today='2030-01-01')
@@ -256,7 +256,7 @@ def test_same_session_streams_freeze_prefix_into_digest_and_reply(settings, data
     _two_streams(rt, ctx, ('parent', 'parent'))
     work = _finalized(integration, data_dir, stream='work', origin_session='parent', title='Ask 0')
     home_digest = _finalized(integration, data_dir, stream='home', origin_session='parent', title='Ask 0')
-    assert '**W1.** Ask 0' in work['text'] and '**H2.** Ask 0' in home_digest['text']
+    assert '### W1. Ask 0' in work['text'] and '### H2. Ask 0' in home_digest['text']
     out = integration.decide({'dismiss': ['H2']}, session_id='parent', today='2030-01-01')
     assert out['dismissed'] == [home_digest['items'][0]['proposal_id']]
 
