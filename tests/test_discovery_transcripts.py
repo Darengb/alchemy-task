@@ -137,3 +137,132 @@ def test_config_tool_exposes_transcript_opt_in():
     from alchemy_task.discovery_integration import SCHEMAS
     schema = SCHEMAS['discovery_config']
     assert 'transcripts' in schema['parameters']['properties']['action']['enum']
+
+
+# ---- review fixes: kept customization, skip-list derivation, exclusions, legacy, bounded links
+
+
+def _three(settings, data_dir, tmp_path):
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    ctx.state.set('streams', {**ctx.state.get('streams'), 'work': {**ctx.state.get('streams')['work'], 'sources': []}})
+    _mail(integration, ctx, 'mbg', 'Work email', 'acct-a', 'all mail')
+    _mail(integration, ctx, 'band', 'Band email', 'acct-b', 'inbox')
+    return integration, rt, ctx
+
+
+def test_rerun_keeps_customized_transcript_source_and_applies_only_passed_fields(settings, data_dir, tmp_path):
+    integration, rt, ctx = _three(settings, data_dir, tmp_path)
+    integration.configure_transcripts('work', keywords=['custom'], user_approved=True)
+    out = integration.configure_transcripts('work', user_approved=True)
+    configs = ctx.state.get('discovery_sources')['work']
+    assert configs['mbg-transcripts']['keywords'] == ['custom']
+    assert sorted(out['kept']) == ['band-transcripts', 'mbg-transcripts'] and out['created'] == []
+    out = integration.configure_transcripts('work', senders=['@otter.ai'], user_approved=True)
+    configs = ctx.state.get('discovery_sources')['work']
+    assert configs['mbg-transcripts']['service_senders'] == ['@otter.ai']
+    assert configs['mbg-transcripts']['keywords'] == ['custom']
+    assert configs['mbg']['transcript_senders'] == ['@otter.ai']
+    assert sorted(out['updated']) == ['band-transcripts', 'mbg-transcripts']
+
+
+def test_reconfiguring_mail_source_keeps_transcript_skip_list(settings, data_dir, tmp_path):
+    integration, rt, ctx = _three(settings, data_dir, tmp_path)
+    integration.configure_transcripts('work', senders=['@otter.ai'], user_approved=True)
+    # Path 1: action=source re-saves the mail config without transcript_senders.
+    _mail_cfg = {'source_key': 'mbg', 'name': 'Work email', 'kind': 'mail', 'account_key': 'acct-a', 'scope': 'all mail',
+                 'read_method': 'reader', 'sender_domains': ['example.test'], 'toolsets': ['mail'],
+                 'relevance': {'identity_requirements': [], 'rules': 'Follow-ups'}}
+    integration.configure('work', dict(_mail_cfg), user_approved=True)
+    assert ctx.state.get('discovery_sources')['work']['mbg']['transcript_senders'] == ['@otter.ai']
+    # Path 2: a stored config lost the field (older save); the run derives it anyway.
+    all_configs = ctx.state.get('discovery_sources')
+    all_configs['work']['mbg'].pop('transcript_senders')
+    all_configs['work']['band'].pop('transcript_senders')
+    ctx.state.set('discovery_sources', all_configs)
+    run = integration.start('work', session_id='parent')
+    frozen = {c['source_key']: c for c in run['sources']}
+    assert frozen['mbg']['transcript_senders'] == ['@otter.ai']
+    assert frozen['band']['transcript_senders'] == ['@otter.ai']
+
+
+def test_rerun_reports_existing_source_of_excluded_mailbox_and_removes_only_on_request(settings, data_dir, tmp_path):
+    integration, rt, ctx = _three(settings, data_dir, tmp_path)
+    integration.configure_transcripts('work', user_approved=True)
+    out = integration.configure_transcripts('work', exclude=['band'], user_approved=True)
+    configs = ctx.state.get('discovery_sources')['work']
+    assert out['excluded_existing'] == ['band-transcripts'] and 'band-transcripts' in configs
+    assert out.get('removed', []) == []
+    names = [s['name'] for s in ctx.state.get('streams')['work']['sources']]
+    out = integration.configure_transcripts('work', exclude=['band'], remove=True, user_approved=True)
+    configs = ctx.state.get('discovery_sources')['work']
+    assert out['removed'] == ['band-transcripts'] and 'band-transcripts' not in configs
+    assert 'transcript_senders' not in configs['band'] and 'mbg-transcripts' in configs
+    after = [s['name'] for s in ctx.state.get('streams')['work']['sources']]
+    assert len(after) == len(names) - 1 and 'Band email meeting transcripts' not in after
+
+
+def test_opt_in_refuses_when_legacy_transcript_source_covers_same_mailbox(settings, data_dir, tmp_path):
+    integration, rt, ctx = _three(settings, data_dir, tmp_path)
+    streams = ctx.state.get('streams')
+    streams['work']['sources'].append({'name': 'Gemini notes', 'scope': 'all mail', 'method': 'reader'})
+    ctx.state.set('streams', streams)
+    integration.configure('work', {'source_key': 'gemini', 'name': 'Gemini notes', 'kind': 'transcript', 'account_key': 'acct-a',
+        'scope': 'all mail', 'read_method': 'reader', 'service_sender': 'gemini-notes@google.com',
+        'relevance': {'identity_requirements': [], 'rules': 'Follow-ups'}}, user_approved=True)
+    with pytest.raises(UserError, match='gemini'):
+        integration.configure_transcripts('work', user_approved=True)
+    # And action=source refuses a second transcript source on the same account and scope.
+    streams = ctx.state.get('streams')
+    streams['work']['sources'].append({'name': 'Otter notes', 'scope': 'all mail', 'method': 'reader'})
+    ctx.state.set('streams', streams)
+    with pytest.raises(UserError, match='gemini'):
+        integration.configure('work', {'source_key': 'otter', 'name': 'Otter notes', 'kind': 'transcript', 'account_key': 'acct-a',
+            'scope': 'all mail', 'read_method': 'reader', 'service_senders': ['@otter.ai'],
+            'relevance': {'identity_requirements': [], 'rules': 'Follow-ups'}}, user_approved=True)
+
+
+def test_long_mailbox_names_get_distinct_transcript_names_and_sweep_reverified(settings, data_dir, tmp_path, monkeypatch):
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    ctx.state.set('streams', {**ctx.state.get('streams'), 'work': {**ctx.state.get('streams')['work'], 'sources': []}})
+    long = 'Shared mailbox for the regional operations and partner coordination team number'
+    _mail(integration, ctx, 'one', long + ' one', 'acct-a', 'inbox')
+    _mail(integration, ctx, 'two', long + ' two', 'acct-b', 'inbox')
+    calls = []
+    import alchemy_task.jobs as jobs
+    monkeypatch.setattr(jobs, 'reverify_sweep', lambda rt: calls.append(1) or {})
+    integration.configure_transcripts('work', user_approved=True)
+    configs = ctx.state.get('discovery_sources')['work']
+    names = {configs['one-transcripts']['name'], configs['two-transcripts']['name']}
+    assert len(names) == 2 and all(len(n) <= 80 for n in names)
+    assert len(ctx.state.get('streams')['work']['sources']) == 4
+    assert calls
+
+
+def test_mailbox_read_once_when_transcript_source_collects_first(tmp_path):
+    mail = {**CFG, 'admit_all': True, 'sender_domains': [], 'transcript_senders': ['gemini-notes@google.com']}
+    notes = {**NOTES, 'service_senders': ['gemini-notes@google.com'], 'mailbox_source': 'mail'}
+    threads = [{'id': 't1', 'messages': [message('m1', 'gemini-notes@google.com', subject='Notes: recap')], 'complete': True},
+               {'id': 't3', 'messages': [message('m3', 'peer@example.test', subject='Please approve')], 'complete': True}]
+    _, tstate, _ = collect(tmp_path, notes, lambda c, s, e, k: envelope(c, s, e, threads))
+    assert _ids(tstate) == ['m1']
+    _, mstate, _ = collect(tmp_path, mail, lambda *a: pytest.fail('must reuse the transcript pass snapshot'))
+    assert [b['candidate']['title'] for b in mstate['backlog']] == ['Please approve']
+
+
+def test_opt_in_marks_transcript_source_as_sharing_the_mailbox(settings, data_dir, tmp_path):
+    integration, rt, ctx = _three(settings, data_dir, tmp_path)
+    integration.configure_transcripts('work', user_approved=True)
+    run = integration.start('work', session_id='parent')
+    frozen = {c['source_key']: c for c in run['sources']}
+    assert frozen['mbg-transcripts']['mailbox_source'] == 'mbg'
+
+
+def test_unclosed_anchor_flood_is_linear():
+    import time
+    from alchemy_task.discovery_sources import _html_to_text
+    flood = '<a href="https://x.test/p">label ' * 20000
+    t = time.monotonic()
+    _html_to_text(flood)
+    assert time.monotonic() - t < 2
+    assert _html_to_text('<a data-href="https://bad.test" href="https://good.test/d">Doc</a>') == 'Doc (https://good.test/d)'
+    assert _html_to_text('<a data-href="https://bad.test" href="javascript:1">Doc</a>') == 'Doc'

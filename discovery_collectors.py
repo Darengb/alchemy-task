@@ -184,8 +184,11 @@ def make_daily_reader(config, read_page, *, snapshot_root, read_thread=None, rea
             threads += [{'id':tid,'messages':messages} for tid,messages in direct_messages.items()]
         # Source design: the mail source publishes the all-thread snapshot and
         # transcript consumes it. A transcript listing is sender-filtered, so it
-        # is never published as whole-mailbox evidence.
-        published = kind == 'mail' and not direct_messages
+        # is never published as whole-mailbox evidence. The exception is a
+        # transcript source the opt-in built from a mailbox (mailbox_source):
+        # it lists with that mailbox's own reader and scope, so whichever of the
+        # two collects first publishes and the mailbox is read once.
+        published = (kind == 'mail' or (kind == 'transcript' and bool(frozen.get('mailbox_source')))) and not direct_messages
         if published:
             publish_snapshot(snapshot, account=frozen['account_key'], start=start, end=end, threads=threads, complete=True)
         return project(threads, start, end, raw_pages=state['pages'], shared_snapshot_published=published)

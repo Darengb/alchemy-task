@@ -444,13 +444,18 @@ def _link_text(match) -> str:
     return f"{label} ({url})" if label and html.unescape(label) != html.unescape(url) else url
 
 
+_LINK_RE = re.compile(r"""(?is)<\s*a\b[^>]{0,2000}?(?<![\w-])href\s*=\s*["']([^"'<>]{1,4000})["'][^>]{0,2000}>((?:(?!<\s*a\b).){0,2000}?)<\s*/\s*a\s*>""")
+
+
 def _html_to_text(raw_html: str) -> str:
     # Source block/list boundaries must precede tag stripping.
     text = re.sub(r"(?i)<\s*br\s*/?\s*>", "\n", raw_html)
     text = re.sub(r"(?i)</\s*(?:p|div|li|tr|h[1-6])\s*>", "\n", text)
     text = re.sub(r"(?i)<\s*li[^>]*>", "\n- ", text)
     # Keep link targets (label (url)) so research can open linked transcripts.
-    text = re.sub(r"""(?is)<\s*a\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>(.*?)<\s*/\s*a\s*>""", _link_text, text)
+    # Bounded and linear on untrusted mail: the opening tag and the label are
+    # capped, the label never crosses another <a, and data-href is ignored.
+    text = _LINK_RE.sub(_link_text, text)
     text = re.sub(r"<[^>]+>", "", text)
     text = html.unescape(text)
     return _normalize_text(text)
