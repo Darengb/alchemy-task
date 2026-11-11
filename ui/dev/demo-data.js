@@ -291,7 +291,7 @@ Three bundles: Starter, Classic and Collector. Use the new lifestyle photos.
       proposals: [
         { proposal_id: 'p_chai1', unit_id: 'c1', ref: 'A1', number: 1, kind: 'new', day: d(-2), expires: d(5), state: 'complete', expired: false,
           title: chai.title,
-          current_understanding: 'Customers keep emailing support to ask when the sold-out Winter Spice Chai is back. Jordan asked for back-in-stock alerts, and you said at Monday\u2019s standup that you would set it up before the restock.',
+          current_understanding: 'Customers keep emailing support to ask when the sold-out Winter Spice Chai is back. Jordan asked for back-in-stock alerts, and Maya said at Monday\u2019s standup that she would set it up before the restock.',
           substantive_next_action: 'Tell customers when it is back and let them sign up to be notified.',
           source_links: ['https://example.slack.com/archives/C0SUPPORT/p3', 'https://mail.google.com/mail/u/0/#inbox/demo-standup'], targets: [],
           result: { task_id: chai.task_id, title: chai.title, operation: 'created', state: 'complete' } },

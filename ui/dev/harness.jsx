@@ -22,7 +22,7 @@ if (params.get('video') === 'pending') {
   run.proposals.unshift({
     proposal_id: 'p_chai_video', unit_id: 'cv', ref: 'A1', number: 1, kind: 'new', day: run.day, expires: run.day, state: 'pending', expired: false,
     title: chai.title, area: 'work',
-    current_understanding: 'Customers keep emailing support to ask when the sold-out Winter Spice Chai is back. Jordan asked for back-in-stock alerts, and you said at Monday\u2019s standup that you would set it up before the restock.',
+    current_understanding: 'Customers keep emailing support to ask when the sold-out Winter Spice Chai is back. Jordan asked for back-in-stock alerts, and Maya said at Monday\u2019s standup that she would set it up before the restock.',
     substantive_next_action: 'Tell customers when it is back and let them sign up to be notified.',
     source_links: ['https://example.slack.com/archives/C0SUPPORT/p3', 'https://mail.google.com/mail/u/0/#inbox/demo-standup'],
     research_disposition: 'confident', targets: [],
