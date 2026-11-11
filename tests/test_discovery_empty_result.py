@@ -22,10 +22,12 @@ def test_empty_discovery_reports_result_without_hiding_incomplete_work(tmp_path,
     else:
         assert 'No new follow-ups found.' not in text
         assert 'No new proposals to review.' in text
-    if kind in {'partial', 'failure'}:
-        assert 'degraded' in text
+    if kind == 'partial':
+        assert '**Coverage:** inbox: could not be read' in text
+    if kind == 'failure':
+        assert '**Needs attention:** Supplier response' in text
     if kind == 'existing':
         assert 'Review supplier proof: updated' in text
-    assert 'Reply with the numbers you want.' not in text
+    assert 'Reply with the item numbers you want' not in text
     assert digest.prepare('empty-' + kind, stream='work', day='2030-01-01',
                           origin={'session_id': 'origin'}, items=[], **kwargs) == result

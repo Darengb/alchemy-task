@@ -278,7 +278,7 @@ def test_backlog_marks_candidates_recovered_after_an_owner_change_accepted_not_b
     run = integration.start('work', session_id='parent')['run_id']
     window = integration.store.get_run(run)['config']['windows']['feed']
     integration.collect(run, 'feed', session_id='parent', envelope={**window, 'status': 'partial', 'account_key': 'account', 'items': [
-        {'title': f'Review release {i}', 'source_ids': [f'source:feed:account:issue:i{i}'], 'source_revision': 'v1'} for i in range(4)]})
+        {'title': f'Review release {i}', 'source_ids': [f'source:feed:account:issue:i{i}'], 'source_revision': 'v1', 'body': f'Please review release {i}.'} for i in range(4)]})
     integration.freeze(run, session_id='parent')
     clock = TickClock()
     pool = HostPool(clock, integration.store, run, duration=400, parent='parent')

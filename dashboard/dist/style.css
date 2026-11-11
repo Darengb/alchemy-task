@@ -2812,6 +2812,31 @@ html.at-dragging {
   margin: 10px 0 0 40px;
   font-size: 13.5px;
 }
+.at-prop-addition p {
+  margin: 0;
+  color: var(--at-fg2);
+  line-height: 1.55;
+}
+.at-prop-full {
+  margin: 8px 0 0 32px;
+}
+.at-prop-full .at-disc-head {
+  font-size: 12.5px;
+  color: var(--at-muted);
+}
+.at-prop-full-sec {
+  padding: 6px 8px 0 30px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--at-fg2);
+}
+.at-prop-full-sec p,
+.at-prop-full-sec ul {
+  margin: 2px 0 0;
+}
+.at-prop-full-sec ul {
+  padding-left: 1.1em;
+}
 .at-prop-actions {
   display: flex;
   align-items: center;
@@ -3466,8 +3491,12 @@ html.at-dragging {
 .at-root.is-narrow .at-prop-actions,
 .at-root.is-narrow .at-prop-uncertain,
 .at-root.is-narrow .at-prop-list,
-.at-root.is-narrow .at-prop-foot {
+.at-root.is-narrow .at-prop-foot,
+.at-root.is-narrow .at-prop-full {
   margin-left: 0;
+}
+.at-root.is-narrow .at-prop-full-sec {
+  padding-left: 8px;
 }
 .at-root.is-narrow .at-prop-next {
   flex-direction: column;

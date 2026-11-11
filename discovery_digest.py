@@ -11,14 +11,156 @@ import re
 from pathlib import Path
 from .core.discovery_state import DiscoveryStore, atomic_json, read_json
 from .core.discovery_identity import UserError
+from .core.digest_text import digest_field, first_sentence
 
 
 def _failure_status(failure):
     # Project operational diagnostics only; semantic/user context remains useful.
     reason = str(failure.get('reason') or 'Research needs attention')
+    lifecycle = re.fullmatch(r'\s*lifecycle terminal ([A-Za-z_]+)\s*', reason)
+    if lifecycle:
+        return _LIFECYCLE.get(lifecycle.group(1).upper(), 'research stopped before it finished')
     if re.search(r'(?:Error:|Exception:|Traceback|fatal:|areas/[^\s]+/tasks/|(?:^|\s)/[^\s]+|[a-f0-9]{8}-[a-f0-9-]{27,})', reason):
         return 'Operation unavailable; inspect saved review diagnostics and retry the saved operation'
     return reason[:400]
+
+
+WRITTEN_STATES = {'local_verified', 'git_pending', 'phone_pending', 'complete'}
+# Plain words for research child lifecycle ends; both attempts were used when a failure reaches the digest.
+_LIFECYCLE = {'INTERRUPTED': 'research was interrupted before it finished',
+              'TIMEOUT': 'research timed out before it finished', 'TIMED_OUT': 'research timed out before it finished',
+              'FAILED': 'research failed before it finished', 'ERROR': 'research failed before it finished',
+              'CANCELLED': 'research was cancelled before it finished', 'CANCELED': 'research was cancelled before it finished'}
+
+
+def already_current(item):
+    """An existing-task match whose research says that task already has everything."""
+    return item.get('existing_task_already_current') is True and item.get('kind') in {'semantic', 'selection'} and bool(item.get('targets'))
+
+
+def _attested_read(source):
+    # Read by the agent with the user's own tools: no structured reader proves completeness.
+    return source.get('verification') == 'agent_attested' and source.get('status') in {'partial', 'complete'} and not _skipped(source)
+
+
+def _skipped(source):
+    return list(dict.fromkeys(str(x).split(' skipped: ', 1)[1] for x in source.get('primary_partial') or [] if ' skipped: ' in str(x)))
+
+
+def coverage_degraded(source):
+    """Incomplete coverage that is a real gap; an agent-attested read is not one."""
+    return source.get('status') != 'complete' and not _attested_read(source)
+
+
+def _source_name(source):
+    return str(source.get('name') or source.get('source_key') or source.get('source') or 'source')
+
+
+def _join_names(names):
+    names = list(dict.fromkeys(names))
+    return names[0] if len(names) == 1 else ', '.join(names[:-1]) + ' and ' + names[-1]
+
+
+def _link_label(url):
+    host = re.sub(r'^[a-z]+://', '', str(url).lower()).split('/', 1)[0]
+    if host.endswith('slack.com'): return 'Open Slack thread'
+    if host == 'mail.google.com' or host.startswith('outlook.'): return 'Open email'
+    if host in {'docs.google.com', 'drive.google.com'} or host.endswith(('notion.so', 'notion.site')): return 'Open doc'
+    return 'Open source'
+
+
+def _plural(n, one, many):
+    return f'{n} {one if n == 1 else many}'
+
+
+def render_digest(run, *, stream, day, numbered, already, failures, coverage, outcomes, deferred, blocked):
+    """The Telegram digest text. Short fields come from authored digest_* research
+    fields (first-sentence fallback); the stored items keep the full research."""
+    date = dt.date.fromisoformat(day)
+    review = hashlib.sha256(run.encode()).hexdigest()[:12]
+    head = [f'**Review:** `{review}`', f"**{_plural(len(numbered), 'follow-up', 'follow-ups')}**"]
+    written = [o for o in outcomes if o.get('status') in WRITTEN_STATES]
+    # Blocked existing-task updates count as existing-task outcomes, not failures.
+    if outcomes or blocked: head.append(f"**{_plural(len(outcomes) + len(blocked), 'existing task outcome', 'existing task outcomes')}**")
+    if deferred: head.append(f'**{len(deferred)} deferred**')
+    attention = len(failures)
+    head.append(f"**{attention} {'needs' if attention == 1 else 'need'} attention**")
+    lines = [f'## {stream} Task Discovery', '', f"**{date.strftime('%A, %B')} {date.day}**", ' · '.join(head), '']
+    for item in numbered:
+        semantic = item['kind'] in {'semantic', 'selection'}
+        ref = item['ref']
+        lines += [f"### {ref}. {item['title']}", '']
+        if semantic:
+            lines.append('**Task type:** Potential existing task update')
+            lines.append('**Existing task:** ' + '; '.join(t.get('title', 'Existing task') for t in item.get('targets', [])))
+        elif item.get('research_disposition') == 'uncertain':
+            lines.append('**Task type:** Unsure')
+        else:
+            lines.append('**Task type:** New task')
+        lines.append('')
+        if item.get('research_disposition') == 'uncertain':
+            why = next((str(x) for x in item.get('uncertainty') or [] if str(x).strip()), 'User judgment required.')
+            lines += ['**Why unsure:** ' + first_sentence(why), '']
+        state = digest_field(item, 'digest_current_state')
+        if state: lines += ['**Current state:** ' + state, '']
+        if semantic:
+            addition = digest_field(item, 'digest_addition')
+            if addition: lines += ['**Proposed addition:** ' + addition, '']
+        action = digest_field(item, 'digest_next_action')
+        if action: lines += ['**Next action:** ' + action, '']
+        if semantic:
+            which = ' and name which existing task to add this to' if item['kind'] == 'selection' else ' to add this to the existing task'
+            lines += [f'**Choice:** Reply "{ref}, update"{which}, or "{ref}, create" for a separate task.', '']
+        for url in list(dict.fromkeys(item.get('source_links') or []))[:2]:
+            lines.append(f'[{_link_label(url)} \u2192]({url})')
+        if item.get('source_links'): lines.append('')
+        # Inaccessible supporting sources are evidence limits, kept in the item record only.
+        lines += ['---', '']
+    if not numbered:
+        # Deferred or blocked work is not "nothing new": only a complete check with
+        # nothing left says no follow-ups were found.
+        degraded = bool(failures or any(coverage_degraded(s) for s in coverage))
+        lines += ['No new follow-ups found.' if not degraded and not outcomes and not deferred and not blocked and not already else 'No new proposals to review.', '']
+    footer = []
+    if already:
+        groups = {}
+        for a in already:
+            groups.setdefault(tuple(t.get('title', 'Existing task') for t in a['targets']), []).append(a['title'])
+        footer.append('**Already in your tasks:** ' + '; '.join(
+            ' · '.join(titles) + ' (in ' + ', '.join(f'"{t}"' for t in key) + ')' for key, titles in groups.items()))
+    for outcome in outcomes:
+        line = f"**Existing task:** {outcome['title']}: {outcome['status']}"
+        for surface in ('git', 'phone'):
+            detail = outcome.get(surface) or {}
+            if detail: line += f"; {surface}={detail.get('state', 'unknown')}"
+        if outcome.get('resume_action'): line += '; resume with discovery_conversion_recover for this saved run/unit'
+        footer.append(line)
+    for conflict in blocked:
+        # Multiple exact matches are an unnumbered blocked existing-task item.
+        footer.append(f"**Existing task update blocked:** {conflict['title']}: multiple exact task matches conflict; nothing was changed"
+                      + (' (' + '; '.join(t.get('title', 'Existing task') for t in conflict.get('targets', [])) + ')' if conflict.get('targets') else ''))
+    for failure in failures:
+        footer.append('**Needs attention:** ' + (str(failure['title']) + ': ' if failure.get('title') else '') + _failure_status(failure))
+    for item in deferred:
+        footer.append('**Deferred:** ' + (str(item['title']) + ': ' if item.get('title') else '') + str(item.get('reason') or 'Deferred to the next run')[:400])
+    attested = [_source_name(s) for s in coverage if _attested_read(s)]
+    if attested:
+        verb = 'was' if len(set(attested)) == 1 else 'were'
+        footer.append(f'**Coverage:** {_join_names(attested)} {verb} read with your own tools, so completeness is not verified.')
+    for source in coverage:
+        if _attested_read(source) or source.get('status') == 'complete': continue
+        skipped = _skipped(source)
+        if skipped: detail = ('skipped thread: ' + '; '.join(skipped))[:400]
+        elif source.get('status') == 'failed' or not source.get('backlog_ids') and not source.get('pages'): detail = 'could not be read'
+        else: detail = 'was only partly read'
+        footer.append(f'**Coverage:** {_source_name(source)}: {detail}')
+    for line in footer: lines += [line, '']
+    if numbered:
+        example = next((i['ref'] for i in numbered if i['kind'] == 'new'), numbered[0]['ref'])
+        lines.append(f'Reply with the item numbers you want, like "{example}, create". Items stay open for seven days.')
+    if not written:
+        lines.append('No tasks were created or changed.')
+    return '\n'.join(lines).rstrip() + '\n'
 
 
 class DiscoveryDigest:
@@ -40,9 +182,15 @@ class DiscoveryDigest:
                 return data['digests'][run]
             numbered = []
             key = origin['session_id'] + ':' + day
+            already = []
             for raw in items:
                 if raw['kind'] not in {'new', 'semantic', 'selection'}:
                     raise UserError('only new or update proposals are numbered')
+                if already_current(raw):
+                    # Research says the matched task already records this work: listed once,
+                    # unnumbered, with no proposal record to approve.
+                    already.append({'unit_id': raw['unit_id'], 'title': raw['title'], 'targets': raw.get('targets', [])})
+                    continue
                 binding = [raw['unit_id'], raw['research_revision']]
                 if review_namespace: binding.append(review_namespace)
                 identity = hashlib.sha256(json.dumps(binding).encode()).hexdigest()
@@ -59,62 +207,11 @@ class DiscoveryDigest:
                 data['proposals'][pid] = {'binding': item, 'state': 'pending'}
                 data['seen'][identity] = pid
             failures, coverage, deferred, blocked = failures or [], coverage or [], deferred or [], blocked or []
-            lines = [f'Task Discovery: {stream} ({day})']
-            degraded = bool(failures or any(s.get('status') != 'complete' for s in coverage))
-            # Cap deferrals are a separate count: neither failures nor degraded.
-            # Blocked existing-task updates count as existing-task outcomes, not failures.
-            lines.append(f"{dt.date.fromisoformat(day).strftime('%A')}: {len(numbered)} new proposals; {len(outcomes or []) + len(blocked)} existing-task outcomes; {len(failures)} failures"
-                         + (f'; {len(deferred)} deferred' if deferred else '') + ('; degraded' if degraded else ''))
-            lines.append('Review: ' + hashlib.sha256(run.encode()).hexdigest()[:12])
-            for item in numbered:
-                semantic = item['kind'] in {'semantic', 'selection'}
-                lines.append(f"**{item['ref']}.** {item['title']}")
-                # Source task relationship labels; they never change numbering or matching.
-                if semantic:
-                    lines.append('Task type: Potential existing task update')
-                    lines.append('Existing task: ' + '; '.join(t.get('title', 'Existing task') for t in item.get('targets', [])))
-                elif item.get('research_disposition') == 'uncertain':
-                    lines.append('Task type: Unsure')
-                else:
-                    lines.append('Task type: New task')
-                if item.get('research_disposition') == 'uncertain':
-                    lines.append('Why unsure: ' + '; '.join(item.get('uncertainty') or ['See verified open questions; user judgment required']))
-                if item.get('current_understanding'): lines.append('Current state: ' + item['current_understanding'])
-                if item.get('substantive_next_action'): lines.append('Next action: ' + item['substantive_next_action'])
-                if item.get('new_information'): lines.append(('Proposed addition: ' if semantic else 'Addition: ') + '; '.join(item['new_information']))
-                if semantic:
-                    which = ' and name which existing task' if item['kind'] == 'selection' else ''
-                    lines.append(f'Choice: reply "{item["ref"]}, update"{which} to add this to the existing task, or "{item["ref"]}, create" for a separate task.')
-                if item.get('source_links'): lines.append('Sources: ' + ' '.join(item['source_links']))
-                # Source: inaccessible supporting sources are evidence limits, kept in the item record only.
-                lines.append('---')
-            if not numbered:
-                # Deferred or blocked work is not "nothing new": only a complete check with
-                # nothing left says no follow-ups were found.
-                lines.append('No new follow-ups found.' if not degraded and not outcomes and not deferred and not blocked else 'No new proposals to review.')
-            for outcome in outcomes or []:
-                line = f"Existing task: {outcome['title']}: {outcome['status']}"
-                for surface in ('git', 'phone'):
-                    detail = outcome.get(surface) or {}
-                    if detail: line += f"; {surface}={detail.get('state', 'unknown')}"
-                if outcome.get('resume_action'): line += '; resume with discovery_conversion_recover for this saved run/unit'
-                lines.append(line)
-            for conflict in blocked:
-                # Source: multiple exact matches are an unnumbered Blocked existing-task item.
-                lines.append(f"Existing task update blocked: {conflict['title']}: multiple exact task matches conflict; nothing was changed"
-                             + (' (' + '; '.join(t.get('title', 'Existing task') for t in conflict.get('targets', [])) + ')' if conflict.get('targets') else ''))
-            for failure in failures:
-                lines.append('Attention: ' + (str(failure['title']) + ': ' if failure.get('title') else '') + _failure_status(failure))
-            for item in deferred:
-                lines.append('Deferred: ' + (str(item['title']) + ': ' if item.get('title') else '') + str(item.get('reason') or 'Deferred to the next run')[:400])
-            for source in coverage:
-                skipped = list(dict.fromkeys(str(x).split(' skipped: ', 1)[1] for x in source.get('primary_partial') or [] if ' skipped: ' in str(x)))
-                detail = (': skipped thread: ' + '; '.join(skipped))[:400] if skipped else ': source read unavailable; inspect saved review diagnostics' if source.get('error') else ''
-                lines.append('Coverage: ' + str(source.get('source_key', source.get('source', 'source'))) + ': ' + str(source.get('status', 'unknown')) + detail)
-            if numbered:
-                lines.append('Reply with the numbers you want. Other items remain replyable for seven days.')
+            text = render_digest(run, stream=stream, day=day, numbered=numbered, already=already, failures=failures,
+                                 coverage=coverage, outcomes=outcomes or [], deferred=deferred, blocked=blocked)
             result = {'run_id': run, 'stream': stream, 'day': day, 'prepared_at': dt.datetime.now(dt.timezone.utc).isoformat(), 'origin': origin, 'items': numbered,
-                      'failures': failures, 'deferred': deferred, 'coverage': coverage, 'outcomes': outcomes or [], 'blocked': blocked, 'text': '\n'.join(lines)}
+                      'failures': failures, 'deferred': deferred, 'coverage': coverage, 'outcomes': outcomes or [], 'blocked': blocked,
+                      'already_current': already, 'text': text}
             result['sha256'] = hashlib.sha256(result['text'].encode()).hexdigest()
             data['digests'][run] = result
             data['delivery'][run] = {'state': 'prepared', 'digest_sha256': result['sha256'], 'origin': origin}

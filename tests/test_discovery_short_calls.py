@@ -481,7 +481,7 @@ def test_integration_researches_without_receipt_and_digest_refuses_until_researc
     run = integration.start('work', session_id='parent')['run_id']
     window = integration.store.get_run(run)['config']['windows']['feed']
     integration.collect(run, 'feed', session_id='parent', envelope={**window, 'status': 'partial', 'account_key': 'account', 'items': [
-        {'title': 'Review release', 'source_ids': ['source:feed:account:issue:one'], 'source_revision': 'v1'}]})
+        {'title': 'Review release', 'source_ids': ['source:feed:account:issue:one'], 'source_revision': 'v1', 'body': 'Please review the release.'}]})
     integration.freeze(run, session_id='parent')
     clock = Clock()
     pool = SlowPool(clock, integration.store, run, duration=400)

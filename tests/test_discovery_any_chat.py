@@ -35,7 +35,7 @@ def test_third_chat_resumes_and_recovers_without_relaunch_or_double_charge(setti
     run = integration.start('work', session_id='parent')['run_id']
     window = integration.store.get_run(run)['config']['windows']['feed']
     integration.collect(run, 'feed', session_id='parent', envelope={**window, 'status': 'partial', 'account_key': 'account', 'items': [
-        {'title': f'Review release {i}', 'source_ids': [f'source:feed:account:issue:i{i}'], 'source_revision': 'v1'} for i in range(4)]})
+        {'title': f'Review release {i}', 'source_ids': [f'source:feed:account:issue:i{i}'], 'source_revision': 'v1', 'body': f'Please review release {i}.'} for i in range(4)]})
     integration.freeze(run, session_id='parent')
     clock = TickClock()
     pool = HostPool(clock, integration.store, run, duration=400, parent='parent')

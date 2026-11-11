@@ -97,6 +97,12 @@ After the full primary source and before broad implementation research, search c
 
 Persist every plausible nomination in `existing_task_candidates` with canonical workspace-relative task path. A semantic scope match lacking stored decisive provenance uses `match_basis=related_only`, even when clearly the same work. Explain verified title, scope overlap and useful addition. Never fabricate provenance or upgrade related context to exact identity.
 
+Set the optional `existing_task_already_current` to true only when a task you nominated already records this work's current state and next step, so nothing would be added to it. The digest then lists the item once under "Already in your tasks" instead of numbering it as a proposal. Otherwise omit it or set false.
+
+### Digest summaries
+
+The digest shows short fields, not the full research. For every workstream write `digest_current_state` (what is happening and what is still open), `digest_next_action` (the one next step) and, for an existing-task match, `digest_addition` (what is new compared with that task). Each is 1 to 2 plain, complete sentences under 300 characters that stand alone for the user: no hedging, lists or research process. `current_understanding`, `substantive_next_action` and `new_information` stay the full research for the agent, the dossier and the task created on approval. Older bundles without these fields fall back to the first sentence of the long field.
+
 ### Broader project and implementation research
 
 1. Establish the actual request, substantive owner/collaborators, latest decisions, dependencies/risks, open questions, approval/delegation/completion state and unresolved user/agent action.

@@ -393,10 +393,10 @@ def test_cap_deferral_is_a_separate_digest_line_and_stays_queued_for_the_next_ru
 
     run, report, digest = day()
     lines = digest['text'].splitlines()
-    assert lines[1].endswith(': 1 new proposals; 0 existing-task outcomes; 0 failures; 1 deferred')
-    assert 'degraded' not in digest['text'] and not [l for l in lines if l.startswith('Attention:')]
-    assert 'Deferred: Plan vendor renewal: Daily research cap reached; queued for the next run' in lines
-    assert 'Coverage: feed: complete' in lines
+    assert '**1 follow-up** · **1 deferred** · **0 need attention**' in digest['text']
+    assert not [l for l in lines if l.startswith('**Needs attention:**')]
+    assert '**Deferred:** Plan vendor renewal: Daily research cap reached; queued for the next run' in lines
+    assert '**Coverage:**' not in digest['text']
     backlog = {e['candidate']['title']: e['status'] for e in integration.store.source_state('work', 'feed')['backlog']}
     assert backlog == {'Review release notes': 'accepted', 'Plan vendor renewal': 'deferred'}
     record = call('discovery_runs', {'run_id': run})
@@ -409,7 +409,7 @@ def test_cap_deferral_is_a_separate_digest_line_and_stays_queued_for_the_next_ru
     run2, report2, digest2 = day()
     assert run2 != run and [integration.store.get_candidate(run2, c)['title'] for c in report2['budget_deferred']] == ['Plan vendor renewal']
     assert 'No new follow-ups found.' not in digest2['text'] and 'degraded' not in digest2['text']
-    assert 'Deferred: Plan vendor renewal: Daily research cap reached; queued for the next run' in digest2['text'].splitlines()
+    assert '**Deferred:** Plan vendor renewal: Daily research cap reached; queued for the next run' in digest2['text'].splitlines()
     assert {e['candidate']['title']: e['status'] for e in integration.store.source_state('work', 'feed')['backlog']}['Plan vendor renewal'] == 'deferred'
 
 

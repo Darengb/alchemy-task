@@ -23,7 +23,7 @@ from .discovery_sources import (SourceAdapter, collect_attested, inline_primary,
                                 DEFAULT_TRANSCRIPT_KEYWORDS, transcript_keywords, transcript_senders)
 from .discovery_runner import DiscoveryRunner, RunnerPolicy, make_tool_handlers, make_hooks, CHECKLIST, BINDING_KEYS
 from .discovery_conversion import DiscoveryConversion
-from .discovery_digest import DiscoveryDigest
+from .discovery_digest import DiscoveryDigest, coverage_degraded
 
 
 def _pick(value, path):
@@ -1123,6 +1123,8 @@ class DiscoveryIntegration:
             record = {'run_id': run_id, 'unit_id': unit_id, 'request': request, 'kind': outcome['kind'],
                       'targets': outcome['targets'], 'title': outcome['research']['title'],
                       **{k: outcome['research'].get(k) for k in ('current_understanding', 'substantive_next_action', 'source_links', 'related_context_links', 'new_information', 'sources_unavailable')},
+                      # Authored short digest text and the nothing-new flag are optional research fields.
+                      **{k: outcome['research'][k] for k in ('digest_current_state', 'digest_next_action', 'digest_addition', 'existing_task_already_current') if k in outcome['research']},
                       'research_disposition': outcome['research']['disposition'],
                       'uncertainty': outcome['research']['decisions_and_open_questions']['open_questions'],
                       'research_revision': content_revision(outcome['research'])}
@@ -1156,7 +1158,9 @@ class DiscoveryIntegration:
                                  'status': receipt.get('state', 'noop' if decision['request']['decision'] == 'noop' else 'unknown'),
                                  'git': receipt.get('git'), 'phone': receipt.get('phone'),
                                  'resume_action': {'tool': 'discovery_conversion_recover', 'run_id': run_id, 'unit_id': candidate['candidate_id']} if receipt.get('state') != 'complete' and decision['request']['decision'] == 'auto' else None})
-        coverage = list(self._collection_receipts(ledger).values())
+        names = {c['source_key']: c['name'] for c in ledger['config'].get('sources', []) if isinstance(c, dict) and c.get('source_key') and c.get('name')}
+        coverage = [{**r, 'name': names[r['source_key']]} if r.get('source_key') in names and not r.get('name') else r
+                    for r in self._collection_receipts(ledger).values()]
         supplement_failures = []
         if 'supplement-selection' in ledger['resources']:
             info = ledger['resources']['supplement-selection']
@@ -1203,7 +1207,7 @@ class DiscoveryIntegration:
             if len(reviewed) != 1: raise UserError('unknown Review code in this profile; paste a stored digest or supply its exact proposal ID')
         messages, _ = host_conversation(self.home, session_id)
         def present(text):
-            codes = {m.group(1).lower(): m.start() for m in re.finditer(r'\bReview:\s*([0-9a-fA-F]{12})\b', text)}
+            codes = {m.group(1).lower(): m.start() for m in re.finditer(r'\bReview:(?:\*\*)?\s*`?([0-9a-fA-F]{12})\b', text)}
             positions = {}
             for run, digest in data['digests'].items():
                 position = codes.get(hashlib.sha256(run.encode()).hexdigest()[:12], -1)
@@ -1389,7 +1393,7 @@ class DiscoveryIntegration:
         result['summary'] = {state: sum(p['state'] == state for p in proposals) for state in ('pending', 'approved', 'complete', 'dismissed')}
         result['summary'].update(auto_updated=sum(o['status'] in {'local_verified', 'git_pending', 'phone_pending', 'complete'} for o in result['outcomes']),
                                  conflicts=len(result['conflicts']), failures=len(result['failures']), deferred=len(result['deferred']))
-        result['degraded'] = bool(result['failures'] or any(c.get('status') != 'complete' for c in result['coverage']))
+        result['degraded'] = bool(result['failures'] or any(coverage_degraded(c) for c in result['coverage']))
         return result
 
 
