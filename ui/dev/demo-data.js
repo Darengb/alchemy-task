@@ -221,7 +221,7 @@ Three bundles: Starter, Classic and Collector. Use the new lifestyle photos.
         sources: [{ name: 'Personal email', type: 'email', scope: 'Inbox' }, { name: 'Family calendar', type: 'other', scope: 'Next 14 days' }],
         last_run: `${d(-1)}T23:00:00Z`, activation_state: 'active' },
     ],
-    tasks: { default_area: 'work', research_by_default: true, timezone: 'America/New_York', workspace_root: '~/tasks', areas: ['work', 'studio', 'home'] },
+    tasks: { default_area: 'work', research_by_default: true, research_model: null, research_provider: null, timezone: 'America/New_York', workspace_root: '~/tasks', areas: ['work', 'studio', 'home'] },
     sync: { git: 'Committed and pushed', reminders: 'Not connected' },
   }
   return { tasks, runs, settings, areas: ['work', 'studio', 'home'] }

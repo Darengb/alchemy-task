@@ -3,12 +3,14 @@
 import React from 'react'
 import { describeError } from './api.js'
 import { useApp } from './store.js'
+import { CopyPrompt } from './discovery.jsx'
 import { AreaDot, Button, Icon, IconButton, Menu, Spinner, cx, useOverlay, markScrolled, useSheetDismiss, useToast } from './ui.jsx'
 
 const FREQUENCIES = [
   ['daily', 'Every day'], ['weekdays', 'Weekdays'], ['every 4 hours', 'Every 4 hours'],
   ['every 3 hours', 'Every 3 hours'], ['every 2 hours', 'Every 2 hours'], ['hourly', 'Every hour'],
 ]
+const RESEARCH_MODEL_PROMPT = 'Help me pick a research model'
 const timed = (f) => f === 'daily' || f === 'weekdays'
 
 function to24(t) {
@@ -171,6 +173,25 @@ function TaskDefaults({ t, reload }) {
         <button type="button" role="switch" aria-checked={!!t.research_by_default} className={cx('at-switch', t.research_by_default && 'is-on')}
                 onClick={() => set({ research_by_default: !t.research_by_default })}><i /></button>
       </span>
+      <span className="at-muted">Research model</span>
+      <span className="at-research-model">
+        <ModelInput label="Research model" value={t.research_model} onSave={(v) => set({ research_model: v })} />
+        <ModelInput label="Research provider" value={t.research_provider} small onSave={(v) => set({ research_provider: v })} />
+        <CopyPrompt className="is-compact" text={RESEARCH_MODEL_PROMPT} />
+      </span>
     </div>
+  )
+}
+
+// Saves on blur or Enter, only when the text changed. Empty means research runs on the main model.
+function ModelInput({ label, value, small, onSave }) {
+  const [text, setText] = React.useState(value || '')
+  React.useEffect(() => { setText(value || '') }, [value])
+  const commit = () => { const v = text.trim(); if (v !== (value || '')) onSave(v) }
+  return (
+    <input type="text" className={cx('at-field at-model-input', small && 'is-small')} aria-label={label} value={text}
+           placeholder={small ? 'Provider (optional)' : 'Use main model'} maxLength={200} spellCheck={false}
+           onChange={(e) => setText(e.target.value)} onBlur={commit}
+           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() } }} />
   )
 }

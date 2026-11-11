@@ -2133,6 +2133,28 @@ html.at-dragging {
   align-items: center;
   font-size: 13px;
 }
+.at-research-model {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.at-model-input {
+  cursor: text;
+  width: 220px;
+  font-family: inherit;
+  outline: none;
+}
+.at-model-input.is-small {
+  width: 150px;
+}
+.at-model-input:focus {
+  border-color: var(--at-line-strong);
+  color: var(--at-fg);
+}
+.at-research-model .at-copy-prompt {
+  flex-basis: 100%;
+}
 .at-more-grid > .at-muted,
 .at-set-grid > .at-muted {
   font-family: var(--at-mono);

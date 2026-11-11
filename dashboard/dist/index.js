@@ -2563,6 +2563,7 @@
     ["every 2 hours", "Every 2 hours"],
     ["hourly", "Every hour"]
   ];
+  var RESEARCH_MODEL_PROMPT = "Help me pick a research model";
   var timed = (f) => f === "daily" || f === "weekdays";
   function to24(t) {
     const m = String(t || "").trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
@@ -2663,7 +2664,37 @@
         onClick: () => set({ research_by_default: !t.research_by_default })
       },
       /* @__PURE__ */ react_dashboard_default.createElement("i", null)
-    )));
+    )), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Research model"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-research-model" }, /* @__PURE__ */ react_dashboard_default.createElement(ModelInput, { label: "Research model", value: t.research_model, onSave: (v) => set({ research_model: v }) }), /* @__PURE__ */ react_dashboard_default.createElement(ModelInput, { label: "Research provider", value: t.research_provider, small: true, onSave: (v) => set({ research_provider: v }) }), /* @__PURE__ */ react_dashboard_default.createElement(CopyPrompt, { className: "is-compact", text: RESEARCH_MODEL_PROMPT })));
+  }
+  function ModelInput({ label, value, small, onSave }) {
+    const [text, setText] = react_dashboard_default.useState(value || "");
+    react_dashboard_default.useEffect(() => {
+      setText(value || "");
+    }, [value]);
+    const commit = () => {
+      const v = text.trim();
+      if (v !== (value || "")) onSave(v);
+    };
+    return /* @__PURE__ */ react_dashboard_default.createElement(
+      "input",
+      {
+        type: "text",
+        className: cx("at-field at-model-input", small && "is-small"),
+        "aria-label": label,
+        value: text,
+        placeholder: small ? "Provider (optional)" : "Use main model",
+        maxLength: 200,
+        spellCheck: false,
+        onChange: (e) => setText(e.target.value),
+        onBlur: commit,
+        onKeyDown: (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.currentTarget.blur();
+          }
+        }
+      }
+    );
   }
 
   // ui/src/App.jsx

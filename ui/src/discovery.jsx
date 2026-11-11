@@ -123,7 +123,7 @@ function SourcesBar({ streams }) {
   )
 }
 
-function CopyPrompt({ text, className }) {
+export function CopyPrompt({ text, className }) {
   const toast = useToast()
   const copy = async () => toast((await copyText(text)) ? 'Copied. Paste it into a chat with Hermes.' : 'Could not copy')
   return (

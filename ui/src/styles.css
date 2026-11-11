@@ -648,6 +648,11 @@ html.at-dragging { -webkit-user-select: none; user-select: none; }
 .at-more { margin: 18px -10px 0; border-top: 1px solid var(--at-line-soft); padding-top: 8px; }
 .at-more .at-disc-body { padding: 4px 10px 8px; }
 .at-more-grid, .at-set-grid { display: grid; grid-template-columns: max-content 1fr; gap: 12px 20px; align-items: center; font-size: 13px; }
+.at-research-model { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.at-model-input { cursor: text; width: 220px; font-family: inherit; outline: none; }
+.at-model-input.is-small { width: 150px; }
+.at-model-input:focus { border-color: var(--at-line-strong); color: var(--at-fg); }
+.at-research-model .at-copy-prompt { flex-basis: 100%; }
 .at-more-grid > .at-muted, .at-set-grid > .at-muted { font-family: var(--at-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; }
 .at-empty-notes { display: block; width: 100%; padding: 14px; border: 1px dashed var(--at-line); border-radius: 8px; background: none; cursor: pointer; color: var(--at-faint); text-align: left; }
 .at-empty-notes:hover { color: var(--at-accent-text); border-color: rgba(110, 120, 255, .5); background: var(--at-soft); }

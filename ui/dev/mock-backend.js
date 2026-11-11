@@ -135,7 +135,7 @@ export function createMockBackend({ today = nyToday() } = {}) {
       return { ok: true, stream: clone(s), message: `Updated ${s.name}: ${s.when}.` }
     }],
     ['POST', /^\/settings\/streams\/([^/]+)\/run$/, (q, [name]) => ({ ok: true, message: `The ${decodeURIComponent(name)} discovery run has started. Its proposals will appear here.` })],
-    ['PATCH', /^\/settings\/tasks$/, (q, m, body) => { Object.assign(db.settings.tasks, body); if (body.default_area) db.settings.tasks.default_area = body.default_area; return { ok: true } }],
+    ['PATCH', /^\/settings\/tasks$/, (q, m, body) => { Object.assign(db.settings.tasks, body); for (const k of ['research_model', 'research_provider']) if (body[k] === '') db.settings.tasks[k] = null; if (body.default_area) db.settings.tasks.default_area = body.default_area; return { ok: true } }],
   ]
 
   async function send(method, path, body) {
