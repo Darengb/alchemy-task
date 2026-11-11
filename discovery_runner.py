@@ -84,6 +84,32 @@ SETTLE_CALLS = 2
 ORPHAN_MARGIN = 120
 
 
+PRIMARY_UNREADABLE_MARKERS = ('primary_unreadable', 'primary_read_blocked', 'could not read its primary source')
+PRIMARY_UNREADABLE_LIMIT = 2
+PRIMARY_UNREADABLE_MESSAGE = ('research workers cannot read the primary sources; the collected items lack their conversation '
+                              'text. Stop, fix collection, then start a fresh run.')
+
+
+def primary_unreadable(*evidence):
+    """True when a reason string or a payload's workstream errors/reasons report a primary read failure."""
+    texts = []
+
+    def walk(value, keep=False):
+        if isinstance(value, str):
+            if keep: texts.append(value)
+        elif isinstance(value, dict):
+            for k, v in value.items():
+                walk(v, keep or ('error' in str(k).lower() or 'reason' in str(k).lower()))
+        elif isinstance(value, list):
+            for v in value: walk(v, keep)
+    for item in evidence:
+        if isinstance(item, str):
+            texts.append(item)
+        elif isinstance(item, dict):
+            walk(item.get('workstreams') if isinstance(item.get('workstreams'), list) else item)
+    return any(m in t.lower() for t in texts for m in PRIMARY_UNREADABLE_MARKERS)
+
+
 @dataclasses.dataclass(frozen=True)
 class RunnerPolicy:
     slots: int = 3
@@ -385,6 +411,8 @@ class DiscoveryRunner:
         receipt['summary_sha256'] = hashlib.sha256(str(result.get('summary') or '').encode()).hexdigest()
         self.store.observe_terminal(run, token, state=state, receipt=receipt)
         attempt = self.store.get_attempt(run, token)
+        if attempt.get('payload'):
+            self._note_primary(run, attempt, read_json(self.store.run_dir(run) / 'spool' / (token + '.json')))
         if attempt['state'] in {'accepted_bundle', 'rejected_retryable', 'exhausted'}:
             return
         if attempt['fenced'] and attempt.get('fence_reason') not in {'execution_timeout', 'admission_timeout'}:
@@ -406,6 +434,19 @@ class DiscoveryRunner:
         if reason:
             self.store.reject_attempt(run, token, reason=reason[:500], retryable=True)
 
+    def _note_primary(self, run_id, attempt, *evidence):
+        """Count children that could not read their primary source; two in one run hold it."""
+        if not primary_unreadable(*evidence):
+            return
+        with self._state(run_id) as state:
+            seen = sorted(set(state.get('primary_unreadable_candidates', []) + [attempt['candidate_id']]))
+            state['primary_unreadable_candidates'] = seen
+            if len(seen) >= PRIMARY_UNREADABLE_LIMIT and 'primary_unreadable' not in state['holds']:
+                state['holds'] = sorted(set(state['holds'] + ['primary_unreadable']))
+                state['primary_unreadable_error'] = PRIMARY_UNREADABLE_MESSAGE
+        if len(seen) >= PRIMARY_UNREADABLE_LIMIT:
+            self._model_holds.add(run_id)  # stops further launches in this call
+
     def _hold_model(self, run_id, message):
         with self._state(run_id) as state:
             state['holds'] = sorted(set(state['holds'] + ['research_model']))
@@ -415,6 +456,11 @@ class DiscoveryRunner:
     @staticmethod
     def _held_report(run_id, state):
         holds = state['holds']
+        if 'primary_unreadable' in holds:
+            error = state.get('primary_unreadable_error') or PRIMARY_UNREADABLE_MESSAGE
+            action = ('Research is stopped and unfinished: %s Tell the user. Do not release this hold or call '
+                      'discovery_research_run again for run_id %s.' % (error, run_id))
+            return {'run_id': run_id, 'status': 'held', 'holds': holds, 'primary_unreadable_error': error, 'next_action': action}
         if 'research_model' in holds:
             error = state.get('research_model_error') or 'the research model could not be used.'
             action = ('Research is blocked and unfinished: %s Tell the user. After they change or clear the research model, '
@@ -732,7 +778,7 @@ class DiscoveryRunner:
             next_action = ('Research is still running (%d running, %d queued). Call discovery_research_run again with run_id %s; '
                            'do not join or prepare a digest yet.' % (counts['running'], counts['queued'], run_id))
         with self._state(run_id) as state:
-            if 'research_model' in state['holds']:
+            if {'research_model', 'primary_unreadable'} & set(state['holds']):
                 # Reported in the call that set it, never as complete.
                 return {**self._held_report(run_id, state), 'counts': counts, 'max_logical_slots': maximum,
                         'awaiting_parent': awaiting, 'unknown_candidates': unknowns, 'queued': queued,
@@ -762,6 +808,7 @@ class DiscoveryRunner:
         if type(assessment.get('accepted')) is not bool:
             raise UserError('explicit accepted boolean required')
         if assessment['accepted'] is False:
+            self._note_primary(run_id, a, assessment.get('reason'), read_json(self.store.run_dir(run_id) / 'spool' / (token + '.json')))
             return self.store.reject_attempt(run_id, token, reason=assessment['reason'], retryable=assessment.get('retryable') is True, semantic=True)
         payload = read_json(self.store.run_dir(run_id) / 'spool' / (token + '.json'))
         others = {c['candidate_id']: c['source_ids'] for c in ledger['candidates'] if not c.get('parent_candidate_id') and c['candidate_id'] != a['candidate_id'] and c['prefilter_disposition'] == 'research' and c.get('research_selection') != 'pilot_skipped'}
