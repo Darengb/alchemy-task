@@ -42,3 +42,9 @@ def test_discovery_skill_starts_from_areas():
 def test_discovery_setup_questions_are_plain_text():
     text = (ROOT / 'skills/discovery/SKILL.md').read_text()
     assert '**Ask setup questions in plain chat text.**' in text and 'every number that applies' in text
+
+
+def test_discovery_setup_checks_state_and_handles_activation_errors():
+    text = (ROOT / 'skills/discovery/SKILL.md').read_text()
+    assert '**Check what already exists first.**' in text
+    assert 'a retry can create a duplicate job' in text and 'did not choose' in text
