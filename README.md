@@ -20,7 +20,7 @@ What if your agent had already worked out everything it needs, from every source
 
 Alchemy Task hands that preparation to Hermes. It catches the asks you would miss and researches every task in the background. If the work will need something from you, whether an MCP server, an API key, a persistent browser profile or a creative decision, it already knows, so it asks at the start instead of halfway through.
 
-Less mental load. Fewer interruptions. Hermes works, and you get on with your evening.
+Less mental load. Fewer interruptions. Hermes flies, and you get on with your evening.
 
 > **Example.** Michael is on a gondola in Venice when his team decides, across 112 Slack messages, to raise every price and move all 1,312 subscribers from 20-day to 30-day deliveries. Discovery turns the thread into one task. Research pulls the current prices from Shopify, finds the new price sheet in Slack, reads Recharge's guide to bulk updates and writes the plan. Michael replies "go" and keeps his dinner reservation.
 
