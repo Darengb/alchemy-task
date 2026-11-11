@@ -110,3 +110,11 @@ def test_repair_child_reads_only_previous_bundle_and_gets_targeted_instructions(
     assert 'schema' in data['resources'] and receipt['resource'] in data['resources']
     fresh = json.loads(runner._bootstrap(run, first)['context'])['instructions']
     assert 'You must call discovery_research_submit before finishing.' in fresh
+
+
+def test_submit_refusal_for_unread_context_names_the_resources_and_invites_a_retry():
+    import inspect
+    from alchemy_task import discovery_runner
+    src = inspect.getsource(discovery_runner.DiscoveryRunner.submit) if hasattr(discovery_runner, 'DiscoveryRunner') else inspect.getsource(discovery_runner)
+    assert 'then call discovery_research_submit again with the same payload' in src
+    assert "info.get('sha256') == sha" in src

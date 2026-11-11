@@ -320,8 +320,18 @@ class DiscoveryRunner:
             required = set()  # repair child: only its primary source body and the previous bundle
         own_primary = 'source-body-' + attempt['candidate_id']
         if own_primary in ledger['resources']: required.add(own_primary)
-        if any(not self.store._has_pages(ledger, token, n) for n in required):
-            raise UserError('fetch all context inventory/config/skill pages before submitting')
+        def _read(name):
+            if self.store._has_pages(ledger, token, name):
+                return True
+            # Same bytes under another name (for example the rubric and its context alias) count as read.
+            sha = (ledger['resources'].get(name) or {}).get('sha256')
+            return bool(sha) and any(other != name and info.get('sha256') == sha and self.store._has_pages(ledger, token, other)
+                                     for other, info in ledger['resources'].items())
+        missing = sorted(n for n in required if not _read(n))
+        if missing:
+            # Nothing is saved yet and the attempt stays open: the same child fetches these and submits again.
+            raise UserError('not submitted yet: fetch every page of ' + ', '.join(missing) + ' with discovery_research_fetch, '
+                            'then call discovery_research_submit again with the same payload. Do not stop or redo research.')
         if upload is None:
             receipt = self.store.spool_payload(run_id, token, payload)
         elif upload.get('action') == 'begin':
