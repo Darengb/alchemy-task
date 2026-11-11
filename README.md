@@ -175,6 +175,7 @@ Setup fills them in for you.
 | `default_area` | | Area used when none can be inferred |
 | `timezone` | Hermes timezone | Used for dates and log lines |
 | `research_by_default` | `true` | Research every new task unless the user opts out |
+| `research_model` / `research_provider` | main model | Model and provider for research workers (task research, the sweep, discovery research); empty uses the main model |
 | `git_transport` | `system` | `system` (your own Git setup) or `none` (local commits only) |
 | `git_remote` / `git_branch` | `origin` / current | Where to push |
 | `git_run_hooks` | `true` | Run the repository's Git hooks |
@@ -194,7 +195,8 @@ Setup fills them in for you.
   own config names transport programs, unless you enable `git_allow_repo_programs`.
 - **Background agents and model use:** after each task is created (and from the optional research sweep job),
   the plugin starts a Hermes research subagent through the public subagent lifecycle API. It runs on your
-  configured model with the `web`, `file` and `session_search` toolsets, the reader toolsets of your approved
+  configured model (or on the research model you set with `research_model` / `research_provider`, which may be a
+  different provider; if that model cannot be used, research stops and tells you rather than using the main model) with the `web`, `file` and `session_search` toolsets, the reader toolsets of your approved
   discovery streams, the MCP servers your agent has (Hermes passes them on), and the plugin's read-only
   research tools. It spends your model tokens and sends search queries derived from the task text to your
   configured web search provider. A `pre_tool_call` hook refuses write, edit, shell and code-execution tools
