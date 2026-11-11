@@ -174,6 +174,22 @@ def test_settings_task_defaults(client, ctx):
     assert client.patch("/settings/tasks", json={"default_area": "mars"}).json()["error"]["code"] == "area"
 
 
+def test_settings_research_model(client, ctx):
+    s = client.get("/settings").json()["tasks"]
+    assert s["research_model"] is None and s["research_provider"] is None
+    out = client.patch("/settings/tasks", json={"research_model": "  deepseek-v4-flash ",
+                                                "research_provider": "openrouter"}).json()
+    assert out["ok"]
+    s = client.get("/settings").json()["tasks"]
+    assert s["research_model"] == "deepseek-v4-flash" and s["research_provider"] == "openrouter"
+    assert client.patch("/settings/tasks", json={"research_model": 5}).json()["error"]["code"] == "invalid_request"
+    assert client.patch("/settings/tasks", json={"research_model": "x" * 201}).json()["error"]["code"] == \
+        "invalid_request"
+    assert client.patch("/settings/tasks", json={"research_model": "", "research_provider": ""}).json()["ok"]
+    s = client.get("/settings").json()["tasks"]
+    assert s["research_model"] is None and s["research_provider"] is None
+
+
 # ------------------------------------------------------------------ research button
 
 def _set_research(workspace_task_path, enrichment):

@@ -51,6 +51,8 @@ async def settings(request: Request):
             streams = []
         return {"ok": True, "streams": streams,
                 "tasks": {"default_area": s.default_area or None, "research_by_default": bool(s.research_by_default),
+                          "research_model": s.research_model or None,
+                          "research_provider": s.research_provider or None,
                           "timezone": s.timezone or None, "workspace_root": s.workspace_root or None,
                           "areas": s.known_areas() if s.configured else []},
                 "sync": {"git": _git_status(rt)}}
@@ -115,5 +117,11 @@ async def patch_tasks(request: Request):
             if not isinstance(body["research_by_default"], bool):
                 raise UIError("invalid_request", "research_by_default must be true or false")
             rt.ctx.set_config("research_by_default", body["research_by_default"])
+        for key in ("research_model", "research_provider"):
+            if key in body:
+                value = body[key] if body[key] is not None else ""
+                if not isinstance(value, str) or len(value.strip()) > 200:
+                    raise UIError("invalid_request", f"{key} must be text of at most 200 characters")
+                rt.ctx.set_config(key, value.strip())  # empty: research uses the main model
         return {"ok": True, "plugin": PLUGIN}
-    return await handle(request, run, {"default_area", "research_by_default"})
+    return await handle(request, run, {"default_area", "research_by_default", "research_model", "research_provider"})
