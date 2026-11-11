@@ -74,12 +74,17 @@ SECRET_NAMES = (".env", ".env.*", "*.env", "auth.json", "*.pem", "*.key", "*.p12
                 "*tokens.json", "*token.txt", "*.token", "*_history",
                 ".history", "cookies", "cookies-journal", "login data", "login data-journal", "web data",
                 "key4.db", "logins.json", "kubeconfig", "service-account*.json", "*.kdbx")
-SECRET_DIRS = (".ssh", ".aws", ".hermes", ".gnupg", ".supabase", ".docker", ".kube", ".azure", ".password-store",
+SECRET_DIRS = (".ssh", ".aws", ".gnupg", ".supabase", ".docker", ".kube", ".azure", ".password-store",
                ".mozilla", "keyrings")
 HOME_SECRET_DIRS = ("private",)   # top-level folders in the user's home kept out of research
 # Two-part folders: .config/gh, .config/gcloud, .config/google-chrome, .config/chromium, .git/config file
 SECRET_PAIRS = {(".config", "gh"), (".config", "gcloud"), (".config", "google-chrome"), (".config", "chromium"),
-                (".config", "hub"), (".git", "config")}
+                (".config", "hub"), (".git", "config"),
+                # Hermes home: only its credential stores, not its caches or plugin data (discovery hands
+                # research workers source files under ~/.hermes/cache).
+                (".hermes", "config.yaml"), (".hermes", "mcp-tokens"), (".hermes", "browser-profiles"),
+                (".hermes", "google_accounts"), (".hermes", "secrets"), (".hermes", "credentials"),
+                (".hermes", "profiles")}
 
 # Masks common secret formats in git output (Hermes redacts its own file tools; git output bypasses that).
 _SECRET_VALUE = re.compile(
@@ -101,6 +106,8 @@ def redact(text: str) -> str:
 
 def _secret_text(path: str) -> bool:
     parts = [p for p in re.split(r"[\\/]+", str(path or "").strip().lower()) if p and p not in (".", "~")]
+    if parts and parts[-1] == ".hermes":
+        return True  # the Hermes home as a whole (a search over it would reach its credential files)
     for i, part in enumerate(parts):
         if part in SECRET_DIRS or (i + 1 < len(parts) and (part, parts[i + 1]) in SECRET_PAIRS):
             return True

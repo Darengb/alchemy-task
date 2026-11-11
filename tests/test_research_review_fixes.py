@@ -170,3 +170,13 @@ def test_token_named_code_files_readable(path):
                                           ("connectors__gmail__GMAIL_SEND_EMAIL", True)])
 def test_mcp_verb_rules(tool, blocked):
     assert ra.is_write_like(tool) is blocked
+
+
+def test_hermes_cache_and_plugin_data_are_readable_but_its_credentials_are_not():
+    for ok in ("/home/u/.hermes/cache/scratch/C03T74B10SG.json", "/home/u/.hermes/plugin-data/x/discovery/run.json",
+               "/home/u/.hermes/cron/output/job/run.md"):
+        assert not rg.is_secret_path(ok), ok
+    for bad in ("/home/u/.hermes/.env", "/home/u/.hermes/auth.json", "/home/u/.hermes/config.yaml",
+                "/home/u/.hermes/mcp-tokens/slack.json", "/home/u/.hermes/browser-profiles/default/Cookies",
+                "/home/u/.hermes/google_accounts/mbg.json", "/home/u/.hermes/profiles/other/.env"):
+        assert rg.is_secret_path(bad), bad

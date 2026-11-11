@@ -50,7 +50,7 @@ follow-up clearly matches a task you already have, discovery adds the new detail
 - **Bounded and safe research:** the research agent is read-only. It cannot run commands, write or edit
   files, change skills, or change accounts or settings; the plugin blocks those tools for every research agent
   it starts, discovery research included. It never reads credential files (keys, tokens, `.env`, `.ssh`,
-  `auth.json` and similar). Each run is limited to 45 tool calls and 15 minutes, with up to 3 attempts. Results from a superseded run are discarded, and the
+  `auth.json`, Hermes's own config, tokens and browser profiles, and similar). Each run is limited to 45 tool calls and 15 minutes, with up to 3 attempts. Results from a superseded run are discarded, and the
   dossier is written into the task's latest content, so research never overwrites edits made while it ran.
 - **Official work sessions:** say "work on X" or "continue X". The chat is linked to the task, which turns
   in progress, and the agent gets the notes, research, access plan and current state with its next step, so
