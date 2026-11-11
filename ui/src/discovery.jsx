@@ -100,6 +100,15 @@ const SOURCE_ICONS = { email: 'inbox', chat: 'chat', transcript: 'list', meeting
 // the message to send Hermes, with a copy button (sources are connected in chat, not here).
 function SourcesBar({ streams }) {
   const [adding, setAdding] = React.useState(false)
+  const [running, setRunning] = React.useState(null)
+  const { api } = useApp()
+  const toast = useToast()
+  const runNow = async (s) => {
+    setRunning(s.name)
+    try { const res = await api.runStream(s.name); toast(res.message || 'Discovery run started') }
+    catch (err) { toast(describeError(err), { tone: 'error' }) }
+    setRunning(null)
+  }
   const many = streams.length > 1
   return (
     <div className="at-sources">
@@ -114,6 +123,10 @@ function SourcesBar({ streams }) {
                 </span>
               )) : <span className="at-muted">No sources yet</span>}
             </div>
+            <Button size="sm" icon="play" className="at-sources-run" disabled={!!running}
+                    onClick={() => runNow(s)} title={`Run ${titleCase(s.name)} discovery now`}>
+              {running === s.name ? 'Starting…' : 'Run now'}
+            </Button>
           </div>
         ))}
       </div>

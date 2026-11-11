@@ -340,3 +340,24 @@ def test_research_button_does_not_say_starting_now_for_a_paused_or_missing_sweep
         assert words in out["message"] and "Starting now" not in out["message"], out
         assert _enrichment(c, t["task_id"])["status"] == "pending"
     assert c.runs == []
+
+
+def test_discovery_run_now_fires_the_streams_own_job_in_the_background(rclient, monkeypatch):
+    client, c = rclient
+    app = client.app
+    app.include_router(settings_api.router)
+    monkeypatch.setattr(settings_api, "runtime", lambda: runtime.Runtime(c))
+    fired = []
+    monkeypatch.setattr(tasks_api, "_background", lambda fn: fired.append(fn))
+    c.sweep_jobs = {"jobmbg": {"enabled": True, "state": "scheduled"}}
+    c.state.set("streams", {"mbg": {"name": "mbg", "areas": ["work"], "sources": [], "job_id": "jobmbg",
+                                    "schedule": "0 18 * * *", "timezone": "America/New_York"}})
+    out = client.post("/settings/streams/mbg/run")
+    assert out.status_code == 200 and out.json()["ok"], out.text
+    assert c.runs == [] and len(fired) == 1  # the request returns before the run
+    fired[0]()
+    assert c.runs == ["jobmbg"]
+    # a stream whose job is gone is refused with a clear message
+    c.sweep_jobs = {}
+    out = client.post("/settings/streams/mbg/run")
+    assert out.status_code == 400 and "missing" in out.json()["error"]["message"].lower(), out.text

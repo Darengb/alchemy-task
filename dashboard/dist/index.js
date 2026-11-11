@@ -2375,8 +2375,32 @@
   var SOURCE_ICONS = { email: "inbox", chat: "chat", transcript: "list", meeting_notes: "list", document: "edit", tracker: "check" };
   function SourcesBar({ streams }) {
     const [adding, setAdding] = react_dashboard_default.useState(false);
+    const [running, setRunning] = react_dashboard_default.useState(null);
+    const { api } = useApp();
+    const toast = useToast();
+    const runNow = async (s) => {
+      setRunning(s.name);
+      try {
+        const res = await api.runStream(s.name);
+        toast(res.message || "Discovery run started");
+      } catch (err) {
+        toast(describeError(err), { tone: "error" });
+      }
+      setRunning(null);
+    };
     const many = streams.length > 1;
-    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-rows" }, streams.map((s) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: s.name, className: "at-sources-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-label" }, many ? `${titleCase(s.name)} reads` : "Reads"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-chips" }, (s.sources || []).length ? (s.sources || []).map((src, i) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: `${src.name}-${i}`, className: "at-source-chip", title: src.scope || src.name }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: SOURCE_ICONS[src.type] || "dot", size: 12 }), src.name)) : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "No sources yet"))))), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", icon: "plus", className: "at-sources-add", onClick: () => setAdding((v) => !v), "aria-expanded": adding }, "Add a source"), adding ? /* @__PURE__ */ react_dashboard_default.createElement(CopyPrompt, { className: "is-compact", text: ADD_SOURCE_PROMPT }) : null);
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-rows" }, streams.map((s) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: s.name, className: "at-sources-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-label" }, many ? `${titleCase(s.name)} reads` : "Reads"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-chips" }, (s.sources || []).length ? (s.sources || []).map((src, i) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: `${src.name}-${i}`, className: "at-source-chip", title: src.scope || src.name }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: SOURCE_ICONS[src.type] || "dot", size: 12 }), src.name)) : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "No sources yet")), /* @__PURE__ */ react_dashboard_default.createElement(
+      Button,
+      {
+        size: "sm",
+        icon: "play",
+        className: "at-sources-run",
+        disabled: !!running,
+        onClick: () => runNow(s),
+        title: `Run ${titleCase(s.name)} discovery now`
+      },
+      running === s.name ? "Starting\u2026" : "Run now"
+    )))), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", icon: "plus", className: "at-sources-add", onClick: () => setAdding((v) => !v), "aria-expanded": adding }, "Add a source"), adding ? /* @__PURE__ */ react_dashboard_default.createElement(CopyPrompt, { className: "is-compact", text: ADD_SOURCE_PROMPT }) : null);
   }
   function CopyPrompt({ text, className }) {
     const toast = useToast();
