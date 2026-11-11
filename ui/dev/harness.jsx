@@ -15,6 +15,21 @@ document.head.appendChild(style)
 
 const backend = createMockBackend()
 if (params.get('empty') === 'discovery') { backend.db.runs.length = 0; backend.db.settings.streams.length = 0 }
+// ?video=story: today's work run shows the Venice pricing proposal first (story launch video).
+if (params.get('video') === 'story') {
+  const run = backend.db.runs.find((r) => r.run_id === 'run-work-today')
+  run.proposals.unshift({
+    proposal_id: 'p_pricing_video', unit_id: 'pv', ref: 'A1', number: 1, kind: 'new', day: run.day, expires: run.day, state: 'pending', expired: false,
+    title: 'Update every price and move subscriptions from 20 to 30 days', area: 'work',
+    current_understanding: 'The team agreed in #pricing (112 messages) to raise every price about 8% and move subscriptions from 20 to 30 days from December 1. All 1,312 existing subscribers need to be migrated.',
+    substantive_next_action: 'Update 48 prices in Shopify, change the Recharge interval, and migrate existing subscribers.',
+    source_links: ['https://lumenleaf.slack.com/archives/C0PRICING/p1794426000112233'],
+    research_disposition: 'confident', targets: [],
+  })
+  run.proposals.forEach((p, i) => { p.number = i + 1; p.ref = `A${i + 1}` })
+  run.coverage = [{ source_key: 'Slack #pricing', status: 'complete' }, ...run.coverage]
+  run.summary.pending += 1
+}
 // ?video=pending: today's work run also shows the Winter Spice Chai ask as a pending proposal (launch-video stills).
 if (params.get('video') === 'pending') {
   const run = backend.db.runs.find((r) => r.run_id === 'run-work-today')
