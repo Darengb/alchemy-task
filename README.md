@@ -92,6 +92,18 @@ follow-up clearly matches a task you already have, discovery adds the new detail
   Every change goes through the same files, log lines and Git commits as a change made in chat, and an edit
   never overwrites a newer version of the task.
 
+## Install
+
+- **Desktop app or Webapp (recommended):** Capabilities → Plugins → Install, source `Darengb/alchemy-task`.
+  This installs the agent plugin and the **Tasks** page in the sidebar together.
+- **Command line:** `hermes plugins install Darengb/alchemy-task --enable`, then restart the gateway (and the
+  web dashboard, for its Tasks tab). A command-line install does not copy the desktop page into the app's
+  `desktop-plugins` folder; to get the **Tasks** sidebar page, also run
+  `mkdir -p ~/.hermes/desktop-plugins/alchemy-task && cp ~/.hermes/plugins/alchemy-task/desktop/plugin.js ~/.hermes/desktop-plugins/alchemy-task/`
+  on the server and choose **⌘K → Reload desktop plugins** in the app.
+
+Then start a new chat.
+
 ## Setup
 
 Say **"set up my tasks"**. Your agent walks you through it in a few minutes, and every answer is checked and
