@@ -462,6 +462,10 @@ class DiscoveryRunner:
             raise UserError('freeze full selected manifest before research')
         with self._state(run_id) as state:
             if state['holds']:
+                if 'research_model' in state['holds']:
+                    return {'run_id': run_id, 'status': 'held', 'holds': state['holds'],
+                            'research_model_error': state.get('research_model_error'),
+                            'next_action': 'Research is blocked and unfinished: %s Tell the user. After they change or clear the research model, call discovery_release_hold, then discovery_research_run again with run_id %s.' % (state.get('research_model_error') or 'the research model could not be used.', run_id)}
                 return {'run_id': run_id, 'status': 'held', 'holds': state['holds'],
                         'next_action': 'Research is held (%s). Reconcile the saved unknown or hold in this run with discovery_recover or discovery_release_hold, then call discovery_research_run again with run_id %s.' % (', '.join(state['holds']), run_id)}
         invocation = uuid.uuid4().hex
@@ -542,6 +546,14 @@ class DiscoveryRunner:
                     # recorded on this run (the finally releases it on errors).
                     if error:
                         self.store.fence_attempt(run_id, token, reason='launch_unknown', cancellation={'accepted': False, 'outcome': 'unknown', 'diagnostic': error})
+                        from .research_agent import model_failure
+                        blocked = model_failure(error, getattr(self.rt, 'settings', None))
+                        if blocked:
+                            # The configured research model cannot be used: hold the run and tell the user,
+                            # never relaunch on another model.
+                            with self._state(run_id) as state:
+                                state['holds'] = list(set(state['holds'] + ['research_model']))
+                                state['research_model_error'] = blocked
                         self._inflight(run_id, token)
                         active.pop(token)
                         admit_until = self.clock.monotonic()

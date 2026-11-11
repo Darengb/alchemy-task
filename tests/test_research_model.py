@@ -110,3 +110,88 @@ def test_discovery_child_launch_carries_model(tmp_path):
 def test_discovery_child_launch_omits_model_when_empty(tmp_path):
     req = _discovery_request(tmp_path, SimpleNamespace(research_model="", research_provider=""))
     assert "model" not in req and "provider" not in req
+
+
+# ------------------------------------------------------------------ piece 3: stop and tell on model failure
+
+from alchemy_task.core import research as rs  # noqa: E402
+from alchemy_task.core import taskfile as tf  # noqa: E402
+
+
+def _enrichment(doc):
+    return rs.state(tf.parse_file(doc.path).fm)
+
+
+def test_model_launch_failure_stops_tells_and_is_not_retried(ctx, settings, data_dir):  # noqa: F811
+    _set_model(ctx, "old-model-v1", "openrouter")
+    lc = ctx.subagent_lifecycle
+
+    def launch(req):
+        raise RuntimeError("Provider 'openrouter' rejected model 'old-model-v1': model not found")
+    lc.launch = launch
+    doc = create(settings, data_dir)
+    out = ra.launch(runtime.Runtime(), doc.task_id, origin_session="chat-1")
+    assert not out["started"]
+    msg = out["error"]
+    assert "the research model old-model-v1 could not be used" in msg
+    assert 'Change it with "set my research model"' in msg and "clear it to use the main model" in msg
+    st = _enrichment(doc)
+    assert st["status"] == "failed" and st["attempts"] >= rs.MAX_ATTEMPTS
+    body = tf.parse_file(doc.path).body
+    assert "the research model old-model-v1 could not be used" in body
+    notices = ctx.state.get("notices")["chat-1"]
+    assert any("research model old-model-v1 could not be used" in n for n in notices)
+    # the sweep does not retry it while the setting is unchanged
+    assert ra.recover(runtime.Runtime(), wait_seconds=0)["queued"] == 0
+    # changing the setting makes it eligible again
+    lc.launch = lambda req: {"subagent_id": "sa-9", "contract_version": 1}
+    _set_model(ctx, "new-model-flash", "openrouter")
+    again = ra.recover(runtime.Runtime(), wait_seconds=0)
+    assert again["queued"] == 1 and again["started"]
+
+
+def test_non_model_launch_failure_keeps_normal_retry(ctx, settings, data_dir):  # noqa: F811
+    _set_model(ctx, "glm-5-flash")
+    ctx.subagent_lifecycle.fail = True
+    doc = create(settings, data_dir)
+    out = ra.launch(runtime.Runtime(), doc.task_id)
+    assert not out["started"] and "research model" not in out["error"]
+    assert _enrichment(doc)["status"] == "pending"
+
+
+def test_main_model_failure_is_not_blamed_on_research_model(ctx, settings, data_dir):  # noqa: F811
+    def launch(req):
+        raise RuntimeError("model not found")
+    ctx.subagent_lifecycle.launch = launch
+    doc = create(settings, data_dir)
+    out = ra.launch(runtime.Runtime(), doc.task_id)
+    assert "research model" not in out["error"] and _enrichment(doc)["status"] == "pending"
+
+
+def test_child_failing_with_model_error_stops_research(ctx, settings, data_dir):  # noqa: F811
+    _set_model(ctx, "deepseek-v4-flash", "openrouter")
+    doc = create(settings, data_dir)
+    rt = runtime.Runtime()
+    out = ra.launch(rt, doc.task_id, origin_session="chat-2")
+    ra.subagent_start(child_session_id="child-1", child_subagent_id=out["subagent_id"])
+    ra.subagent_stop(child_session_id="child-1", child_status="failed",
+                     child_summary="Error code: 401 - invalid API key for provider openrouter")
+    st = _enrichment(doc)
+    assert st["status"] == "failed" and "deepseek-v4-flash could not be used" in st["last_error"]
+    assert any("deepseek-v4-flash could not be used" in n for n in ctx.state.get("notices")["chat-2"])
+
+
+def test_discovery_model_launch_error_holds_the_run(tmp_path):
+    from test_discovery_runner import setup_runner
+    runner, store, pool, run = setup_runner(tmp_path, count=1)
+    runner.rt.settings = SimpleNamespace(research_model="old-model-v1", research_provider="nous")
+
+    def launch(request):
+        raise RuntimeError("Unknown provider 'nous' for model old-model-v1")
+    pool.launch = launch
+    first = runner.run(run, session_id="parent")
+    again = runner.run(run, session_id="parent")
+    text = json.dumps([first, again])
+    assert again["status"] == "held" and "research_model" in again["holds"]
+    assert "the research model old-model-v1 could not be used" in text
+    assert "set my research model" in text
