@@ -7,7 +7,7 @@ import { describeError } from './api.js'
 import { AppContext, createTaskStore, usePref, useStore, useWidth } from './store.js'
 import { TasksView } from './tasks.jsx'
 import { TaskPanel } from './panel.jsx'
-import { DiscoveryView, discoveryBadge } from './discovery.jsx'
+import { DiscoveryView, SetupPrompt, discoveryBadge } from './discovery.jsx'
 import { SettingsPanel } from './settings.jsx'
 import { BrandMark, Icon, IconButton, OverlayHost, Spinner, ToastHost, ToastOutlet, cx, useToast } from './ui.jsx'
 
@@ -164,7 +164,9 @@ function AppInner({ transport, host, initialView, settingsOnly, chat }) {
     }
     if (!meta || !ctx.today) return <div className="at-loading"><Spinner size={18} /></div>
     if (meta.configured === false) {
-      return <Centered icon="list" title="Set up your tasks" text={<>Alchemy Task is installed but not set up yet. In chat, ask Hermes: <q>Set up my tasks.</q></>} />
+      return <Centered icon="list" title="Set up your tasks"
+                       text="Alchemy Task is installed but not set up yet. Setup takes a few minutes in chat: your timezone, where tasks are saved, and your areas."
+                       action={<SetupPrompt text="Set up my tasks" />} />
     }
     if (settingsOnly) return <SettingsPanel inline narrow={narrow} />
     return (
@@ -208,12 +210,13 @@ function AppInner({ transport, host, initialView, settingsOnly, chat }) {
 const selToday = (s) => s.today
 const selLoading = (s) => s.loading > 0
 
-function Centered({ icon, title, text }) {
+function Centered({ icon, title, text, action }) {
   return (
     <div className="at-emptystate is-full">
       <span className="at-emptystate-icon"><Icon name={icon} size={22} /></span>
       <h2>{title}</h2>
       <p>{text}</p>
+      {action || null}
     </div>
   )
 }

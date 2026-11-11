@@ -2498,10 +2498,10 @@ function CopyPrompt({ text, className }) {
   const copy = async () => toast(await copyText(text) ? "Copied. Paste it into a chat with Hermes." : "Could not copy");
   return /* @__PURE__ */ React7.createElement("div", { className: cx("at-copy-prompt", className) }, /* @__PURE__ */ React7.createElement("span", { className: "at-setup-prompt-label" }, /* @__PURE__ */ React7.createElement(Icon, { name: "chat", size: 15 }), " Tell Hermes in chat"), /* @__PURE__ */ React7.createElement("div", { className: "at-copy-prompt-row" }, /* @__PURE__ */ React7.createElement("q", { className: "at-copy-prompt-text" }, text), /* @__PURE__ */ React7.createElement(Button, { size: "sm", icon: "clipboard", onClick: copy }, "Copy")));
 }
-function SetupPrompt() {
+function SetupPrompt({ text = SETUP_PROMPT }) {
   const toast = useToast();
-  const copy = async () => toast(await copyText(SETUP_PROMPT) ? "Copied. Paste it into a chat with Hermes." : "Could not copy");
-  return /* @__PURE__ */ React7.createElement("button", { type: "button", className: "at-setup-prompt", onClick: copy, title: "Copy" }, /* @__PURE__ */ React7.createElement("span", { className: "at-setup-prompt-label" }, /* @__PURE__ */ React7.createElement(Icon, { name: "chat", size: 17 }), " Tell Hermes in chat"), /* @__PURE__ */ React7.createElement("span", { className: "at-setup-prompt-text" }, SETUP_PROMPT), /* @__PURE__ */ React7.createElement("span", { className: "at-setup-prompt-copy" }, /* @__PURE__ */ React7.createElement(Icon, { name: "clipboard", size: 15 }), " Copy"));
+  const copy = async () => toast(await copyText(text) ? "Copied. Paste it into a chat with Hermes." : "Could not copy");
+  return /* @__PURE__ */ React7.createElement("button", { type: "button", className: "at-setup-prompt", onClick: copy, title: "Copy" }, /* @__PURE__ */ React7.createElement("span", { className: "at-setup-prompt-label" }, /* @__PURE__ */ React7.createElement(Icon, { name: "chat", size: 17 }), " Tell Hermes in chat"), /* @__PURE__ */ React7.createElement("span", { className: "at-setup-prompt-text" }, text), /* @__PURE__ */ React7.createElement("span", { className: "at-setup-prompt-copy" }, /* @__PURE__ */ React7.createElement(Icon, { name: "clipboard", size: 15 }), " Copy"));
 }
 function Empty({ icon, title, text, action, after }) {
   return /* @__PURE__ */ React7.createElement("div", { className: "at-scroll at-disco" }, /* @__PURE__ */ React7.createElement("div", { className: "at-emptystate" }, /* @__PURE__ */ React7.createElement("span", { className: "at-emptystate-icon" }, /* @__PURE__ */ React7.createElement(Icon, { name: icon, size: 22 })), /* @__PURE__ */ React7.createElement("h2", null, title), /* @__PURE__ */ React7.createElement("p", null, text), action), after);
@@ -3017,7 +3017,15 @@ function AppInner({ transport, host: host2, initialView, settingsOnly, chat }) {
     }
     if (!meta || !ctx.today) return /* @__PURE__ */ React9.createElement("div", { className: "at-loading" }, /* @__PURE__ */ React9.createElement(Spinner, { size: 18 }));
     if (meta.configured === false) {
-      return /* @__PURE__ */ React9.createElement(Centered, { icon: "list", title: "Set up your tasks", text: /* @__PURE__ */ React9.createElement(React9.Fragment, null, "Alchemy Task is installed but not set up yet. In chat, ask Hermes: ", /* @__PURE__ */ React9.createElement("q", null, "Set up my tasks.")) });
+      return /* @__PURE__ */ React9.createElement(
+        Centered,
+        {
+          icon: "list",
+          title: "Set up your tasks",
+          text: "Alchemy Task is installed but not set up yet. Setup takes a few minutes in chat: your timezone, where tasks are saved, and your areas.",
+          action: /* @__PURE__ */ React9.createElement(SetupPrompt, { text: "Set up my tasks" })
+        }
+      );
     }
     if (settingsOnly) return /* @__PURE__ */ React9.createElement(SettingsPanel, { inline: true, narrow });
     return /* @__PURE__ */ React9.createElement(React9.Fragment, null, /* @__PURE__ */ React9.createElement("nav", { className: "at-appbar" }, narrow ? null : /* @__PURE__ */ React9.createElement("span", { className: "at-brand" }, /* @__PURE__ */ React9.createElement(BrandMark, { size: 20 }), "Alchemy Task"), /* @__PURE__ */ React9.createElement("div", { className: "at-tabs", role: "tablist" }, /* @__PURE__ */ React9.createElement("button", { type: "button", role: "tab", "aria-selected": tab === "tasks", className: cx("at-tab", tab === "tasks" && "is-on"), onClick: () => setTab("tasks") }, "Tasks"), /* @__PURE__ */ React9.createElement("button", { type: "button", role: "tab", "aria-selected": tab === "discovery", className: cx("at-tab", tab === "discovery" && "is-on"), onClick: () => setTab("discovery") }, "Discovery", pending ? /* @__PURE__ */ React9.createElement("span", { className: "at-badge-dot" }, pending) : null)), /* @__PURE__ */ React9.createElement("span", { className: "at-flex" }), busy ? /* @__PURE__ */ React9.createElement(Spinner, { size: 12 }) : null, /* @__PURE__ */ React9.createElement(IconButton, { icon: "gear", label: "Settings", className: cx(settingsOpen && "is-on"), onClick: () => {
@@ -3038,8 +3046,8 @@ function AppInner({ transport, host: host2, initialView, settingsOnly, chat }) {
 }
 var selToday2 = (s) => s.today;
 var selLoading = (s) => s.loading > 0;
-function Centered({ icon, title, text }) {
-  return /* @__PURE__ */ React9.createElement("div", { className: "at-emptystate is-full" }, /* @__PURE__ */ React9.createElement("span", { className: "at-emptystate-icon" }, /* @__PURE__ */ React9.createElement(Icon, { name: icon, size: 22 })), /* @__PURE__ */ React9.createElement("h2", null, title), /* @__PURE__ */ React9.createElement("p", null, text));
+function Centered({ icon, title, text, action }) {
+  return /* @__PURE__ */ React9.createElement("div", { className: "at-emptystate is-full" }, /* @__PURE__ */ React9.createElement("span", { className: "at-emptystate-icon" }, /* @__PURE__ */ React9.createElement(Icon, { name: icon, size: 22 })), /* @__PURE__ */ React9.createElement("h2", null, title), /* @__PURE__ */ React9.createElement("p", null, text), action || null);
 }
 
 // ui/src/styles.css
