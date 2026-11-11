@@ -118,7 +118,7 @@ function SourcesBar({ streams }) {
           <div key={s.name} className="at-sources-row">
             <span className="at-sources-head">
               <span className="at-sources-label">{many ? `${titleCase(s.name)} reads` : 'Reads'}</span>
-              {nextRunLabel(s.next_run_at) ? <span className="at-sources-next" title="Next scheduled run">Next {nextRunLabel(s.next_run_at)}</span> : null}
+              {nextRunLabel(s.next_run_at) ? <span className="at-sources-next" title="Next scheduled run">// Next {nextRunLabel(s.next_run_at)}</span> : null}
             </span>
             <div className="at-sources-chips">
               {(s.sources || []).length ? (s.sources || []).map((src, i) => (

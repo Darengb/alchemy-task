@@ -2315,10 +2315,10 @@
     const time = d.toLocaleTimeString(void 0, { hour: "numeric", minute: "2-digit" });
     const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
     const diff = Math.round((day(d) - day(now)) / 864e5);
-    if (diff <= 0) return `Today ${time}`;
-    if (diff === 1) return `Tomorrow ${time}`;
-    if (diff < 7) return `${d.toLocaleDateString(void 0, { weekday: "short" })} ${time}`;
-    return `${d.toLocaleDateString(void 0, { month: "short", day: "numeric" })}, ${time}`;
+    if (diff <= 0) return `at ${time}`;
+    if (diff === 1) return `tomorrow at ${time}`;
+    if (diff < 7) return `${d.toLocaleDateString(void 0, { weekday: "short" })} at ${time}`;
+    return `${d.toLocaleDateString(void 0, { month: "short", day: "numeric" })} at ${time}`;
   }
 
   // ui/src/discovery.jsx
@@ -2401,7 +2401,7 @@
       setRunning(null);
     };
     const many = streams.length > 1;
-    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-rows" }, streams.map((s) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: s.name, className: "at-sources-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-head" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-label" }, many ? `${titleCase(s.name)} reads` : "Reads"), nextRunLabel(s.next_run_at) ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-next", title: "Next scheduled run" }, "Next ", nextRunLabel(s.next_run_at)) : null), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-chips" }, (s.sources || []).length ? (s.sources || []).map((src, i) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: `${src.name}-${i}`, className: "at-source-chip", title: src.scope || src.name }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: SOURCE_ICONS[src.type] || "dot", size: 12 }), src.name)) : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "No sources yet")), /* @__PURE__ */ react_dashboard_default.createElement(
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-rows" }, streams.map((s) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: s.name, className: "at-sources-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-head" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-label" }, many ? `${titleCase(s.name)} reads` : "Reads"), nextRunLabel(s.next_run_at) ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-next", title: "Next scheduled run" }, "// Next ", nextRunLabel(s.next_run_at)) : null), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-chips" }, (s.sources || []).length ? (s.sources || []).map((src, i) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: `${src.name}-${i}`, className: "at-source-chip", title: src.scope || src.name }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: SOURCE_ICONS[src.type] || "dot", size: 12 }), src.name)) : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "No sources yet")), /* @__PURE__ */ react_dashboard_default.createElement(
       Button,
       {
         size: "sm",

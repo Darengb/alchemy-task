@@ -27,10 +27,10 @@ import { nextRunLabel } from '../src/lib/discovery.js'
 
 test('next run label: today, tomorrow, weekday, date', () => {
   const now = new Date(2026, 10, 10, 20, 0)
-  assert.match(nextRunLabel(new Date(2026, 10, 10, 22, 0).toISOString(), now), /^Today /)
-  assert.match(nextRunLabel(new Date(2026, 10, 11, 18, 0).toISOString(), now), /^Tomorrow /)
-  assert.match(nextRunLabel(new Date(2026, 10, 13, 18, 0).toISOString(), now), /^(Fri|Thu|Sat) /)
-  assert.match(nextRunLabel(new Date(2026, 10, 25, 18, 0).toISOString(), now), /Nov 25, /)
+  assert.match(nextRunLabel(new Date(2026, 10, 10, 22, 0).toISOString(), now), /^at /)
+  assert.match(nextRunLabel(new Date(2026, 10, 11, 18, 0).toISOString(), now), /^tomorrow at /)
+  assert.match(nextRunLabel(new Date(2026, 10, 13, 18, 0).toISOString(), now), /^(Fri|Thu|Sat) at /)
+  assert.match(nextRunLabel(new Date(2026, 10, 25, 18, 0).toISOString(), now), /^Nov 25 at /)
   assert.equal(nextRunLabel(null, now), '')
   assert.equal(nextRunLabel('not a date', now), '')
 })

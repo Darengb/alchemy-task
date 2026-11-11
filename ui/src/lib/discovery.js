@@ -11,7 +11,8 @@ export const discoveryBadge = (runs, streams) => {
 }
 
 
-// "Next run" label: "Today 6:00 PM", "Tomorrow 6:00 PM", "Thu 6:00 PM" within a week, else "Nov 20, 6:00 PM".
+// Next run, read after "Next": "at 6:00 PM" (today), "tomorrow at 6:00 PM", "Thu at 6:00 PM" within a week,
+// else "Nov 20 at 6:00 PM".
 export function nextRunLabel(iso, now = new Date()) {
   if (!iso) return ''
   const d = new Date(iso)
@@ -19,8 +20,8 @@ export function nextRunLabel(iso, now = new Date()) {
   const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
   const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
   const diff = Math.round((day(d) - day(now)) / 86400000)
-  if (diff <= 0) return `Today ${time}`
-  if (diff === 1) return `Tomorrow ${time}`
-  if (diff < 7) return `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${time}`
-  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${time}`
+  if (diff <= 0) return `at ${time}`
+  if (diff === 1) return `tomorrow at ${time}`
+  if (diff < 7) return `${d.toLocaleDateString(undefined, { weekday: 'short' })} at ${time}`
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} at ${time}`
 }
