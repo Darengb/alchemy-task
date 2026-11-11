@@ -16,6 +16,35 @@ from .ui_common import PLUGIN, UIError, handle, runtime
 router = APIRouter()
 
 FREQUENCIES = ("daily", "weekdays", "hourly", "every 2 hours", "every 3 hours", "every 4 hours")
+# A saved run counts as in progress while it is open and was written to within this window; an open run
+# left unfinished (it resumes on the next run) goes quiet and stops showing as running.
+ACTIVE_SECONDS = 15 * 60
+_FIRED: dict[str, float] = {}  # stream -> time a dashboard Run now started and has not returned yet
+
+
+def _running_streams(rt: Any) -> dict[str, str]:
+    """{stream name: started_at} for streams with a discovery run in progress."""
+    import time
+    from pathlib import Path
+    out: dict[str, str] = {}
+    try:
+        from ..discovery_integration import get_service
+        root = Path(get_service(rt).store.state_root) / "runs"
+        now = time.time()
+        for ledger in root.glob("*/ledger.json"):
+            try:
+                if now - ledger.stat().st_mtime > ACTIVE_SECONDS:
+                    continue
+                data = json.loads(ledger.read_text())
+            except (OSError, ValueError):
+                continue
+            if data.get("status") == "open" and data.get("stream"):
+                out.setdefault(str(data["stream"]), str(data.get("created_at") or ""))
+    except Exception:  # noqa: BLE001 - the indicator is display only
+        pass
+    for name, at in list(_FIRED.items()):
+        out.setdefault(name, "")
+    return out
 
 
 def _next_runs(rt: Any) -> dict[str, str]:
@@ -34,12 +63,14 @@ def _streams(rt: Any) -> list[dict[str, Any]]:
     out = []
     streams = sorted(discovery._streams(rt).items())
     nexts = _next_runs(rt) if any(s.get("job_id") for _, s in streams) else {}
+    running = _running_streams(rt) if streams else {}
     for name, s in streams:
         pub = discovery._public(s)
         pub["frequency"] = s.get("frequency") or "daily"
         pub["time"] = s.get("time") or ""
         pub["sources"] = [{"name": x.get("name"), "type": x.get("type"), "scope": x.get("scope")} for x in s.get("sources") or []]
         pub["next_run_at"] = nexts.get(str(s.get("job_id"))) if s.get("job_id") else None
+        pub["running"] = name in running
         out.append(pub)
     return out
 
@@ -113,12 +144,18 @@ async def run_stream(request: Request, name: str):
             raise UIError("invalid_request", "This stream's scheduled job is missing. Ask Hermes in chat to repair the stream.")
         job_id = stream["job_id"]
 
+        import time
+        stream_name = stream["name"]
+
         def fire() -> None:
             # From a dashboard request the host runs the job inline for minutes, so fire it off the request.
+            _FIRED[stream_name] = time.time()
             try:
                 rt.ctx.dispatch_tool("cronjob_manage", {"action": "run", "job_id": job_id})
             except Exception:  # noqa: BLE001 - the run's own result posts to the stream's chat
                 pass
+            finally:
+                _FIRED.pop(stream_name, None)
         _background(fire)
         return {"ok": True, "message": f"The {stream['name']} discovery run has started. Its digest will post to the "
                                        "stream's chat, and its proposals will appear here."}

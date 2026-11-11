@@ -2385,7 +2385,7 @@
     const all = runs || [];
     const configured = Array.isArray(streams) && streams.length > 0;
     if (!all.length && configured) {
-      return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-disco" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disco-inner" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disco-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("h1", { className: "at-period" }, "Discovery"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Refresh", onClick: reload })), /* @__PURE__ */ react_dashboard_default.createElement(SourcesBar, { streams }), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "clock", size: 18 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup-title" }, "Waiting for the first run"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, streams.map((s) => `${titleCase(s.name)}: ${s.when || "scheduled"}`).join(" \xB7 "))))));
+      return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-disco" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disco-inner" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disco-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("h1", { className: "at-period" }, "Discovery"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Refresh", onClick: reload })), /* @__PURE__ */ react_dashboard_default.createElement(SourcesBar, { streams, reload }), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "clock", size: 18 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup-title" }, "Waiting for the first run"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, streams.map((s) => `${titleCase(s.name)}: ${s.when || "scheduled"}`).join(" \xB7 "))))));
     }
     if (!all.length) {
       return /* @__PURE__ */ react_dashboard_default.createElement(
@@ -2410,38 +2410,70 @@
         onChange: setFilter,
         options: [{ value: "waiting", label: "Waiting for you" }, { value: "all", label: "All runs" }]
       }
-    ), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Refresh", onClick: reload })), configured ? /* @__PURE__ */ react_dashboard_default.createElement(SourcesBar, { streams }) : null, !shown.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "check", size: 18 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup-title" }, "All caught up"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, "Last run: ", titleCase(latest.stream), ", ", relativeDay(latest.day, today), " ", runTime(latest)))) : null, shown.map((r) => /* @__PURE__ */ react_dashboard_default.createElement(RunCard, { key: r.run_id, run: r, filter, reload }))));
+    ), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Refresh", onClick: reload })), configured ? /* @__PURE__ */ react_dashboard_default.createElement(SourcesBar, { streams, reload }) : null, !shown.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "check", size: 18 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup-title" }, "All caught up"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, "Last run: ", titleCase(latest.stream), ", ", relativeDay(latest.day, today), " ", runTime(latest)))) : null, shown.map((r) => /* @__PURE__ */ react_dashboard_default.createElement(RunCard, { key: r.run_id, run: r, filter, reload }))));
   }
   var SETUP_PROMPT = "Set up task discovery";
   var ADD_SOURCE_PROMPT = "I want to add a new source to task discovery";
   var SOURCE_ICONS = { email: "inbox", chat: "chat", transcript: "list", meeting_notes: "list", document: "edit", tracker: "check" };
-  function SourcesBar({ streams }) {
+  function SourcesBar({ streams, reload }) {
     const [adding, setAdding] = react_dashboard_default.useState(false);
-    const [running, setRunning] = react_dashboard_default.useState(null);
+    const [starting, setStarting] = react_dashboard_default.useState(null);
+    const [started, setStarted] = react_dashboard_default.useState({});
     const { api } = useApp();
     const toast = useToast();
+    const now = Date.now();
+    const busy = (s) => s.running || starting === s.name || started[s.name] && now - started[s.name] < 3 * 60 * 1e3;
+    const anyRunning = streams.some((s) => s.running) || Object.keys(started).length > 0;
+    react_dashboard_default.useEffect(() => {
+      if (!anyRunning || !reload) return void 0;
+      const id = setInterval(() => reload(), 2e4);
+      return () => clearInterval(id);
+    }, [anyRunning, reload]);
+    react_dashboard_default.useEffect(() => {
+      const next = { ...started };
+      let changed = false;
+      for (const s of streams) {
+        if (next[s.name] && (s.running || Date.now() - next[s.name] > 3 * 60 * 1e3)) {
+          delete next[s.name];
+          changed = true;
+        }
+      }
+      if (changed) setStarted(next);
+    }, [streams]);
     const runNow = async (s) => {
-      setRunning(s.name);
+      setStarting(s.name);
       try {
         const res = await api.runStream(s.name);
         toast(res.message || "Discovery run started");
+        setStarted((cur) => ({ ...cur, [s.name]: Date.now() }));
+        if (reload) setTimeout(() => reload(), 3e3);
       } catch (err) {
         toast(describeError(err), { tone: "error" });
       }
-      setRunning(null);
+      setStarting(null);
     };
     const many = streams.length > 1;
-    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-rows" }, streams.map((s) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: s.name, className: "at-sources-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-head" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-label" }, many ? `${titleCase(s.name)} reads` : "Reads"), nextRunLabel(s.next_run_at) ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-next", title: "Next scheduled run" }, "// Next ", nextRunLabel(s.next_run_at)) : null), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-chips" }, (s.sources || []).length ? (s.sources || []).map((src, i) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: `${src.name}-${i}`, className: "at-source-chip", title: src.scope || src.name }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: SOURCE_ICONS[src.type] || "dot", size: 12 }), src.name)) : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "No sources yet")), /* @__PURE__ */ react_dashboard_default.createElement(
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-rows" }, streams.map((s) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: s.name, className: "at-sources-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-head" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-label" }, many ? `${titleCase(s.name)} reads` : "Reads"), nextRunLabel(s.next_run_at) ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-next", title: "Next scheduled run" }, "// Next ", nextRunLabel(s.next_run_at)) : null), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-chips" }, (s.sources || []).length ? (s.sources || []).map((src, i) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: `${src.name}-${i}`, className: "at-source-chip", title: src.scope || src.name }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: SOURCE_ICONS[src.type] || "dot", size: 12 }), src.name)) : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "No sources yet")), busy(s) ? /* @__PURE__ */ react_dashboard_default.createElement(
+      Button,
+      {
+        size: "sm",
+        className: "at-sources-run is-running",
+        disabled: true,
+        title: `${titleCase(s.name)} discovery is running. Its digest posts to the stream's chat when it finishes.`
+      },
+      /* @__PURE__ */ react_dashboard_default.createElement(Spinner, { size: 12 }),
+      starting === s.name ? "Starting\u2026" : "Running\u2026"
+    ) : /* @__PURE__ */ react_dashboard_default.createElement(
       Button,
       {
         size: "sm",
         icon: "play",
         className: "at-sources-run",
-        disabled: !!running,
+        disabled: !!starting,
         onClick: () => runNow(s),
         title: `Run ${titleCase(s.name)} discovery now`
       },
-      running === s.name ? "Starting\u2026" : "Run now"
+      "Run now"
     )))), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", icon: "plus", className: "at-sources-add", onClick: () => setAdding((v) => !v), "aria-expanded": adding }, "Add a source"), adding ? /* @__PURE__ */ react_dashboard_default.createElement(CopyPrompt, { className: "is-compact", text: ADD_SOURCE_PROMPT }) : null);
   }
   function CopyPrompt({ text, className }) {

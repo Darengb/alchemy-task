@@ -46,7 +46,7 @@ export function DiscoveryView({ runs, streams, error, loading, reload }) {
         <div className="at-disco-inner">
           <div className="at-disco-bar"><h1 className="at-period">Discovery</h1><span className="at-flex" />
             <IconButton icon="refresh" label="Refresh" onClick={reload} /></div>
-          <SourcesBar streams={streams} />
+          <SourcesBar streams={streams} reload={reload} />
           <div className="at-caughtup">
             <Icon name="clock" size={18} />
             <div>
@@ -77,7 +77,7 @@ export function DiscoveryView({ runs, streams, error, loading, reload }) {
                      options={[{ value: 'waiting', label: 'Waiting for you' }, { value: 'all', label: 'All runs' }]} />
           <IconButton icon="refresh" label="Refresh" onClick={reload} />
         </div>
-        {configured ? <SourcesBar streams={streams} /> : null}
+        {configured ? <SourcesBar streams={streams} reload={reload} /> : null}
         {!shown.length ? (
           <div className="at-caughtup">
             <Icon name="check" size={18} />
@@ -100,16 +100,40 @@ const SOURCE_ICONS = { email: 'inbox', chat: 'chat', transcript: 'list', meeting
 
 // What discovery reads: one row per stream, each source with an icon for its type. "Add a source" reveals
 // the message to send Hermes, with a copy button (sources are connected in chat, not here).
-function SourcesBar({ streams }) {
+function SourcesBar({ streams, reload }) {
   const [adding, setAdding] = React.useState(false)
-  const [running, setRunning] = React.useState(null)
+  const [starting, setStarting] = React.useState(null)
+  // Streams started from here, until the server reports the run (or a few minutes pass without it).
+  const [started, setStarted] = React.useState({})
   const { api } = useApp()
   const toast = useToast()
+  const now = Date.now()
+  const busy = (s) => s.running || starting === s.name || (started[s.name] && now - started[s.name] < 3 * 60 * 1000)
+  const anyRunning = streams.some((s) => s.running) || Object.keys(started).length > 0
+  React.useEffect(() => {
+    // Poll while a run is in progress so the indicator clears (and new proposals appear) when it ends.
+    if (!anyRunning || !reload) return undefined
+    const id = setInterval(() => reload(), 20000)
+    return () => clearInterval(id)
+  }, [anyRunning, reload])
+  React.useEffect(() => {
+    // Once the server reports a started stream as running, it owns the indicator.
+    const next = { ...started }
+    let changed = false
+    for (const s of streams) {
+      if (next[s.name] && (s.running || Date.now() - next[s.name] > 3 * 60 * 1000)) { delete next[s.name]; changed = true }
+    }
+    if (changed) setStarted(next)
+  }, [streams])
   const runNow = async (s) => {
-    setRunning(s.name)
-    try { const res = await api.runStream(s.name); toast(res.message || 'Discovery run started') }
-    catch (err) { toast(describeError(err), { tone: 'error' }) }
-    setRunning(null)
+    setStarting(s.name)
+    try {
+      const res = await api.runStream(s.name)
+      toast(res.message || 'Discovery run started')
+      setStarted((cur) => ({ ...cur, [s.name]: Date.now() }))
+      if (reload) setTimeout(() => reload(), 3000)
+    } catch (err) { toast(describeError(err), { tone: 'error' }) }
+    setStarting(null)
   }
   const many = streams.length > 1
   return (
@@ -128,10 +152,17 @@ function SourcesBar({ streams }) {
                 </span>
               )) : <span className="at-muted">No sources yet</span>}
             </div>
-            <Button size="sm" icon="play" className="at-sources-run" disabled={!!running}
-                    onClick={() => runNow(s)} title={`Run ${titleCase(s.name)} discovery now`}>
-              {running === s.name ? 'Starting…' : 'Run now'}
-            </Button>
+            {busy(s) ? (
+              <Button size="sm" className="at-sources-run is-running" disabled
+                      title={`${titleCase(s.name)} discovery is running. Its digest posts to the stream's chat when it finishes.`}>
+                <Spinner size={12} />{starting === s.name ? 'Starting…' : 'Running…'}
+              </Button>
+            ) : (
+              <Button size="sm" icon="play" className="at-sources-run" disabled={!!starting}
+                      onClick={() => runNow(s)} title={`Run ${titleCase(s.name)} discovery now`}>
+                Run now
+              </Button>
+            )}
           </div>
         ))}
       </div>

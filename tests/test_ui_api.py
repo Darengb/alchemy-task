@@ -375,3 +375,23 @@ def test_settings_streams_include_next_run(rclient, monkeypatch):
     streams = {s["name"]: s for s in client.get("/settings").json()["streams"]}
     assert streams["mbg"]["next_run_at"] == "2026-11-11T18:00:00-05:00"
     assert streams["av"]["next_run_at"] is None  # paused: no next run shown
+
+
+def test_streams_report_a_run_in_progress_while_its_open_run_is_active(tmp_path, monkeypatch):
+    import json, os, time
+    from types import SimpleNamespace
+    from alchemy_task.dashboard import settings_api
+    runs = tmp_path / 'runs'
+    for rid, stream, status, age in (('a', 'mbg', 'open', 0), ('b', 'av', 'open', 3600), ('c', 'personal', 'finalized', 0)):
+        (runs / rid).mkdir(parents=True)
+        f = runs / rid / 'ledger.json'
+        f.write_text(json.dumps({'stream': stream, 'status': status}))
+        os.utime(f, (time.time() - age, time.time() - age))
+    fake = SimpleNamespace(store=SimpleNamespace(state_root=tmp_path))
+    import alchemy_task.discovery_integration as di
+    monkeypatch.setattr(di, 'get_service', lambda rt=None: fake)
+    settings_api._FIRED.clear()
+    assert set(settings_api._running_streams(object())) == {'mbg'}
+    settings_api._FIRED['visions'] = time.time()
+    assert set(settings_api._running_streams(object())) == {'mbg', 'visions'}
+    settings_api._FIRED.clear()
