@@ -195,3 +195,72 @@ def test_discovery_model_launch_error_holds_the_run(tmp_path):
     assert again["status"] == "held" and "research_model" in again["holds"]
     assert "the research model old-model-v1 could not be used" in text
     assert "set my research model" in text
+
+
+# ------------------------------------------------------------------ review fixes
+
+def test_sweep_wake_sees_blocked_task_once_the_setting_changes(ctx, settings, data_dir):  # noqa: F811
+    from alchemy_task.core import precheck
+    _set_model(ctx, "old-model-v1", "openrouter")
+
+    def launch(req):
+        raise RuntimeError("Provider 'openrouter' rejected model 'old-model-v1': model not found")
+    ctx.subagent_lifecycle.launch = launch
+    doc = create(settings, data_dir)
+    assert not ra.launch(runtime.Runtime(), doc.task_id)["started"]
+    old = dataclasses.replace(settings, research_model="old-model-v1", research_provider="openrouter")
+    assert precheck.research_wake(old, str(data_dir)) == {"wakeAgent": False}
+    new = dataclasses.replace(settings, research_model="new-model-flash", research_provider="openrouter")
+    woke = precheck.research_wake(new, str(data_dir))
+    assert woke["wakeAgent"] and woke["waiting"] == 1
+    ctx.subagent_lifecycle.launch = lambda req: {"subagent_id": "sa-9", "contract_version": 1}
+    _set_model(ctx, "new-model-flash", "openrouter")
+    assert ra.recover(runtime.Runtime(), wait_seconds=0)["started"]
+
+
+def test_model_key_lives_in_core():
+    s = SimpleNamespace(research_model="m", research_provider="p")
+    assert rs.model_route(s) == {"model": "m", "provider": "p"} and rs.model_key(s) == "m|p"
+    assert rs.model_key(SimpleNamespace(research_model="", research_provider="")) == "|"
+
+
+ROUTED = SimpleNamespace(research_model="glm-5-flash", research_provider="openrouter")
+
+
+@pytest.mark.parametrize("text", [
+    "model not found", "Unknown model glm-5-flash", "Unsupported model for this endpoint",
+    "model glm-5-flash does not exist", "Invalid API key", "Error code: 401", "401 Unauthorized",
+    "no credentials for provider openrouter", "No API key configured", "Insufficient credits",
+    "insufficient quota", "billing hard limit reached"])
+def test_classifier_matches_model_failures(text):
+    assert ra.model_failure(text, ROUTED)
+
+
+@pytest.mark.parametrize("text", [
+    "rate limit exceeded for model glm-5-flash", "Error code: 429 for model glm-5-flash invalid",
+    "Connection error talking to provider openrouter, model not found", "request timed out for model x",
+    "The author compared pricing model options from each provider", "authority approved the budget",
+    "403 forbidden on the vendor site", "quota of seats per provider", "the model and provider are fine"])
+def test_classifier_ignores_ordinary_failures(text):
+    assert ra.model_failure(text, ROUTED) is None
+
+
+@pytest.mark.parametrize("status", ["interrupted", "completed", "timeout", ""])
+def test_child_stop_classifies_only_failed_statuses(ctx, settings, data_dir, status):  # noqa: F811
+    _set_model(ctx, "deepseek-v4-flash", "openrouter")
+    doc = create(settings, data_dir)
+    out = ra.launch(runtime.Runtime(), doc.task_id)
+    ra.subagent_start(child_session_id="child-1", child_subagent_id=out["subagent_id"])
+    ra.subagent_stop(child_session_id="child-1", child_status=status,
+                     child_summary="Notes so far: invalid API key handling and the unknown model pricing model")
+    st = _enrichment(doc)
+    assert "could not be used" not in str(st.get("last_error")) and "blocked_model" not in st
+
+
+def test_child_error_status_is_classified(ctx, settings, data_dir):  # noqa: F811
+    _set_model(ctx, "deepseek-v4-flash", "openrouter")
+    doc = create(settings, data_dir)
+    out = ra.launch(runtime.Runtime(), doc.task_id)
+    ra.subagent_start(child_session_id="child-1", child_subagent_id=out["subagent_id"])
+    ra.subagent_stop(child_session_id="child-1", child_status="error", child_summary="Unknown model deepseek-v4-flash")
+    assert _enrichment(doc)["status"] == "failed"

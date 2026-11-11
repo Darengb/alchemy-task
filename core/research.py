@@ -64,6 +64,22 @@ def state(fm: Mapping[str, Any]) -> dict[str, Any] | None:
     return block if isinstance(block, Mapping) else None  # type: ignore[return-value]
 
 
+def model_route(settings: Any) -> dict[str, str]:
+    """The research model setting as launch fields; empty when research runs on the main model."""
+    route = {}
+    for key in ("model", "provider"):
+        value = str(getattr(settings, f"research_{key}", "") or "").strip()
+        if value:
+            route[key] = value
+    return route
+
+
+def model_key(settings: Any) -> str:
+    """Identity of the research model setting, stored on a task blocked by it (``blocked_model``)."""
+    route = model_route(settings)
+    return f"{route.get('model', '')}|{route.get('provider', '')}"
+
+
 def eligibility(fm: Mapping[str, Any], model_key: str | None = None) -> str:
     """'eligible', or why not: none, closed, skipped, failed, complete, running, exhausted, unsupported.
 

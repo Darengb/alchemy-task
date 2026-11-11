@@ -37,7 +37,8 @@ def research_wake(settings: Settings | None = None, data_dir: str = "") -> dict[
         if not s.configured:
             return {"wakeAgent": False}
         store = TaskStore(s, Path(data_dir or "/nonexistent-precheck"))  # read-only scan
-        waiting = [t.title for t in store.scan().tasks if rs.eligibility(t.fm) == "eligible"]
+        waiting = [t.title for t in store.scan().tasks if rs.eligibility(t.fm, rs.model_key(s)) == "eligible"]
+        # with the current model setting, so a task blocked by an earlier setting wakes the sweep
     except Exception:  # noqa: BLE001 - a broken pre-check must not wake the model every tick
         return {"wakeAgent": False}
     if not waiting:
