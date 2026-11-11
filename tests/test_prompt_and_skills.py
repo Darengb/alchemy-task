@@ -41,7 +41,8 @@ def test_discovery_skill_starts_from_areas():
 
 def test_discovery_setup_questions_are_plain_text():
     text = (ROOT / 'skills/discovery/SKILL.md').read_text()
-    assert 'one question per message' in text and 'multi-select' in text and 'Include all' in text
+    assert 'one question per message' in text and 'never use it' in text and 'Include all' in text
+    assert 'Choose sources, one at a time' in text
 
 
 def test_discovery_setup_checks_state_and_handles_activation_errors():

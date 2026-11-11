@@ -13,13 +13,13 @@ Set up each stream from the chat that should receive its digest. Reuse existing 
 
 **Check what already exists first.** Before asking anything, call `discovery_config` `action=status` and `discovery_stream` `action=list`, and look for any of the user's existing scheduled jobs that already scan the same sources (`cronjob_manage` `list`). Describe such a job only from its live state (enabled or paused, schedule, delivery), and ask whether to keep it running alongside discovery.
 
-**Run setup as a conversation: one question per message, in this order.** Use the question tool for each structured question (multi-select where several answers apply, so the user can reply "1, 3" or "all"); never put several questions in one message.
+**Run setup as a conversation: one question per message, in this order.** Use the question tool with single-choice options for every structured question (multi-select is not reliable on every platform, so never use it); never put several questions in one message.
 
 1. **Open briefly.** In two or three lines, say what you found (existing streams, and any existing jobs you will leave alone) and that you will ask a few short questions.
 2. **Areas, if not set up.** If the user has not set up areas yet (no areas, or only the default `general`), ask the setup skill's area question (`alchemy-task:setup` section 3) and save the answer with `task_setup` `save` first. An area is a team or major part of life; accounts and channels do not become areas by themselves.
-3. **Choose sources.** One multi-select question listing every source you can read now, by name (account and scope). Include an option for sources they use that you cannot read yet.
+3. **Choose sources, one at a time.** For each source you can read now, ask a yes/no question: "Include <source> (account and scope)?" with "Yes, include it" first.
 4. **Assign each source to an area** (only when there is more than one area): one single-choice question per chosen source, "Which area does <source> belong to?", recommending the area that obviously fits. Never assign an area without asking.
-5. **Meeting transcripts**, when an email source was chosen: one yes/no question (see Meeting transcripts below). Only if two or more mailboxes are chosen, ask which to include, with "Include all" first and recommended.
+5. **Meeting transcripts**, when an email source was chosen: one yes/no question (see Meeting transcripts below). Only if two or more mailboxes are chosen, ask "Include all of them?" with "Include all" first and recommended; if they want to choose, ask yes/no for each mailbox.
 6. **Schedule and destination:** one question each, recommending local 6:00 PM and this chat.
 7. **Other sources:** ask "Are there other places your work conversations happen that we should add later?" (yes/no).
 8. **Approval:** one summary to approve (below), then create the streams. Create one stream per area that has sources, all posting to the chosen chat; never ask the user to choose between separate and combined streams. Always pass `areas` to `discovery_stream` `create` (without it a stream covers every area).
