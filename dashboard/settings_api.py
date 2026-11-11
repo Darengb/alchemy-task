@@ -120,8 +120,9 @@ async def patch_tasks(request: Request):
         for key in ("research_model", "research_provider"):
             if key in body:
                 value = body[key] if body[key] is not None else ""
-                if not isinstance(value, str) or len(value.strip()) > 200:
-                    raise UIError("invalid_request", f"{key} must be text of at most 200 characters")
+                limit = 64 if key == "research_provider" else 200  # Hermes rejects a longer launch provider
+                if not isinstance(value, str) or len(value.strip()) > limit:
+                    raise UIError("invalid_request", f"{key} must be text of at most {limit} characters")
                 rt.ctx.set_config(key, value.strip())  # empty: research uses the main model
         return {"ok": True, "plugin": PLUGIN}
     return await handle(request, run, {"default_area", "research_by_default", "research_model", "research_provider"})

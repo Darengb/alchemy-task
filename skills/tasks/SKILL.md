@@ -89,7 +89,9 @@ If they say no or ignore the offer, do not ask again about the same item.
 
 Research workers (task research, the research sweep and discovery research) run on the main model unless a
 research model is set. The setting is `research_model` plus an optional `research_provider`, saved with
-`task_setup` `save`; an empty string clears it (back to the main model). `task_setup` `status` shows the current one.
+`task_setup` `save`; an empty string clears it (back to the main model). A provider needs a model: set a model
+whenever you set a provider, and save both in the same `task_setup` `save` (a provider without a model is refused).
+To go back to the main model, clear both. `task_setup` `status` shows the current one.
 - "set my research model", "use a cheaper model for research", "help me pick a research model": talk it
   through openly. Check which providers and models the user has configured (Hermes config and model info
   available to you, Nous Portal, OpenRouter, direct API keys), recommend one, save it after they agree.

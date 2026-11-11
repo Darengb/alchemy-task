@@ -27,6 +27,7 @@ SAVABLE = {"workspace_root": str, "task_dir": str, "areas": list, "default_area"
            "research_by_default": bool, "git_transport": str, "git_remote": str, "git_branch": str,
            "git_run_hooks": bool, "research_model": str, "research_provider": str}
 MODEL_SETTING_MAX = 200
+PROVIDER_SETTING_MAX = 64  # Hermes rejects a longer launch provider
 DEFAULT_AREAS = ["general"]
 
 
@@ -200,9 +201,15 @@ def save(rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
         raise SetupError(f"git_transport must be one of {', '.join(TRANSPORTS)}")
     if "task_dir" in changes and "{area}" not in changes["task_dir"]:
         raise SetupError("task_dir must contain {area}, for example areas/{area}/tasks")
-    for key in ("research_model", "research_provider"):
-        if key in changes and len(changes[key]) > MODEL_SETTING_MAX:
-            raise SetupError(f"{key} must be at most {MODEL_SETTING_MAX} characters")
+    for key, limit in (("research_model", MODEL_SETTING_MAX), ("research_provider", PROVIDER_SETTING_MAX)):
+        if key in changes and len(changes[key]) > limit:
+            raise SetupError(f"{key} must be at most {limit} characters")
+    if "research_model" in changes or "research_provider" in changes:
+        model = changes.get("research_model", getattr(rt.settings, "research_model", "") or "")
+        provider = changes.get("research_provider", getattr(rt.settings, "research_provider", "") or "")
+        if provider and not model:
+            raise SetupError("a research provider needs a research model: save research_model with it, "
+                             "or clear both to use the main model")
     if "default_area" in changes and changes["default_area"]:
         changes["default_area"] = validate_area_name(changes["default_area"])
     notes = []

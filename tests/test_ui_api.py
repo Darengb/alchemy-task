@@ -185,6 +185,9 @@ def test_settings_research_model(client, ctx):
     assert client.patch("/settings/tasks", json={"research_model": 5}).json()["error"]["code"] == "invalid_request"
     assert client.patch("/settings/tasks", json={"research_model": "x" * 201}).json()["error"]["code"] == \
         "invalid_request"
+    assert client.patch("/settings/tasks", json={"research_provider": "p" * 65}).json()["error"]["code"] == \
+        "invalid_request"
+    assert client.patch("/settings/tasks", json={"research_provider": "p" * 64}).json()["ok"]
     assert client.patch("/settings/tasks", json={"research_model": "", "research_provider": ""}).json()["ok"]
     s = client.get("/settings").json()["tasks"]
     assert s["research_model"] is None and s["research_provider"] is None

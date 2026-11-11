@@ -355,3 +355,25 @@ def test_model_hold_message_keeps_reconcile_step_when_other_holds_exist(tmp_path
     with runner._state(run) as state:
         state["holds"] = ["research_model"]
     assert "discovery_recover" not in runner.run(run, session_id="parent")["next_action"]
+
+
+def test_setup_save_caps_provider_and_requires_a_model(home, workspace, data_dir):  # noqa: F811
+    ctx = make_ctx(data_dir, workspace_root=str(workspace))
+    bad = call(action="save", research_model="m", research_provider="p" * 65)
+    assert not bad.get("ok") and "research_provider" in bad["message"] and "64" in bad["message"]
+    assert call(action="save", research_model="m", research_provider="p" * 64)["ok"]
+    call(action="save", research_model="", research_provider="")
+    alone = call(action="save", research_provider="openrouter")
+    assert not alone.get("ok") and "needs a research model" in alone["message"]
+    assert ctx._s.get("research_provider", "") == ""
+    assert call(action="save", research_model="glm-5-flash", research_provider="openrouter")["ok"]
+    dropped = call(action="save", research_model="")
+    assert not dropped.get("ok") and ctx._s["research_model"] == "glm-5-flash"
+    assert call(action="save", research_model="", research_provider="")["ok"]
+
+
+def test_skill_says_a_provider_needs_a_model():
+    from pathlib import Path
+    text = (Path(__file__).resolve().parents[1] / "skills/tasks/SKILL.md").read_text()
+    section = text[text.index("## Research model"):]
+    assert "A provider needs a model" in section and "\u2014" not in section
