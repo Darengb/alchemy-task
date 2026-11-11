@@ -887,14 +887,49 @@ class DiscoveryIntegration:
             else: state = 'selected'
             self.store.update_backlog(ledger['stream'], entry['source_key'], entry['backlog_id'], status=state, lineage=lineage)
 
+    # Per-unit problems that are not a caller mistake: they land under Needs attention, never stop the run.
+    UNIT_PROBLEMS = ('malformed', 'inventory is incomplete', 'parse', 'conflicting approved workspace',
+                     'nomination is missing', 'exact nomination must be', 'task cannot be edited', 'outside canonical task')
+
+    @classmethod
+    def _unit_problem(cls, exc):
+        text = str(exc).lower()
+        return any(marker in text for marker in cls.UNIT_PROBLEMS)
+
+    def _record_unit_failure(self, run_id, unit_id, reason, *, request=None):
+        """Save one unit's failure as its decision record. No task write happens."""
+        path = self._decision_path(run_id, unit_id)
+        with self.store._lock('decision:' + run_id + ':' + unit_id):
+            old = read_json(path)
+            if old and old.get('kind') != 'failed':
+                return old
+            candidate = self.store.get_candidate(run_id, unit_id)
+            record = {'run_id': run_id, 'unit_id': unit_id, 'kind': 'failed', 'failure': reason[:500],
+                      'request': request or {'decision': 'failed'}, 'targets': [], 'title': candidate.get('title', 'Research follow-up')}
+            atomic_json(path, record)
+            return record
+
+    def _failed_match(self, run_id, unit_id, exc):
+        reason = 'could not be matched to your tasks: ' + str(exc)[:300]
+        self._record_unit_failure(run_id, unit_id, reason)
+        return {'unit_id': unit_id, 'failed': True, 'reason': reason,
+                'next_action': ('Nothing is written for this unit; it appears under Needs attention in the digest. '
+                                'Continue with the next unit, then prepare the digest.')}
+
     def match(self, run_id, unit_id, *, session_id):
         self.runner._parent(run_id, session_id)
-        result = self.conversion.match(run_id, unit_id)
-        # Supply complete destination content for semantic judgment/CAS.
-        for target in result['targets']:
-            doc = self.rt.store().resolve(target['task_id'])
-            info = self.store.put_resource(run_id, 'match-body-' + content_revision(doc.raw.decode()).split(':')[-1], doc.raw.decode())
-            target['full_body_resource'] = info
+        self.conversion.joined(run_id, unit_id)  # a wrong run or unit is the caller's mistake and is refused
+        try:
+            result = self.conversion.match(run_id, unit_id)
+            # Supply complete destination content for semantic judgment/CAS.
+            for target in result['targets']:
+                doc = self.rt.store().resolve(target['task_id'])
+                info = self.store.put_resource(run_id, 'match-body-' + content_revision(doc.raw.decode()).split(':')[-1], doc.raw.decode())
+                target['full_body_resource'] = info
+        except (UserError, OSError, ValueError) as exc:
+            if isinstance(exc, UserError) and not self._unit_problem(exc):
+                raise
+            return self._failed_match(run_id, unit_id, exc)
         return result
 
 
@@ -1046,7 +1081,7 @@ class DiscoveryIntegration:
             wid = candidate['candidate_id']
             record = read_json(self._decision_path(run_id, wid), {})
             action = record.get('request', {}).get('decision')
-            complete = action == 'noop' or candidate.get('research_disposition', '').startswith('exclude_')
+            complete = action in {'noop', 'failed'} or candidate.get('research_disposition', '').startswith('exclude_')
             if action == 'auto':
                 receipt = read_json(self.conversion._paths(run_id, wid)[1], {})
                 complete = receipt.get('state') == 'complete'
@@ -1104,12 +1139,19 @@ class DiscoveryIntegration:
             old = read_json(path)
             request = {'decision': decision, 'reason': reason, 'target_task_id': target_task_id,
                        'expected_revision': expected_revision, 'useful_delta': useful_delta}
-            if old:
+            if old and old.get('kind') != 'failed':
                 if old['request'] != request: raise UserError('post-join decision is immutable')
                 # A saved auto plan is safe to resume by exact full postimage.
                 if decision == 'auto': self.conversion.deliver_git(run_id, unit_id)
                 return old
-            outcome = self.conversion.match(run_id, unit_id)
+            self.conversion.joined(run_id, unit_id)  # a wrong run or unit is the caller's mistake and is refused
+            try:
+                outcome = self.conversion.match(run_id, unit_id)
+            except (UserError, OSError, ValueError) as exc:
+                if isinstance(exc, UserError) and not self._unit_problem(exc):
+                    raise
+                failed = self._failed_match_locked(run_id, unit_id, exc, path)
+                return failed
             if outcome['kind'] == 'exact' and decision not in {'auto', 'noop'}:
                 raise UserError('unique exact target requires useful-delta enrichment or true noop decision')
             if outcome['kind'] == 'conflict' and decision != 'conflict':
@@ -1117,8 +1159,13 @@ class DiscoveryIntegration:
             if decision == 'conflict' and outcome['kind'] != 'conflict':
                 raise UserError('no verified multiple-exact conflict')
             if decision in {'auto', 'noop'}:
-                prepared = self.conversion.prepare(run_id, unit_id, choice=decision, reason=reason,
-                             target_task_id=target_task_id, expected_revision=expected_revision, useful_delta=useful_delta)
+                try:
+                    prepared = self.conversion.prepare(run_id, unit_id, choice=decision, reason=reason,
+                                 target_task_id=target_task_id, expected_revision=expected_revision, useful_delta=useful_delta)
+                except UserError as exc:
+                    if not self._unit_problem(exc):
+                        raise
+                    return self._failed_match_locked(run_id, unit_id, exc, path)
                 if decision == 'auto': self.conversion.deliver_git(run_id, unit_id)
             record = {'run_id': run_id, 'unit_id': unit_id, 'request': request, 'kind': outcome['kind'],
                       'targets': outcome['targets'], 'title': outcome['research']['title'],
@@ -1131,6 +1178,17 @@ class DiscoveryIntegration:
             atomic_json(path, record)
             return record
 
+    def _failed_match_locked(self, run_id, unit_id, exc, path):
+        """Failure record written while the caller already holds the unit's decision lock."""
+        reason = 'could not be matched to your tasks: ' + str(exc)[:300]
+        candidate = self.store.get_candidate(run_id, unit_id)
+        record = {'run_id': run_id, 'unit_id': unit_id, 'kind': 'failed', 'failure': reason, 'request': {'decision': 'failed'},
+                  'targets': [], 'title': candidate.get('title', 'Research follow-up'), 'failed': True,
+                  'next_action': ('Nothing is written for this unit; it appears under Needs attention in the digest. '
+                                  'Continue with the next unit, then prepare the digest.')}
+        atomic_json(path, record)
+        return record
+
     def finalize(self, run_id, *, session_id):
         ledger = self.runner._parent(run_id, session_id)
         if ledger.get('review'):
@@ -1141,11 +1199,17 @@ class DiscoveryIntegration:
         if not info: raise UserError('global join required before review decisions/digest' + unfinished)
         join = json.loads((self.store.run_dir(run_id) / 'resources' / info['sha256']).read_text())
         if not join.get('joined'): raise UserError('global join incomplete' + unfinished)
-        items, conflicts, outcomes = [], [], []
+        items, conflicts, outcomes, unit_failures = [], [], [], []
         for candidate in ledger['candidates']:
             if not candidate.get('parent_candidate_id') or candidate['parent_candidate_id'] not in join['accepted'] or not candidate.get('eligible_research'): continue
             decision = read_json(self._decision_path(run_id, candidate['candidate_id']))
-            if not decision: raise UserError('post-join semantic decision missing for ' + candidate['candidate_id'])
+            if not decision:
+                # One unreviewed unit never blocks the digest: it goes under Needs attention, nothing is written.
+                decision = self._record_unit_failure(run_id, candidate['candidate_id'], 'not reviewed in this run')
+            if decision.get('kind') == 'failed':
+                unit_failures.append({'unit_id': candidate['candidate_id'], 'title': decision.get('title') or candidate['title'],
+                                      'reason': decision.get('failure') or 'could not be matched to your tasks'})
+                continue
             if decision['request']['decision'] == 'propose': items.append(decision)
             elif decision['kind'] == 'conflict': conflicts.append({'unit_id': candidate['candidate_id'], 'title': decision['title'], 'reason': 'Multiple exact task destinations conflict', 'targets': decision['targets']})
             elif decision['request']['decision'] == 'noop':
@@ -1174,7 +1238,7 @@ class DiscoveryIntegration:
         origin = {**ledger['origin'], 'session_id': ledger['origin'].get('stream_origin_session', ledger['origin']['session_id']),
                   'delivery_owner': stream.get('delivery_owner', 'native_origin')}
         digest = self.digest.prepare(run_id, stream=ledger['config'].get('stream_name', ledger['stream']), day=ledger['business_date'], origin=origin,
-                                     items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + supplement_failures], coverage=coverage, outcomes=outcomes,
+                                     items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + unit_failures + supplement_failures], coverage=coverage, outcomes=outcomes,
                                      blocked=conflicts, label=stream.get('label', ''), review_namespace=run_id if ledger.get('lineage', {}).get('operation') else '', deferred=join.get('deferred', []))
         with self.store._lock(self.store._run_lock_name(run_id)):
             pending = self.store.get_run(run_id); pending['pending_operations'] = ['finalization_projection']; self.store._save(run_id, pending)
@@ -1409,7 +1473,7 @@ def _schema(name, description, properties, required=()):
 
 
 SCHEMAS = {
- 'discovery_research_run': _schema('discovery_research_run', 'Run/resume saved source-first research in one short bounded call (at most 300 s). Children keep running between calls; call again with the same run_id while status is running, then join. No proposals before full join.', {**RUN, 'expected_revision': STR}, ['run_id']),
+ 'discovery_research_run': _schema('discovery_research_run', 'Run/resume saved source-first research in one short bounded call (at most 300 s). Children keep running between calls; call again with the same run_id while status is running, then join. No proposals before full join. finish_now: true starts no new research, lets running children finish and defers never-started items to the next run (also automatic after 50 minutes of research).', {**RUN, 'expected_revision': STR, 'finish_now': BOOL}, ['run_id']),
  'discovery_research_fetch': _schema('discovery_research_fetch', 'Read full lossless frozen context/research pages with exact revision; continue until has_more=false.', {**RUN, 'resource': STR, 'revision': STR, 'token': STR, 'binding': BINDING, 'cursor': STR, 'limit': {'type': 'integer', 'minimum': 1, 'maximum': 16384}}, ['run_id', 'resource', 'revision']),
  'discovery_research_submit': _schema('discovery_research_submit', 'Child full callback only. Direct payload or multipart begin/part/commit. Continue until committed, then stop.', {**RUN, 'token': STR, 'binding': BINDING, 'payload': OBJ, 'upload': {'type': 'object', 'properties': {'action': {'type': 'string', 'enum': ['begin', 'part', 'commit']}, 'total_bytes': {'type': 'integer'}, 'sha256': STR, 'part_count': {'type': 'integer'}, 'index': {'type': 'integer'}, 'content': STR}, 'required': ['action']}}, ['run_id', 'token', 'binding']),
  'discovery_research_accept': _schema('discovery_research_accept', 'Parent semantic review of FULL fetched immutable payload. Never rewrite child facts. All checklist observations required.', {**RUN, 'token': STR, 'payload_sha256': STR, 'assessment': {'type': 'object', 'properties': {'accepted': BOOL, 'reason': STR, 'retryable': BOOL, 'checklist': {'type': 'object', 'properties': {k: STR for k in CHECKLIST}, 'required': list(CHECKLIST)}}, 'required': ['accepted', 'reason', 'checklist']}}, ['run_id', 'token', 'payload_sha256', 'assessment']),
