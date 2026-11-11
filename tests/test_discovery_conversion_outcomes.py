@@ -299,8 +299,9 @@ def test_exact_destination_cannot_be_recorded_as_a_user_proposal(settings, data_
     with pytest.raises(UserError, match='unique exact target'):
         integration.record_decision(run, unit, decision='propose', reason='Looks new.', session_id='parent')
     assert not (store.run_dir(run) / 'decisions' / (unit + '.json')).exists()
-    with pytest.raises(UserError, match='decision missing'):
-        integration.finalize(run, session_id='parent')
+    # Fail open: the unreviewed unit goes under Needs attention; nothing is proposed or written.
+    digest = integration.finalize(run, session_id='parent')
+    assert [f['reason'] for f in digest['failures']] == ['not reviewed in this run']
     assert task.path.read_bytes() == before and integration.digest._load()['proposals'] == {}
 
 

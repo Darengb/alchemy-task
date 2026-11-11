@@ -109,8 +109,7 @@ def test_post_join_decision_digest_exact_binding_and_backend(settings, data_dir,
         ledger = store.get_run(run); ledger['origin'] = {'session_id': 'parent', 'deliver': 'origin'}
         store._save(run, ledger)
     integration = DiscoveryIntegration(rt, profile_home=tmp_path / 'profile')
-    with pytest.raises(UserError, match='decision'):
-        integration.finalize(run, session_id='parent')
+    # (Finalizing before any decision now lists the unit as not reviewed: tests/test_discovery_fail_open.py.)
     integration.record_decision(run, wid, decision='propose', reason='New independent substantive action.', session_id='parent')
     digest = integration.finalize(run, session_id='parent')
     proposal = digest['items'][0]

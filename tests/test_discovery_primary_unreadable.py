@@ -1,4 +1,4 @@
-"""Two research children that cannot read their primary source stop the run early."""
+"""Research children that cannot read their primary source fail only their own items."""
 from test_discovery_runner import setup_runner
 from test_discovery_schema import bundle
 
@@ -35,16 +35,14 @@ def _child_reports(runner, store, pool, run, failing):
     pool.status = status
 
 
-def test_two_unreadable_primaries_hold_the_run_and_stop_launches(tmp_path):
+def test_two_unreadable_primaries_no_longer_hold_the_run(tmp_path):
     runner, store, pool, run = setup_runner(tmp_path, count=6, slots=2)
     _child_reports(runner, store, pool, run, failing={1, 2})
     report = runner.run(run, session_id='parent')
-    assert report['status'] == 'held' and 'primary_unreadable' in report['holds']
-    assert 'cannot read the primary sources' in report['primary_unreadable_error']
-    assert 'fix collection' in report['next_action']
-    assert len(pool.requests) == 2  # no further children launched
-    again = runner.run(run, session_id='parent')
-    assert again['status'] == 'held' and len(pool.requests) == 2
+    assert report['status'] != 'held' and 'primary_unreadable' not in report.get('holds', [])
+    assert len(pool.requests) > 2  # launches continue
+    exhausted = [a for a in store.get_run(run)['attempts'].values() if a['state'] == 'exhausted']
+    assert {a['rejection']['reason'] for a in exhausted} == {'its saved conversation could not be read'}
 
 
 def test_one_unreadable_primary_does_not_hold(tmp_path):

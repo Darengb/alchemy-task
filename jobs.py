@@ -161,11 +161,18 @@ def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None, 
                    'Return the exact immutable prepared digest text as the final reply for native host delivery, with no paraphrase, '
                    'prefix or extra post. discovery_digest action=send returns final_text metadata only; never use an alternate sender. '
                    'Preparation/final return is not proof of delivery; native host retry semantics apply, not universal exactly-once. '
-                   ) + 'If blocked, preserve the exact saved run rather than creating another run. ' + (
+                   ) + 'Fail open: every run ends with a readable digest; imperfect information beats none. '
+                   'Per item, research from the saved source even if incomplete and note the gap; when accepting, you may add newer context '
+                   'you read with the user\'s own tools, noted as such; if an item cannot be researched, reject it as not retryable so it '
+                   'goes under Needs attention. A problem with one item, source or tool never stops the run: never retry the same failing '
+                   'call more than twice, skip that item and continue. A match or decision failure for one item is recorded and the run continues. '
+                   'Time box research to about 45 minutes, then call discovery_research_run with finish_now=true, join and prepare the digest; '
+                   'deferred items are researched first next run. Stop early only when nothing at all can proceed. Never create another run; '
+                   'the next run continues the same saved run. ' + (
                    '' if delivery_owner == 'verified_sender' else
-                   'If you stop before research is complete and the digest is prepared, the final reply says the run is unfinished, '
-                   'with its run_id and the last status counts; never present an unfinished run as a finished digest. ') +
-                   'The next run continues the same saved run.')}
+                   'If preparing the digest is refused or fails, the final reply is a partial digest you write in the same layout, marked '
+                   'Partial digest: heading, one section per accepted finding with current state and next action, a Needs attention list '
+                   'of each skipped item and why, then the run_id. Never end with only a status report.'))}
 
 
 def _preview(text):
