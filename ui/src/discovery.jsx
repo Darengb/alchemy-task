@@ -187,13 +187,13 @@ export function CopyPrompt({ text, className }) {
 }
 
 // The one message that starts discovery setup, shown big enough that it cannot be missed. Click to copy.
-function SetupPrompt() {
+export function SetupPrompt({ text = SETUP_PROMPT }) {
   const toast = useToast()
-  const copy = async () => toast((await copyText(SETUP_PROMPT)) ? 'Copied. Paste it into a chat with Hermes.' : 'Could not copy')
+  const copy = async () => toast((await copyText(text)) ? 'Copied. Paste it into a chat with Hermes.' : 'Could not copy')
   return (
     <button type="button" className="at-setup-prompt" onClick={copy} title="Copy">
       <span className="at-setup-prompt-label"><Icon name="chat" size={17} /> Tell Hermes in chat</span>
-      <span className="at-setup-prompt-text">{SETUP_PROMPT}</span>
+      <span className="at-setup-prompt-text">{text}</span>
       <span className="at-setup-prompt-copy"><Icon name="clipboard" size={15} /> Copy</span>
     </button>
   )
