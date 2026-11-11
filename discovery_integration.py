@@ -198,8 +198,14 @@ class DiscoveryIntegration:
                 or binding.get('profile') != getattr(self.rt.ctx, 'profile_name', None)
                 or receipt.get('profile') != binding.get('profile')
                 or receipt.get('job_id') != binding.get('job_id')
-                or not receipt.get('execution_id') or not receipt.get('scheduled_instant')):
+                or not receipt.get('execution_id')):
             return None
+        if not receipt.get('scheduled_instant'):
+            # A manual "run now" of the bound job (host source 'direct') has no scheduled occurrence; it is
+            # still this stream's own job, started by the user, so it counts from its start time.
+            if receipt.get('source') != 'direct' or not receipt.get('started_at'):
+                return None
+            receipt = {**receipt, 'scheduled_instant': receipt['started_at']}
         return receipt
 
     def _authorize_recovery(self, run_id, old_parent, session_id):

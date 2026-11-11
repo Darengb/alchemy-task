@@ -516,3 +516,27 @@ def test_scheduled_new_session_adopts_same_saved_config_window(settings, data_di
     ctx.current_cron_execution = lambda: None
     with pytest.raises(UserError):
         integration.start('work', session_id='third-session')
+
+
+def test_manual_run_now_of_the_bound_job_can_start_the_stream(settings, data_dir, tmp_path):
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    configure(integration)
+    streams = ctx.state.get('streams')
+    streams['work'].update(schedule='0 18 * * *', timezone='America/New_York', job_id='job-one', job_binding={'job_id': 'job-one', 'origin_session': 'parent', 'profile': 'test', 'verified': True})
+    ctx.state.set('streams', streams)
+    ctx.profile_name = 'test'
+    base = dict(job_id='job-one', execution_id='fire-now', profile='test', scheduled_instant=None, started_at='2030-01-01T02:48:32Z')
+    # an off-schedule fire that is not a direct run, or has no start time, is still refused
+    ctx.current_cron_execution = lambda: {**base, 'source': 'builtin'}
+    with pytest.raises(UserError):
+        integration.start('work', session_id='cron-session')
+    ctx.current_cron_execution = lambda: {**base, 'source': 'direct', 'started_at': None}
+    with pytest.raises(UserError):
+        integration.start('work', session_id='cron-session')
+    # another job's run now is refused
+    ctx.current_cron_execution = lambda: {**base, 'source': 'direct', 'job_id': 'job-other'}
+    with pytest.raises(UserError):
+        integration.start('work', session_id='cron-session')
+    ctx.current_cron_execution = lambda: {**base, 'source': 'direct'}
+    started = integration.start('work', session_id='cron-session')
+    assert started['run_id']
