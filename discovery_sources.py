@@ -379,7 +379,7 @@ def inline_primary(item, store=None):
         raise UserError('primary content file is empty for ' + label + '; ' + missing)
     content = _select_for_item(content, item)
     if content in (None, '', [], {}):
-        raise UserError('primary content file does not contain this item for ' + label + '; ' + missing)
+        raise UserError('could not find this item in its pointer file (unrecognized or too large) for ' + label + '; ' + missing)
     result = copy.deepcopy(item)
     result.pop(key, None)
     result.pop('primary_thread_id', None)
@@ -411,6 +411,9 @@ def _slack_text(msg):
             'files': [f.get('name') for f in msg.get('files') or [] if isinstance(f, dict)]}
 
 
+SMALL_UNKNOWN_BYTES = 200_000
+
+
 def _select_for_item(content, item):
     """From a shared cache file, keep only this item's own thread as plain text (no raw base64 payloads)."""
     ids = [str(x) for x in item.get('source_ids') or []]
@@ -432,6 +435,9 @@ def _select_for_item(content, item):
             mine = [m for m in msgs if str(m.get('ts')) == root or str(m.get('thread_ts')) == root]
             msgs = mine or msgs
         return [_slack_text(m) if ('ts' in m and 'text' in m) else m for m in msgs]
+    # Unrecognized format: inline only when small, so an unfamiliar dump never becomes one huge blob.
+    if len(json.dumps(content, default=str)) > SMALL_UNKNOWN_BYTES:
+        return None
     return content
 
 

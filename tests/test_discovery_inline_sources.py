@@ -57,3 +57,11 @@ def test_pointer_outside_allowed_dirs_is_refused(env, tmp_path):
     # Text in the envelope itself is kept as is.
     kept = discovery_sources.inline_primary(item(body='Full email body'), store)
     assert kept['body'] == 'Full email body' and 'primary_inlined_from' not in kept
+
+
+def test_large_unrecognized_pointer_file_is_refused_with_a_fixable_message(env):
+    home, store = env
+    cache = home / 'cache' / 'scratch' / 'dump.json'
+    cache.write_text(json.dumps({'rows': ['x' * 1000] * 400}))
+    with pytest.raises(UserError, match='include the full message text'):
+        discovery_sources.collect_attested(store, 'stream', CFG, envelope(item(primary_cache=str(cache))))

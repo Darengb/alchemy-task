@@ -18,7 +18,8 @@ import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Iterator
-from .discovery_identity import UserError, _component, canonical_source_id, candidate_id, freeze_actions
+from .discovery_identity import (UserError, _component, canonical_source_id, candidate_id, freeze_actions,
+    is_message_refinement, source_identity_covers)
 from .discovery_research import (MAX_CANDIDATES, MAX_INDEX_BYTES, MAX_SOURCE_IDS,
     MAX_BUNDLE_BYTES, MAX_TITLE_CHARS, MAX_REASON_CHARS, _str, _privacy_walk,
     child_schema, extract_json, validate_bundle, validate_shape)
@@ -71,6 +72,8 @@ def _name(value: str) -> str:
 FENCED = {'launch_unknown', 'execution_unknown', 'admission_timeout', 'execution_timeout', 'cancelled', 'safety_hold'}
 TERMINAL = {'SUCCEEDED', 'FAILED', 'CANCELLED', 'INTERRUPTED'}
 RETRY_STATES = {'rejected_retryable'}
+MAX_CORRECTIONS = 2
+ACTION_FIELDS = ('action_key', 'action_anchor', 'action_relation')
 
 
 class DiscoveryStore:
@@ -499,6 +502,14 @@ class DiscoveryStore:
                 self._put_resource_locked(run_id, ledger, name, templates)
                 attempt['typed_source_templates_resource'] = name
                 attempt['required_resources'].append(name)
+            if previous and previous[-1].get('payload'):
+                # Repair child: it fixes the named problem in the previous bundle, so
+                # only that bundle (and, in the runner, the primary source body) must
+                # be read in full. Everything else stays fetchable.
+                old = previous[-1]
+                attempt['repair_of'] = old['token']
+                attempt['available_resources'] = list(attempt['required_resources'])
+                attempt['required_resources'] = [old['payload']['resource']]
             ledger['attempts'][token] = attempt
             self._save(run_id, ledger)
             return attempt
@@ -763,6 +774,10 @@ class DiscoveryStore:
         data = transport if parsed is None else _json_bytes(parsed)
         if len(data) > MAX_BUNDLE_BYTES:
             raise UserError('serialized research bundle exceeds shared limit')
+        repairs: list[str] = []
+        if parsed is not None:
+            parsed, repairs = self._mechanical_repairs(run_id, ledger, attempt, parsed)
+            data = _json_bytes(parsed)
         digest = _hash(data)
         committed = read_json(self.run_dir(run_id) / 'spool' / (token + '.receipt.json'))
         if committed:
@@ -770,11 +785,19 @@ class DiscoveryStore:
             original_transport = (self.run_dir(run_id) / 'resources' / committed['transport_sha256']).read_bytes()
             if committed.get('run_id') != run_id or committed.get('token') != token or committed.get('candidate_id') != attempt['candidate_id'] or _hash(saved) != committed['payload_sha256'] or len(saved) != committed['total_bytes'] or _hash(original_transport) != committed['transport_sha256']:
                 raise UserError('committed spool bytes or binding conflict')
-            if committed['payload_sha256'] != digest or committed['transport_sha256'] != _hash(transport):
-                raise UserError('committed payload is immutable')
             if attempt['payload'] and attempt['payload'] != committed:
                 raise UserError('committed receipt and ledger conflict')
-            return committed
+            changed = committed['payload_sha256'] != digest or committed['transport_sha256'] != _hash(transport)
+            if changed and attempt['payload'] and self.corrections_left(attempt):
+                # Same-child correction of an invalid committed payload: archive, then commit anew.
+                self._writable_attempt(ledger, token)
+                if ledger['status'] == 'finalized':
+                    raise UserError('run is finalized; new payloads are forbidden')
+                self._archive_payload_locked(run_id, ledger, attempt, committed)
+            elif changed:
+                raise UserError('committed payload is immutable')
+            else:
+                return committed
         if attempt['payload']:
             if attempt['payload']['payload_sha256'] != digest or attempt['payload']['transport_sha256'] != _hash(transport):
                 raise UserError('committed payload is immutable')
@@ -794,6 +817,7 @@ class DiscoveryStore:
         receipt = {'run_id': run_id, 'candidate_id': attempt['candidate_id'], 'token': token, 'payload_sha256': digest, 'transport_sha256': _hash(transport), 'parsed': parsed is not None, 'resource': resource, 'total_bytes': len(data)}
         atomic_write(self.run_dir(run_id) / 'spool' / (token + '.json'), data)
         attempt['payload'] = receipt
+        attempt['auto_repairs'] = repairs
         attempt['state'] = 'submitted' if not attempt['terminal'] else 'terminal_observed'
         # Full invalid payload remains an audit resource, not accepted research.
         try:
@@ -816,6 +840,129 @@ class DiscoveryStore:
         atomic_json(self.run_dir(run_id) / 'spool' / (token + '.receipt.json'), receipt)
         self._save(run_id, ledger)
         return receipt
+
+    @staticmethod
+    def corrections_left(attempt: dict[str, Any]) -> int:
+        """Same-child corrections still allowed for an invalid committed payload, else 0."""
+        if (not attempt.get('payload') or not attempt.get('validation_error') or attempt.get('fenced')
+                or attempt.get('capability_revoked') or attempt.get('rejection')
+                or attempt['state'] in {'accepted_bundle', 'rejected_retryable', 'exhausted'}
+                or attempt.get('terminal') and attempt['terminal']['state'] != 'SUCCEEDED'):
+            return 0
+        return max(0, MAX_CORRECTIONS - len(attempt.get('corrections', [])))
+
+    def _archive_payload_locked(self, run_id: str, ledger: dict[str, Any], attempt: dict[str, Any], committed: dict[str, Any]) -> None:
+        """Keep the rejected spool, receipt and resources under archive names."""
+        token = attempt['token']
+        n = len(attempt.get('corrections', [])) + 1
+        spool = self.run_dir(run_id) / 'spool'
+        # Archive names never end in .receipt.json, so recover_spools ignores them.
+        atomic_write(spool / f'{token}.rejected-{n}.json', (spool / (token + '.json')).read_bytes())
+        atomic_json(spool / f'{token}.rejected-{n}.receipt-archive.json', committed)
+        for name in (committed['resource'], 'transport-' + token):
+            info = ledger['resources'].pop(name, None)
+            if info:
+                ledger['resources'][f'{name}-rejected-{n}'] = {**info, 'name': f'{name}-rejected-{n}'}
+            for receipts in ledger['page_receipts'].values():
+                if name in receipts:
+                    receipts[f'{name}-rejected-{n}'] = receipts.pop(name)
+        (spool / (token + '.receipt.json')).unlink()
+        attempt.setdefault('corrections', []).append({'n': n, 'payload_sha256': committed['payload_sha256'], 'transport_sha256': committed['transport_sha256'],
+                                                      'validation_error': attempt.get('validation_error'), 'auto_repairs': attempt.get('auto_repairs', []), 'at': now()})
+        attempt['payload'] = None
+        attempt.pop('validation_error', None)
+        attempt.pop('upload', None)
+        attempt['evidence'].update(shape='not_checked', helper='not_checked')
+
+    def _source_body_text(self, run_id: str, ledger: dict[str, Any], cid: str) -> str:
+        info = ledger['resources'].get('source-body-' + cid)
+        if not info:
+            return ''
+        try:
+            return (self.run_dir(run_id) / 'resources' / info['sha256']).read_bytes().decode('utf-8', 'replace')
+        except OSError:
+            return ''
+
+    def _mechanical_repairs(self, run_id: str, ledger: dict[str, Any], attempt: dict[str, Any], parsed: Any) -> tuple[Any, list[str]]:
+        """Fix purely mechanical child mistakes before digest and validation.
+
+        Never invents facts: action fields go only when the parent froze no
+        registry, and a thread-level exact id is refined only to a message id
+        the child itself named that also appears in the frozen source body.
+        """
+        if not isinstance(parsed, dict) or not isinstance(parsed.get('workstreams'), list):
+            return parsed, []
+        out = copy.deepcopy(parsed)
+        streams = [w for w in out['workstreams'] if isinstance(w, dict)]
+        repairs: list[str] = []
+        locators = {}
+        for i, w in enumerate(streams):
+            anchor = w.get('action_anchor')
+            loc = anchor.get('locator') if isinstance(anchor, dict) else None
+            if isinstance(loc, str) and loc.startswith('message:'):
+                locators[i] = loc.split(':', 1)[1]
+        if not ledger['action_registry'].get(attempt['candidate_id']):
+            dropped = 0
+            for w in streams:
+                if any(k in w for k in ACTION_FIELDS):
+                    dropped += 1
+                    for k in ACTION_FIELDS:
+                        w.pop(k, None)
+            if dropped:
+                repairs.append(f'dropped action_key/action_anchor/action_relation from {dropped} workstream(s): no frozen action registry')
+        if len(streams) > 1:
+            body = self._source_body_text(run_id, ledger, attempt['candidate_id'])
+            plans = {}
+            for i, w in enumerate(streams):
+                plan = self._message_refinement(w, locators.get(i), body)
+                if plan:
+                    plans[i] = plan
+            chosen = [canonical_source_id(p[1]) for p in plans.values()]
+            for i, (index, refined, related_index) in plans.items():
+                if chosen.count(canonical_source_id(refined)) != 1:
+                    continue
+                w = streams[i]
+                w['exact_source_ids'][index] = refined
+                if related_index is not None:
+                    w['related_source_ids'].pop(related_index)
+                repairs.append(f'workstream {i}: refined thread-level exact source to message-level {canonical_source_id(refined)}')
+        return out, repairs
+
+    @staticmethod
+    def _message_refinement(w: dict[str, Any], locator: str | None, body: str) -> tuple[int, dict[str, Any], int | None] | None:
+        exact = w.get('exact_source_ids')
+        if not body or not isinstance(exact, list) or not all(isinstance(x, dict) for x in exact):
+            return None
+        try:
+            canonical = [canonical_source_id(x) for x in exact]
+        except UserError:
+            return None
+        if any(is_message_refinement(x) for x in canonical) or len(exact) != 1:
+            return None
+        field = {'slack': 'message_ts', 'gmail': 'message_id', 'source': 'message_id'}.get(exact[0].get('type'))
+        if not field:
+            return None
+        options: dict[str, int | None] = {}
+        if locator:
+            options[locator] = None
+        for j, rel in enumerate(w.get('related_source_ids') or []):
+            try:
+                rc = canonical_source_id(rel) if isinstance(rel, dict) else None
+            except UserError:
+                continue
+            if rc and is_message_refinement(rc) and source_identity_covers(canonical[0], rc):
+                options[rc.rsplit(':', 1)[1]] = j
+        options = {m: j for m, j in options.items() if m and m in body}
+        if len(options) != 1:
+            return None
+        message, related_index = next(iter(options.items()))
+        refined = {**exact[0], field: message}
+        try:
+            if not source_identity_covers(canonical[0], canonical_source_id(refined)):
+                return None
+        except UserError:
+            return None
+        return 0, refined, related_index
 
     def spool_payload(self, run_id: str, token: str, payload: Any) -> dict[str, Any]:
         with self._lock(self._run_lock_name(run_id)):
@@ -903,7 +1050,7 @@ class DiscoveryStore:
             ledger = self._load(run_id, open_only=True)
             attempt = self._writable_attempt(ledger, token)
             upload = {'total_bytes': total_bytes, 'sha256': sha256, 'part_count': part_count, 'parts': {}}
-            if attempt.get('upload'):
+            if attempt.get('upload') and not (self.corrections_left(attempt) and any(attempt['upload'][k] != upload[k] for k in ('total_bytes', 'sha256', 'part_count'))):
                 if any(attempt['upload'][k] != upload[k] for k in ('total_bytes', 'sha256', 'part_count')):
                     raise UserError('upload declaration conflict')
                 return attempt['upload']
