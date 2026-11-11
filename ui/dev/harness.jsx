@@ -31,6 +31,8 @@ if (params.get('video') === 'story') {
   if (sem > 1) run.proposals.splice(1, 0, run.proposals.splice(sem, 1)[0])
   run.proposals.forEach((p, i) => { p.number = i + 1; p.ref = `A${i + 1}` })
   run.coverage = [{ source_key: 'Slack #pricing', status: 'complete' }, ...run.coverage]
+  const ws = backend.db.settings.streams.find((x) => x.name === 'work')
+  if (ws) ws.sources.splice(1, 0, { name: 'Slack #pricing', type: 'chat', scope: '#pricing' })
   run.summary.pending += 1
 }
 // ?video=pending: today's work run also shows the Winter Spice Chai ask as a pending proposal (launch-video stills).
