@@ -20,9 +20,14 @@ def _failure_status(failure):
     lifecycle = re.fullmatch(r'\s*lifecycle terminal ([A-Za-z_]+)\s*', reason)
     if lifecycle:
         return _LIFECYCLE.get(lifecycle.group(1).upper(), 'research stopped before it finished')
+    if reason.startswith("not finished within this run's research time"):
+        return 'research did not finish in time; it is queued for the next run'
     if re.search(r'(?:Error:|Exception:|Traceback|fatal:|areas/[^\s]+/tasks/|(?:^|\s)/[^\s]+|[a-f0-9]{8}-[a-f0-9-]{27,})', reason):
-        return 'Operation unavailable; inspect saved review diagnostics and retry the saved operation'
-    return reason[:400]
+        return 'could not be completed in this run; it is queued for the next run'
+    # Internal research-review wording (field names, candidate ids, repair instructions) is not for the user.
+    if re.search(r'\b[a-z]+_[a-z_]+\b|\bc_[0-9a-f]{20}\b|\b(?:Repair|payload|bundle|workstream|schema)\b', reason):
+        return 'research needs another pass; it is queued for the next run'
+    return first_sentence(reason)[:200]
 
 
 WRITTEN_STATES = {'local_verified', 'git_pending', 'phone_pending', 'complete'}

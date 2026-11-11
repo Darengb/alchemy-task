@@ -102,3 +102,11 @@ def test_attested_coverage_is_one_plain_line_and_not_degraded(tmp_path):
     assert '**Coverage:** feed: could not be read' in bad['text']
     assert '**Coverage:** chan: skipped thread: too large' in bad['text']
     assert 'No new proposals to review.' in bad['text']
+
+
+def test_needs_attention_reasons_are_plain_words():
+    from alchemy_task.discovery_digest import _failure_status
+    assert _failure_status({'reason': "not finished within this run's research time: Repair represented_candidate_ids direction. The third unit"}) == 'research did not finish in time; it is queued for the next run'
+    assert _failure_status({'reason': 'Repair represented_candidate_ids direction for c_3975fd960c04173e7f32'}) == 'research needs another pass; it is queued for the next run'
+    assert _failure_status({'reason': 'lifecycle terminal INTERRUPTED'}) == 'research was interrupted before it finished'
+    assert _failure_status({'reason': 'Source unavailable. More detail here.'}) == 'Source unavailable.'
