@@ -246,8 +246,8 @@ class DiscoveryIntegration:
     def _actor_refusal(self, session_id, stream=None, *, read=False):
         """Authority by who acts, not where: any chat or session of this profile may act.
 
-        Refused: no host session, a research/discovery child, a session this profile's SessionDB
-        does not know (another profile), and a scheduled run other than the stream's own bound job
+        Refused: no host session, a research/discovery child, reads by a session this profile's SessionDB
+        does not know, and a scheduled run other than the stream's own bound job
         (when acting; an unattended unrelated job never spends research or sends). Delivery
         DESTINATION is not decided here: it stays the stream's saved origin or approved target.
         """
@@ -255,7 +255,9 @@ class DiscoveryIntegration:
         if self.runner._child_for(session_id, ''): return 'research child cannot act for the parent'
         if stream is not None and self._scheduled_identity(stream): return None
         if not read and self._in_cron(): return 'only the stream\'s own bound scheduled job may act from a scheduled run'
-        if self._profile_session(session_id) is False: return 'session is not a chat of this profile'
+        # Unknown sessions only limit what may be READ (run lists). Acting is never refused for it: tool calls
+        # always come from this profile's own process, and a session may not be in the store yet.
+        if read and self._profile_session(session_id) is False: return 'session is not a chat of this profile'
         return None
 
     def _actor_allowed(self, session_id, stream=None, *, read=False):

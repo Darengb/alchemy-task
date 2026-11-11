@@ -98,7 +98,7 @@ def test_unrelated_scheduled_job_still_cannot_start_or_adopt(settings, data_dir,
     assert integration.runner._parent(run, 'parent')
 
 
-def test_session_unknown_to_this_profile_is_refused(settings, data_dir, tmp_path):
+def test_unknown_session_can_act_but_not_read_other_runs(settings, data_dir, tmp_path):
     from hermes_state import SessionDB
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     integration.home.mkdir()
@@ -112,9 +112,10 @@ def test_session_unknown_to_this_profile_is_refused(settings, data_dir, tmp_path
         db.close()
     configure(integration)
     started = integration.start('work', session_id='elsewhere')  # another chat of this profile
-    with pytest.raises(UserError, match='profile'):
-        integration.start('work', session_id='foreign-profile-session')
-    assert integration.backend(session_id='foreign-profile-session')['runs'] == []
+    # A session not (yet) in the store is never blocked from acting; it resumes the same saved run...
+    assert integration.start('work', session_id='not-yet-stored')['run_id'] == started['run_id']
+    # ...but run lists stay limited to sessions this profile knows.
+    assert integration.backend(session_id='not-yet-stored')['runs'] == []
     assert integration.start('work', session_id='parent')['run_id'] == started['run_id']
 
 
