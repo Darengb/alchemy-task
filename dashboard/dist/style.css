@@ -2438,6 +2438,20 @@ html.at-dragging {
   flex: none;
   color: var(--at-accent-text);
 }
+.at-sources-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.at-sources-next {
+  font-family: var(--at-mono);
+  font-size: 9.5px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--at-faint);
+  white-space: nowrap;
+}
 .at-btn.at-sources-run {
   flex: none;
   height: 24px;
