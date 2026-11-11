@@ -4,7 +4,7 @@
 
 A Hermes Agent plugin that turns messy real-world work into finely researched tasks, ready for your agent to do for you.
 
-▶ **[Watch the demo](VIDEO_LINK)**
+▶ **[Watch the demo](https://x.com/darengb/status/2120625641896706288)**
 
 ![The Tasks view with a researched task open](docs/screenshots/task-research.png)
 
