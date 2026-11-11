@@ -33,15 +33,15 @@ def test_tasks_skill_has_two_step_offer_rules():
 
 def test_discovery_skill_starts_from_areas():
     text = (ROOT / 'skills/discovery/SKILL.md').read_text()
-    assert "**Start from the user's areas.**" in text
-    assert text.index('Start from the user') < text.index('When sources are missing')
-    assert 'always pass `areas`' in text and 'alchemy-task:setup' in text
-    assert 'only the default `general`' in text and 'still ask' in text
+    assert '**Run setup as a conversation' in text
+    assert text.index('Run setup as a conversation') < text.index('When sources are missing')
+    assert 'always pass `areas`' in text.lower() and 'alchemy-task:setup' in text
+    assert 'only the default `general`' in text and 'Assign each source to an area' in text
 
 
 def test_discovery_setup_questions_are_plain_text():
     text = (ROOT / 'skills/discovery/SKILL.md').read_text()
-    assert '**Ask setup questions in plain chat text.**' in text and 'every number that applies' in text
+    assert 'one question per message' in text and 'multi-select' in text and 'Include all' in text
 
 
 def test_discovery_setup_checks_state_and_handles_activation_errors():
