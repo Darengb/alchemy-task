@@ -19,7 +19,8 @@ from .core.discovery_dossiers import content_revision
 from .core import taskfile as tf
 from .core.discovery_research import child_schema, CANARY, SECRET_VALUE, MAX_TITLE_CHARS, MAX_REASON_CHARS, MAX_STRING_CHARS
 from .discovery_context import DiscoveryContext, resolve_identity
-from .discovery_sources import SourceAdapter, collect_attested, validate_source_config
+from .discovery_sources import (SourceAdapter, collect_attested, validate_source_config, DEFAULT_TRANSCRIPT_SENDERS,
+                                DEFAULT_TRANSCRIPT_KEYWORDS, transcript_keywords, transcript_senders)
 from .discovery_runner import DiscoveryRunner, RunnerPolicy, make_tool_handlers, make_hooks, CHECKLIST, BINDING_KEYS
 from .discovery_conversion import DiscoveryConversion
 from .discovery_digest import DiscoveryDigest
@@ -123,6 +124,52 @@ def _mail_admission_declared(config):
     has_domains = isinstance(domains, list) and domains and all(isinstance(d, str) and d.strip() for d in domains)
     return bool(has_domains) or config.get('admit_all') is True
 
+
+
+_MAILBOX_READ_FIELDS = ('account_key', 'scope', 'read_method', 'binding', 'thread_binding')
+
+
+def _same_mailbox(a, b):
+    return a.get('account_key') == b.get('account_key') and a.get('scope') == b.get('scope')
+
+
+def _sync_skip_lists(configs):
+    """Each mail source skips the senders of every transcript source on the same account and scope.
+
+    Derived from the transcript sources themselves, so reconfiguring either
+    side never leaves a note-taker email admitted by both.
+    """
+    for c in configs.values():
+        if c.get('kind') != 'mail':
+            continue
+        skip = []
+        for t in configs.values():
+            if t.get('kind') == 'transcript' and _same_mailbox(c, t):
+                try: skip += transcript_senders(t)
+                except UserError: continue
+        if skip: c['transcript_senders'] = list(dict.fromkeys(skip))
+        else: c.pop('transcript_senders', None)
+    return configs
+
+
+def _run_sources(configs):
+    """Frozen run view: current skip lists, and mailbox_source only while that mailbox reads the same way."""
+    out = _sync_skip_lists(copy.deepcopy(configs))
+    for c in out.values():
+        if c.get('kind') == 'transcript' and c.get('mailbox_source'):
+            mail = out.get(c['mailbox_source']) or {}
+            if mail.get('kind') != 'mail' or any(mail.get(f) != c.get(f) for f in _MAILBOX_READ_FIELDS):
+                c.pop('mailbox_source')
+    return out
+
+
+def _transcript_name(mail, key, taken):
+    """Stream source name for a mailbox's transcript source, at most 80 chars and unique."""
+    base = ' '.join(str(mail.get('name') or key).split()) + ' meeting transcripts'
+    if len(base) <= 80 and base not in taken:
+        return base
+    suffix = ' ' + hashlib.sha256(key.encode()).hexdigest()[:8]
+    return base[:80 - len(suffix)].rstrip() + suffix
 
 class DiscoveryIntegration:
     def __init__(self, rt, *, profile_home=None):
@@ -323,11 +370,113 @@ class DiscoveryIntegration:
                 raise UserError('binding tool must equal approved read_method')
         configured['approved'] = True
         configs = self.rt.ctx.state.get('discovery_sources', default={}) or {}
-        configs.setdefault(current['name'], {})[configured['source_key']] = configured
+        mine = configs.setdefault(current['name'], {})
+        if configured.get('kind') == 'transcript':
+            others = sorted(k for k, c in mine.items() if k != configured['source_key'] and c.get('kind') == 'transcript' and _same_mailbox(c, configured))
+            if others:
+                raise UserError('transcript source(s) %s already cover this account and scope; update that source instead, so one email is never admitted twice' % ', '.join(others))
+        mine[configured['source_key']] = configured
+        # Skip lists follow the transcript sources, so re-saving a mail source
+        # never drops its transcript_senders.
+        _sync_skip_lists(mine)
+        configured = copy.deepcopy(mine[configured['source_key']])
         self.rt.ctx.state.set('discovery_sources', configs)
         from .jobs import reconcile_discovery_job
         reconcile_discovery_job(self.rt, current)
         return configured
+
+    def configure_transcripts(self, stream, *, exclude=None, senders=None, keywords=None, admit_all=False, remove=False, user_approved=False):
+        """One opt-in: a meeting-transcript source for every configured mailbox not excluded.
+
+        Each transcript source reuses its mailbox's account_key, scope and reader,
+        so the mailbox snapshot is read once. The mail source then skips the
+        transcript senders, so one email never yields two candidates. Re-running
+        never resets a saved transcript source: it is kept, and only fields the
+        caller passes (service_senders, keywords, admit_all) change it.
+        """
+        if user_approved is not True:
+            raise UserError('ask the user once (naming each mailbox, the default note-takers and keywords) before adding transcript sources')
+        from .discovery import _lock
+        current = self._stream(stream)
+        with _lock:
+            all_configs = self.rt.ctx.state.get('discovery_sources', default={}) or {}
+            configs = copy.deepcopy(all_configs.get(current['name'], {}))
+            exclude = [str(x) for x in (exclude or [])]
+            mails = {k: c for k, c in configs.items() if c.get('kind') == 'mail'}
+            unknown = [k for k in exclude if k not in mails]
+            if unknown:
+                raise UserError('exclude names unknown mail source(s) %s; mail sources: %s' % (', '.join(unknown), ', '.join(sorted(mails)) or 'none'))
+            chosen = {k: c for k, c in mails.items() if k not in exclude}
+            excluded_existing = sorted(k + '-transcripts' for k in exclude if (configs.get(k + '-transcripts') or {}).get('kind') == 'transcript')
+            if not chosen and not (remove is True and excluded_existing):
+                raise UserError('needs_input: meeting transcripts need an email source; configure one first')
+            for key, mail in sorted(chosen.items()):
+                legacy = sorted(k for k, c in configs.items() if c.get('kind') == 'transcript' and k != key + '-transcripts' and _same_mailbox(c, mail))
+                if legacy:
+                    raise UserError('mail source %s already has transcript source(s) %s on the same account and scope; update or remove that source with action=source instead of adding a second one, so one email is never admitted twice' % (key, ', '.join(legacy)))
+            shape = {'kind': 'transcript', 'service_senders': list(DEFAULT_TRANSCRIPT_SENDERS) if senders is None else list(senders),
+                     'keywords': list(DEFAULT_TRANSCRIPT_KEYWORDS) if keywords is None else list(keywords)}
+            if admit_all is True: shape['admit_all'] = True
+            shape['service_senders'], shape['keywords'] = transcript_senders(shape), transcript_keywords(shape)
+            explicit = {}
+            if senders is not None: explicit['service_senders'] = shape['service_senders']
+            if keywords is not None: explicit['keywords'] = shape['keywords']
+            if admit_all is True: explicit['admit_all'] = True
+            streams = copy.deepcopy(self.rt.ctx.state.get('streams', default={}) or {})
+            entry = streams[current['name']]
+            created, kept, updated, removed = [], [], [], []
+            for key, mail in sorted(chosen.items()):
+                approved = [s for s in entry['sources'] if s['name'] == mail.get('name') and s['scope'] == mail.get('scope')]
+                if len(approved) != 1:
+                    raise UserError('mail source %s no longer matches the approved stream; reconfigure it first' % key)
+                tkey = key + '-transcripts'
+                existing = configs.get(tkey)
+                if existing is not None and existing.get('kind') != 'transcript':
+                    raise UserError('source key %s is already used by a %s source' % (tkey, existing.get('kind') or 'generic'))
+                if existing is not None:
+                    config = copy.deepcopy(existing)
+                    config.update(copy.deepcopy(explicit))
+                    if 'service_senders' in explicit: config.pop('service_sender', None)
+                    config['mailbox_source'] = key
+                    validate_source_config(config)
+                    transcript_senders(config), transcript_keywords(config)
+                    changed = any(existing.get(f) != v for f, v in explicit.items()) or ('service_senders' in explicit and 'service_sender' in existing)
+                    (updated if changed else kept).append(tkey)
+                    name = config.get('name')
+                else:
+                    others = {c.get('name') for k, c in configs.items() if k != tkey}
+                    name = _transcript_name(mail, key, others)
+                    config = {k: copy.deepcopy(v) for k, v in mail.items() if k not in {
+                        'sender_domains', 'excluded_senders', 'owner_email', 'owner_report_pattern', 'admit_all', 'transcript_senders', 'needs_reconfigure'}}
+                    config.update(copy.deepcopy(shape), source_key=tkey, name=name, approved=True, mailbox_source=key)
+                    validate_source_config(config)
+                    created.append(tkey)
+                configs[tkey] = config
+                if not any(s['name'] == name and s['scope'] == config.get('scope') for s in entry['sources']):
+                    source = {**copy.deepcopy(approved[0]), 'name': name, 'type': 'transcript'}
+                    entry['sources'] = [s for s in entry['sources'] if s['name'] != name] + [source]
+            if remove is True:
+                for tkey in excluded_existing:
+                    gone = configs.pop(tkey)
+                    entry['sources'] = [s for s in entry['sources'] if not (s['name'] == gone.get('name') and s['scope'] == gone.get('scope'))]
+                    removed.append(tkey)
+            _sync_skip_lists(configs)
+            all_configs[current['name']] = configs
+            self.rt.ctx.state.set('discovery_sources', all_configs)
+            self.rt.ctx.state.set('streams', streams)
+        from .jobs import reconcile_discovery_job
+        reconcile_discovery_job(self.rt, entry)
+        from . import jobs
+        jobs.reverify_sweep(self.rt)  # research workers' readers follow the streams
+        out = {'created': created, 'kept': kept, 'updated': updated, 'excluded': exclude,
+               'excluded_existing': [k for k in excluded_existing if k not in removed], 'removed': removed,
+               'service_senders': shape['service_senders'], 'keywords': shape['keywords'],
+               'sources': {k: {'service_senders': transcript_senders(configs[k]), 'keywords': transcript_keywords(configs[k])}
+                           for k in created + kept + updated}}
+        if out['excluded_existing']:
+            out['note'] = ('excluded mailbox(es) still have transcript source(s) %s; to remove them, re-run with config remove: true after the user approves'
+                           % ', '.join(out['excluded_existing']))
+        return out
 
     def _all_runs(self):
         return [self.store.get_run(p.parent.name) for p in sorted((self.store.state_root / 'runs').glob('*/ledger.json'))]
@@ -382,6 +531,7 @@ class DiscoveryIntegration:
             configured = [(s.get('name'), s.get('scope')) for s in configs.values()]
             if any(configured.count(pair) != 1 for pair in approved) or any(pair not in approved for pair in configured):
                 raise UserError('source configuration membership/scope no longer matches approved stream; reconfigure before NEW scan')
+            configs = _run_sources(configs)
             now = self.utcnow()
             windows = {}
             for key, config in configs.items():
@@ -1201,7 +1351,7 @@ SCHEMAS = {
  'discovery_recover': _schema('discovery_recover', 'Recover SAME saved run without blind relaunch/refund. New parent adoption requires out-of-band authorization.', {**RUN, 'owner_restarted': BOOL, 'adopt': BOOL}, ['run_id']),
  'discovery_release_hold': _schema('discovery_release_hold', 'Deliberately release safety hold without refunding unknown attempts.', {**RUN, 'reason': STR}, ['run_id', 'reason']),
  'discovery_replay': _schema('discovery_replay', 'Explicit saved_input replay of finalized frozen inputs, or current fresh_validation / targeted_supplement. Distinct lineage/review; no old task mutation.', {**RUN, 'operation': {'type': 'string', 'enum': ['saved_input', 'fresh_validation', 'targeted_supplement']}, 'mode': {'type': 'string', 'enum': ['shadow', 'research_only']}, 'candidate_ids': {'type': 'array', 'items': STR}, 'user_approved': BOOL}, ['run_id', 'operation', 'mode', 'user_approved']),
- 'discovery_config': _schema('discovery_config', 'Configure approved source/delivery, confirm identity, or approvals. approvals.owner_only is not available in this version (turning it on is refused with needs=not_available; planned follow-up). status shows current approvals. No approver list or credentials.', {'action': {'type': 'string', 'enum': ['source', 'identity', 'delivery', 'approvals', 'status']}, 'stream': STR, 'config': OBJ, 'account_key': STR, 'identity': OBJ, 'user_approved': BOOL}, ['action']),
+ 'discovery_config': _schema('discovery_config', 'Configure approved source/delivery, confirm identity, or approvals. transcripts: one opt-in adds a meeting-transcript source per configured mail source (config: exclude [mail source keys], optional service_senders [addresses or @domains], keywords, admit_all, remove: true to delete the transcript sources of excluded mailboxes after the user approves); it reuses each mailbox read. Re-running keeps saved transcript sources and changes only the fields passed. approvals.owner_only is not available in this version (turning it on is refused with needs=not_available; planned follow-up). status shows current approvals. No approver list or credentials.', {'action': {'type': 'string', 'enum': ['source', 'transcripts', 'identity', 'delivery', 'approvals', 'status']}, 'stream': STR, 'config': OBJ, 'account_key': STR, 'identity': OBJ, 'user_approved': BOOL}, ['action']),
  'discovery_collect': _schema('discovery_collect', 'Collect approved source with actual configured reader, or explicitly partial attested envelope. SAME saved window.', {**RUN, 'source_key': STR, 'envelope': OBJ, 'max_pages': {'type': 'integer', 'minimum': 1}}, ['run_id', 'source_key']),
  'discovery_context': _schema('discovery_context', 'Freeze collected source inventory, ALL-status task bodies, installed full skills, full rubric and approved context before research.', {**RUN, 'context': OBJ}, ['run_id']),
  'discovery_match': _schema('discovery_match', 'Post-join typed exact matching and all semantic target options; returns full body resources, no mutation.', {**RUN, 'unit_id': STR}, ['run_id', 'unit_id']),
@@ -1258,6 +1408,12 @@ def register(ctx, *, integration=None):
         if action != 'status': service.authorize_approval(session_id)
         if action == 'source':
             return service.configure(a['stream'], a['config'], user_approved=a.get('user_approved', False))
+        if action == 'transcripts':
+            opts = a.get('config') or {}
+            return service.configure_transcripts(a['stream'], exclude=opts.get('exclude'), senders=opts.get('service_senders'),
+                                                 keywords=opts.get('keywords'), admit_all=opts.get('admit_all') is True,
+                                                 remove=opts.get('remove') is True,
+                                                 user_approved=a.get('user_approved', False))
         if action == 'delivery':
             return service.configure_delivery(a['stream'], a['config'], user_approved=a.get('user_approved', False))
         if action == 'identity':

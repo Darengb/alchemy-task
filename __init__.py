@@ -12,6 +12,10 @@ from .task_tools import register_tools
 _HERE = Path(__file__).resolve().parent
 
 
+# Hermes skips (does not truncate) a section over its max_chars, so tests keep both texts under this limit.
+PROMPT_SECTION_MAX = 800
+
+
 def _prompt_section(_info: Any = None) -> str:
     try:
         s = Settings.load(runtime._ctx.get_config) if runtime._ctx is not None else Settings()
@@ -24,7 +28,9 @@ def _prompt_section(_info: Any = None) -> str:
             "with task_create, task_update and task_find; do not edit task files with file tools. Ask for a due "
             "date when the user gives none. Users speak plainly instead of using /task commands: \"is everything "
             "working\", \"sync my tasks\", \"check my task files\", \"work on X\", \"set up a daily digest\" all map "
-            "to the plugin's tools. For the full mapping and conventions load the skill alchemy-task:tasks.")
+            "to the plugin's tools. For the full mapping and conventions load the skill alchemy-task:tasks. When "
+            "work for later comes up in a chat with the user, ask once if they want a task for it (rules in that "
+            "skill).")
 
 
 def register(ctx: Any) -> None:
@@ -48,4 +54,4 @@ def register(ctx: Any) -> None:
                        description="Use when the user wants to set up or change Alchemy Task (\"set up my tasks\").")
     ctx.register_command("task", handler=task_command, description="Alchemy Task: status, validate, push, setup",
                          args_hint="[status|validate|push|setup]")
-    ctx.register_system_prompt_section("alchemy-task", _prompt_section, max_chars=600)
+    ctx.register_system_prompt_section("alchemy-task", _prompt_section, max_chars=PROMPT_SECTION_MAX)

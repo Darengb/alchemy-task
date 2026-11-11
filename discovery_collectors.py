@@ -14,7 +14,7 @@ from decimal import Decimal
 
 from .core.discovery_identity import UserError
 from .core.discovery_state import atomic_json
-from .discovery_sources import (QuotaReader, load_snapshot, publish_snapshot,
+from .discovery_sources import (QuotaReader, load_snapshot, publish_snapshot, transcript_keywords, transcript_senders,
                                 normalize_mail_threads, validate_source_config,
                                 group_slack_seeds, _date)
 
@@ -72,8 +72,11 @@ def make_daily_reader(config, read_page, *, snapshot_root, read_thread=None, rea
     kind = frozen.get('kind', 'generic')
     if kind not in {'mail', 'transcript', 'slack', 'generic'}:
         raise UserError('unsupported daily source kind')
-    if kind == 'transcript' and (not isinstance(frozen.get('service_sender'), str) or not frozen['service_sender'].strip()):
-        raise UserError('transcript source requires configured service_sender')
+    if kind == 'transcript':
+        # Nonempty sender list (legacy service_sender is a one-item list) and
+        # nonempty keywords unless admit_all; raises before any read.
+        transcript_senders(frozen)
+        transcript_keywords(frozen)
     root = Path(snapshot_root)
     quota = None
     quota_window = None
@@ -181,8 +184,11 @@ def make_daily_reader(config, read_page, *, snapshot_root, read_thread=None, rea
             threads += [{'id':tid,'messages':messages} for tid,messages in direct_messages.items()]
         # Source design: the mail source publishes the all-thread snapshot and
         # transcript consumes it. A transcript listing is sender-filtered, so it
-        # is never published as whole-mailbox evidence.
-        published = kind == 'mail' and not direct_messages
+        # is never published as whole-mailbox evidence. The exception is a
+        # transcript source the opt-in built from a mailbox (mailbox_source):
+        # it lists with that mailbox's own reader and scope, so whichever of the
+        # two collects first publishes and the mailbox is read once.
+        published = (kind == 'mail' or (kind == 'transcript' and bool(frozen.get('mailbox_source')))) and not direct_messages
         if published:
             publish_snapshot(snapshot, account=frozen['account_key'], start=start, end=end, threads=threads, complete=True)
         return project(threads, start, end, raw_pages=state['pages'], shared_snapshot_published=published)

@@ -15,6 +15,30 @@ tools; they validate fields, keep IDs stable, commit and push, and queue researc
 | Look something up | `task_find` (`include_body: true` to read one task in full) |
 | Work on or continue a task | `task_work_start`, then `task_checkpoint` when you stop |
 
+## Suggesting tasks
+
+Users should not have to keep saying "make this a task". In a conversation with the user (not in scheduled
+jobs or background agents), offer a task when work for later comes up:
+
+- the user commits to future work ("I need to", "we should", "next week");
+- a plan or spec is agreed but will not be carried out in this session;
+- a bug or blocker turns up that will not be fixed now;
+- a deadline, a follow-up, or something waiting on another person comes up;
+- work stops partway.
+
+Do not offer when you are doing the work right now, the item is trivial, the user is still brainstorming or
+undecided, or they already declined that item. Before offering, check with `task_find`; if a matching task
+exists, offer to update it instead.
+
+Offer in two steps, at a natural stopping point:
+
+1. Ask only: "Do you want to create a task for this?" (for several items: "Want tasks for these?"). No
+   title, area, date or details yet.
+2. If they say yes, propose the task: title, area and a one-line description. If you do not already know when
+   it should be done, ask that in the same message. Create it once they confirm.
+
+If they say no or ignore the offer, do not ask again about the same item.
+
 ## Creating
 
 - Clean up phone-typed wording into a short imperative title.
