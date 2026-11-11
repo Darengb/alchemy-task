@@ -1,5 +1,5 @@
 """Authority follows who acts, not where: any chat of the installing profile may start, resume,
-recover, read and prepare a discovery run. Research children, other profiles and unrelated
+recover, read and prepare a discovery run. Research children and unrelated
 scheduled jobs are still refused. Digests still go to the stream's saved destination."""
 import pytest
 
@@ -98,25 +98,19 @@ def test_unrelated_scheduled_job_still_cannot_start_or_adopt(settings, data_dir,
     assert integration.runner._parent(run, 'parent')
 
 
-def test_unknown_session_can_act_but_not_read_other_runs(settings, data_dir, tmp_path):
+def test_a_session_not_yet_in_the_store_can_still_act_and_read(settings, data_dir, tmp_path):
     from hermes_state import SessionDB
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     integration.home.mkdir()
     db = SessionDB(db_path=integration.home / 'state.db')
     try:
-        for sid, chat in [('parent', '1'), ('elsewhere', '2')]:
-            db.create_session(sid, source='telegram')
-            db.record_gateway_session_peer(sid, source='telegram', session_key='telegram:' + chat,
-                                           chat_id=chat, thread_id='', chat_type='dm')
+        db.create_session('parent', source='telegram')
     finally:
         db.close()
     configure(integration)
-    started = integration.start('work', session_id='elsewhere')  # another chat of this profile
-    # A session not (yet) in the store is never blocked from acting; it resumes the same saved run...
-    assert integration.start('work', session_id='not-yet-stored')['run_id'] == started['run_id']
-    # ...but run lists stay limited to sessions this profile knows.
-    assert integration.backend(session_id='not-yet-stored')['runs'] == []
+    started = integration.start('work', session_id='brand-new-chat')
     assert integration.start('work', session_id='parent')['run_id'] == started['run_id']
+    assert [r['run_id'] for r in integration.backend(session_id='brand-new-chat')['runs']] == [started['run_id']]
 
 
 def test_any_chat_may_prepare_native_delivery_which_stays_with_the_origin(settings, data_dir, tmp_path):
