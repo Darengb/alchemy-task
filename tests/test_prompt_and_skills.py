@@ -37,3 +37,8 @@ def test_discovery_skill_starts_from_areas():
     assert text.index('Start from the user') < text.index('When sources are missing')
     assert 'always pass `areas`' in text and 'alchemy-task:setup' in text
     assert 'only the default `general`' in text and 'still ask' in text
+
+
+def test_discovery_setup_questions_are_plain_text():
+    text = (ROOT / 'skills/discovery/SKILL.md').read_text()
+    assert '**Ask setup questions in plain chat text.**' in text and 'every number that applies' in text
