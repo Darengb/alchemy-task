@@ -340,7 +340,7 @@ class DiscoveryRunner:
             raise UserError('bootstrap exceeds lifecycle context; context resource manifest must be paged')
         request = {'goal': 'Research the exact immutable source assignment fully before proposing any task. Submit a full discovery bundle and stop.', 'context': context, 'role': 'leaf', 'correlation_id': attempt['correlation_id']}
         route = dict(ledger['config'].get('research_route', {}))
-        from .research_agent import model_route
+        from .core.research import model_route
         route.update(model_route(getattr(self.rt, 'settings', None)))
         for key in ('provider', 'model'):
             if route.get(key): request[key] = route[key]
@@ -392,7 +392,7 @@ class DiscoveryRunner:
         reason = None
         blocked = None
         if state != 'SUCCEEDED':
-            from .research_agent import model_failure
+            from .core.research import model_failure
             blocked = model_failure(result.get('summary'), getattr(self.rt, 'settings', None))
         if blocked:
             # The child failed on the configured research model: hold the run and tell the user. The
@@ -572,7 +572,7 @@ class DiscoveryRunner:
                     # fenced or bound, so a start hook racing the reply is still
                     # recorded on this run (the finally releases it on errors).
                     if error:
-                        from .research_agent import model_failure
+                        from .core.research import model_failure
                         blocked = model_failure(error, getattr(self.rt, 'settings', None))
                         if blocked:
                             # The configured research model cannot be used: hold the run and tell the user,

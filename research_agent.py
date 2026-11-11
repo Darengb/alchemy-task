@@ -122,30 +122,7 @@ def _run_for(task_id: str = "", run_id: str = "", session_id: str = "") -> tuple
 model_route = rs.model_route
 model_key = rs.model_key
 
-# Specific failure phrases from a model or provider, never bare words: research prose about models,
-# providers or authors must not block a task. Transient failures (rate limits, timeouts, connection
-# errors) take the ordinary retry path.
-_MODEL_FAILURE = re.compile(
-    r"\bmodel\b[^.;\n]{0,80}?\b(not found|does not exist|not supported|unsupported|invalid|unavailable|"
-    r"not available)\b|\bmodel_not_found\b|\b(unknown|unsupported|invalid) (model|provider)\b|"
-    r"\binvalid api[ _-]?key\b|\bunauthori[sz]ed\b|\b401\b|\b(no|missing) (api[ _-]?key|credentials)\b|"
-    r"\binsufficient (credits?|balance|quota|funds)\b|\bbilling\b|\bpayment required\b|\b402\b", re.I)
-_TRANSIENT = re.compile(r"rate[ _-]?limit|\b429\b|timed? ?out|timeout|connection", re.I)
-MODEL_FAILURE_STATUSES = ("failed", "error")
-
-
-def model_failure(error: Any, settings: Any) -> str | None:
-    """The user-facing message when ``error`` comes from the configured research model or provider, else None.
-
-    Only with a research model set: a failure on the main model is the ordinary retry path."""
-    route = model_route(settings)
-    text = " ".join(str(error or "").split())
-    if not route or not text or "toolset" in text.lower() or _TRANSIENT.search(text) or \
-            not _MODEL_FAILURE.search(text):
-        return None
-    name = route.get("model") or f"on provider {route['provider']}"
-    return (f"the research model {name} could not be used: {text[:240]}. Change it with \"set my research model\" "
-            "or clear it to use the main model.")
+from .core.research import MODEL_FAILURE_STATUSES, model_failure  # noqa: E402,F401 - shared with discovery
 
 
 def _make_request(**kwargs: Any) -> Any:
