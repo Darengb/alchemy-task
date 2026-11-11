@@ -361,3 +361,17 @@ def test_discovery_run_now_fires_the_streams_own_job_in_the_background(rclient, 
     c.sweep_jobs = {}
     out = client.post("/settings/streams/mbg/run")
     assert out.status_code == 400 and "missing" in out.json()["error"]["message"].lower(), out.text
+
+
+def test_settings_streams_include_next_run(rclient, monkeypatch):
+    client, c = rclient
+    client.app.include_router(settings_api.router)
+    monkeypatch.setattr(settings_api, "runtime", lambda: runtime.Runtime(c))
+    c.sweep_jobs = {"jobmbg": {"enabled": True, "state": "scheduled", "next_run_at": "2026-11-11T18:00:00-05:00"},
+                    "jobav": {"enabled": False, "state": "paused", "next_run_at": "2026-11-11T18:00:00-05:00"}}
+    c.state.set("streams", {
+        "mbg": {"name": "mbg", "areas": ["work"], "sources": [], "job_id": "jobmbg", "schedule": "0 18 * * *", "timezone": "America/New_York"},
+        "av": {"name": "av", "areas": ["work"], "sources": [], "job_id": "jobav", "schedule": "0 18 * * *", "timezone": "America/New_York"}})
+    streams = {s["name"]: s for s in client.get("/settings").json()["streams"]}
+    assert streams["mbg"]["next_run_at"] == "2026-11-11T18:00:00-05:00"
+    assert streams["av"]["next_run_at"] is None  # paused: no next run shown
