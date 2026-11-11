@@ -1,96 +1,82 @@
 # Alchemy Task
 
-**Alchemy Task turns messy real-world work into finely researched tasks ready for your agent to do for you.**
+**Alchemy Task does the work before the work.**
 
-It determines the best approach to complete your tasks, what resources are already available to your agent, and
-what it will need from you before it begins.
+A Hermes Agent plugin that turns messy real-world work into finely researched tasks, ready for your agent to do for you.
 
-When a task is created, a background research agent reads the chat it came from, your skills and runbooks,
-your past sessions, notes and files, Git repositories under your home folder, and your connected email and chat
-sources. It also searches the web to recommend tools, read documentation and determine best practices. It then
-writes into the task what it found: the context, a
-recommended approach, and any access your agent still needs. Apart from writing its findings into the task,
-research only reads: it never sends messages or changes your files, accounts or settings.
+▶ **[Watch the demo](VIDEO_LINK)**
 
-An optional daily discovery routine also scans the conversations you connect and approve, such as email, Slack,
-Teams and meeting transcripts in your email, for follow-ups asked of you or promised by you that should become
-tasks. You choose these sources when you set it up. You approve each new task before it is created; when a
-follow-up clearly matches a task you already have, discovery adds the new details to that task.
+![The Tasks view with a researched task open](docs/screenshots/task-research.png)
 
-> Status: in development for the Hermes plugin hackathon (November 2026). This README grows with each component.
+## Why
 
-## What works today
+Your agent can already do most of your work. The hard part is giving it everything it needs, before it starts and along the way.
 
-- **Task tools for your agent:** `task_create`, `task_update` and `task_find`. The agent uses them instead of
-  editing files. They check for duplicates, ask for a due date when none was given, route each task to its
-  area folder, and enforce status rules: done records the completion date, reopening must be explicit, and
-  cancelled or waiting needs a reason.
-- **Plain Markdown you own:** one file per task with YAML frontmatter, readable in any editor and compatible
-  with Obsidian and TaskNotes. Edits touch only the fields they change: your comments, layout, unknown fields,
-  own sections and blocks written by other tools are preserved byte for byte. YAML is handled by ruamel.yaml,
-  which ships with Hermes, so the plugin installs no Python dependencies.
-- **Git delivery you can trust:** every change is a path-scoped commit. A push only counts once the remote
-  branch matches your commit. If the remote moved, Alchemy Task rebases when that is safe, and it never
-  stashes, resets or force-pushes your work. If a push can't go through, the task is still saved and the push
-  is retried.
-- **Background research on every new task:** right after a task is created, a research agent starts in the
-  background on your own model. It reads all of your skills (how you already do things), checks which tools,
-  integrations and keys your Hermes has, looks at your own context first (the chat the task came from, past
-  sessions, related tasks, your files and Git repositories, your discovery sources and MCP servers), then
-  researches the web, and writes a dossier into the task: the recommended
-  approach, context, risks, open questions, sources, and an **access plan**. The plan says whether Hermes can
-  do the task now, what access is missing and how to set it up. When it finishes, your agent mentions it in
-  the same chat and offers to set up missing access now or when you start the task. Research also fills in the
-  parts of the task you left blank: the summary, a few sentences of context at the top of Notes, a short Plan
-  and Subtasks (skipped for one-step tasks). It never overwrites what you or an agent wrote; each section it
-  writes ends with *(from research, date)*, and "research it again" refreshes only research-written sections
-  nobody has edited since. Say "no research needed" to skip it, "research it again" to refresh it, or use the
-  **Start research** / **Refresh research** button at the top of a task's research section in the dashboard,
-  which queues research and starts the research sweep job right away (if the job is paused, research starts when it is resumed).
-- **Bounded and safe research:** the research agent is read-only. It cannot run commands, write or edit
-  files, change skills, or change accounts or settings; the plugin blocks those tools for every research agent
-  it starts, discovery research included. It never reads credential files (keys, tokens, `.env`, `.ssh`,
-  `auth.json`, Hermes's own config, tokens and browser profiles, and similar). Each run is limited to 45 tool calls and 15 minutes, with up to 3 attempts. Results from a superseded run are discarded, and the
-  dossier is written into the task's latest content, so research never overwrites edits made while it ran.
-- **Official work sessions:** say "work on X" or "continue X". The chat is linked to the task, which turns
-  in progress, and the agent gets the notes, research, access plan and current state with its next step, so
-  you never re-explain. When the work finishes, needs you, waits on someone or is blocked, the agent records
-  a checkpoint: a **Current state** section at the top of the task with what was done, the next step and
-  what is needed from whom. Marking a task done requires evidence of what was checked.
-- **Safety net:** if a linked chat ends or sits idle for 30 minutes without a checkpoint, Alchemy Task writes
-  one itself from the conversation, using your checkpoint model (by default the same model as compression)
-  or a free digest of the last exchange when no model call is available. Automatic checkpoints never mark a
-  task done.
-- **Discovery streams:** a scheduled digest of things that look like your tasks, found in sources your
-  agent can already read: email, chat, meeting transcripts and notes, shared documents. Each stream has its
-  own sources and scope, areas, schedule (6 PM by default, in your timezone) and chat, so a work stream and a
-  side-business stream stay separate. A digest is a short numbered list with the reason for each item and
-  which sources were checked; reply "1 and 3" and those become tasks, with their source recorded and the
-  usual research. Nothing becomes a task without your reply, a message is never suggested twice (across
-  streams too), and items already covered by an open task are skipped.
-- **Apple Reminders (optional, beta):** with the Hermes mobile app on your iPhone, say "sync reminders" or run
-  `/task ios`. Open tasks from the areas you choose appear in your default Reminders list (or another list you
-  name); title, due date and the checkbox stay in sync both ways each time you sync, and everything else stays
-  in the task file. Checking a reminder off marks the task done. Only open tasks get a new reminder, and not
-  ones more than 14 days overdue. Your own reminders are never touched. Each reminder's notes show the task's
-  summary and its next step.
+Someone asks for something in a thread of 100 Slack messages. The decision is spread across a meeting, an email and a spreadsheet. You have to work out what actually needs doing, then turn it into requests your agent can act on.
 
-  *Where it works:* tested end to end on a real iPhone with self-hosted Hermes, from a chat in the Hermes app:
-  creating reminders in a chosen list, all-day due dates with no alert, renames and summary notes reaching the
-  phone, and checking a reminder off on the phone marking the task done. On Nous Cloud agents the connector
-  installs and runs on the server, but the current beta of the Hermes app does not yet offer Device Access for
-  Cloud agents, so Reminders sync there waits on that app update.
-- **Validator:** `/task validate` checks hand-edited files, reports problems and assigns missing IDs with
-  one-line edits that keep your comments and formatting.
-- **Tasks view in the web dashboard and the desktop app:** a **Tasks** tab (dashboard) and a **Tasks** page
-  (desktop) show your tasks by month, week or day. On a phone, or in a narrow window, it opens on a scrolling
-  list of days. Check a task off with one click (with Undo), drag it to another day, or pick a date; either way
-  its due and scheduled dates move together. Click a task to read its notes, plan, subtasks and current state,
-  tick subtasks, and edit everything in place. Today's list also shows your overdue tasks, folded under a
-  count. The **Discovery** tab lists each run with its proposals: create a task, apply a proposal to the
-  existing task it matched, or dismiss it. The gear opens settings for discovery schedules and task defaults.
-  Every change goes through the same files, log lines and Git commits as a change made in chat, and an edit
-  never overwrites a newer version of the task.
+Once the agent starts, it interrupts you with a question every five minutes. Which tool should it use? Where is the spreadsheet? What did the team decide? For most jobs outside of code (online stores, email platforms, ad accounts, admin panels), this preparation and back-and-forth is most of the work, and today you do it yourself.
+
+What if your agent had already worked out everything it needs, from every source it can reach, by the time you heard about the request? What if all you had to do was say "go"?
+
+Alchemy Task hands that preparation to Hermes. It catches the asks you would miss and researches every task in the background. If the work will need something from you, whether an MCP server, an API key, a persistent browser profile or a creative decision, it already knows, so it asks at the start instead of halfway through.
+
+Less mental load. Fewer interruptions. Hermes works, and you get on with your evening.
+
+> **Example.** Michael is on a gondola in Venice when his team decides, across 112 Slack messages, to raise every price and move all 1,312 subscribers from 20-day to 30-day deliveries. Discovery turns the thread into one task. Research pulls the current prices from Shopify, finds the new price sheet in Slack, reads Recharge's guide to bulk updates and writes the plan. Michael replies "go" and keeps his dinner reservation.
+
+## Works with the sources your agent already has
+
+Alchemy Task uses your accounts through your Hermes agent. Getting a source working takes two steps, and only the second happens in this plugin:
+
+1. **Connect the source to your agent (in Hermes, before you start).** Gmail, Slack, Shopify, Teams and other tools reach your agent through Hermes: connectors, MCP servers, API keys or logged-in browser profiles. **Alchemy Task does not do this step.** It is a prerequisite.
+2. **Connect it to Alchemy Task (in this plugin).** During setup you choose which of your agent's sources discovery may read. Research automatically uses whatever your agent can already reach.
+
+Because of this, Alchemy Task works with most tools your agent already uses. When a task needs a source your agent cannot reach yet, research says so in the task's access plan and explains how to connect it to your agent in Hermes.
+
+## What it does
+
+### 1. Research on every task
+
+When a task is created, in chat, from discovery or in the dashboard, a research agent starts in the background on your own model. It reads:
+
+- the chat the task came from, and your past sessions
+- your skills and runbooks, so it follows how you already do things
+- your notes, files and Git repositories under your home folder
+- the email, chat and other sources already connected to your agent, and its MCP servers
+- the web: it compares tools, reads their documentation and checks best practices
+
+Research uses only sources already connected to your agent (see above). It writes a dossier into the task: the context it found, a recommended approach, risks, open questions, sources and an **access plan**. The access plan says whether Hermes can do the task now, what access it already has (an MCP server, an API key, a logged-in browser profile) and what to set up first. Research also fills in the summary, plan and subtasks you left blank, and never overwrites what you wrote.
+
+Research only reads. The plugin blocks every write, shell and send tool for research agents, and research never opens credential files. Apart from writing its findings into the task, it changes nothing.
+
+### 2. Discovery: a safety net for asks that slip
+
+An optional daily routine reads the conversations you choose, such as email, Slack and meeting transcripts that arrive by email, or any other source your agent can read, and finds follow-ups asked of you or promised by you. Discovery can only read sources already connected to your agent; during setup you choose which of them it reads. It sends a short numbered digest to your chat. Reply with the numbers you want and they become tasks, with research. Nothing becomes a task without your approval, and when a follow-up clearly matches a task you already have, discovery offers to add the new details to that task instead.
+
+Each stream has its own sources, areas, schedule and chat, so work and personal stay separate.
+
+![The Discovery tab](docs/screenshots/discovery.png)
+
+### 3. Tasks and Discovery in the dashboard and desktop app
+
+- **Tasks:** month, week and day views on desktop and a scrolling list of days on phones. Check a task off, drag it to another day, or open it to read and edit its notes, plan, subtasks, current state and research. Start or refresh research with one click, or hand a task to chat with **Start in chat**.
+- **Discovery:** each run with its proposals and the sources it read. Create a task, apply a proposal to the task it matched, or dismiss it.
+- **Settings:** discovery schedules and task defaults.
+
+Every change made in the UI goes through the same files, log entries and Git commits as a change made in chat.
+
+![Tasks and Discovery on a phone](docs/screenshots/phone.png)
+
+### 4. Task management in chat
+
+You never need a command. Say "add a task to renew the domain by Friday", "move it to next week", "what's overdue?" or "I'm done with the invoice", and your agent uses the plugin's tools, which check for duplicates, ask for a due date, file the task in the right area and enforce status rules.
+
+- **Plain Markdown you own:** one file per task with YAML frontmatter, compatible with Obsidian and TaskNotes. Edits touch only the fields they change.
+- **Git delivery:** every change is its own commit and is pushed to your remote. The plugin never force-pushes, stashes or resets your work.
+- **Work sessions:** say "work on X". The chat links to the task and your agent starts with the notes, research, access plan and next step. When it stops, it records a **Current state** with what was done and what comes next, so nobody re-explains anything later.
+- **Apple Reminders (optional, beta):** sync open tasks with Reminders through the Hermes mobile app.
+
+![The week view](docs/screenshots/tasks-week.png)
 
 ## Install
 
@@ -194,91 +180,197 @@ Setup fills them in for you.
 
 ## Disclosures
 
-- **Files outside plugin data:** reads and writes Markdown task files in the configured workspace's task
-  folders only, not the rest of the repository.
-- **Shell commands:** runs local `git` subprocesses in the workspace (add, commit of task paths only, fetch,
-  rebase, push, ls-remote) with a minimal environment and no interactive prompts.
-- **Process checks:** to recover discovery work after a crash, the plugin reads its own process entries under
-  `/proc` (start time, boot ID and PID namespace) and checks whether a recorded worker process still exists.
-  It only reads these values; it never signals or changes other processes.
-- **Network:** Git traffic goes only to the remote you configure.
-- **Credentials:** the plugin stores no Git credentials. Your own Git and SSH configuration authenticates the
-  push, and the plugin never reads your keys or credential helpers. It refuses to push when the repository's
-  own config names transport programs, unless you enable `git_allow_repo_programs`.
-- **Background agents and model use:** after each task is created (and from the optional research sweep job),
-  the plugin starts a Hermes research subagent through the public subagent lifecycle API. It runs on your
-  configured model (or on the research model you set with `research_model` / `research_provider`, which may be a
-  different provider; if that model cannot be used, research stops and tells you rather than using the main model) with the `web`, `file` and `session_search` toolsets, the reader toolsets of your approved
-  discovery streams, the MCP servers your agent has (Hermes passes them on), and the plugin's read-only
-  research tools. It spends your model tokens and sends search queries derived from the task text to your
-  configured web search provider. A `pre_tool_call` hook refuses write, edit, shell and code-execution tools
-  (`write_file`, `patch`, `skill_manage`, `terminal`, `execute_code`, `process_manage` and similar), browser,
-  kanban and Home Assistant tools, and any MCP or hosted-connector tool whose name does not start with a read
-  verb (get, list, read, search, query, fetch and similar), so research cannot send, post or change settings
-  through an integration. It also refuses reads of credential files and folders, following symlinks, and masks
-  common key formats in Git output. All of this applies to research agents only; your own chats are
-  unaffected. If the agent that starts research lacks the read toolsets (for example a research sweep job
-  created by an older version), research falls back to web and the research tools for that run. Running setup's
-  job step, or any change to a discovery stream, updates the sweep job to the same read toolsets as your
-  approved discovery readers.
-- **Reads outside plugin data:** research agents read your skills (including reference files) through
-  Hermes's skill tools; the names and availability of your toolsets, tools and MCP servers, and the names of
-  environment variables Hermes reports as missing (never values, keys or credentials); Markdown notes the task
-  links to; your past sessions through `session_search`, starting with the chat that created the task; files
-  through Hermes's `read_file` and `search_files`; Git history of repositories under your home folder and the
-  workspace through fixed read-only `git log`, `show`, `grep` and `ls-files` commands (no shell, credential
-  paths refused); and whatever your approved discovery readers and MCP servers return. When research starts,
-  the plugin reads your Hermes memory files (`memories/MEMORY.md` and `USER.md` in your profile) and puts
-  them, with the originating chat's id, up to 10 related tasks and the path of your cron output folder, into
-  the research agent's starting context, because Hermes starts subagents without memory.
-- **Work-session transcripts and background thread:** for chats linked to a task, the plugin keeps a short
-  digest of the last exchange, reads the chat's transcript through Hermes's session store when it writes an
-  automatic checkpoint, and runs one background thread per profile that checks linked chats every 10
-  minutes. Automatic checkpoints make one small model call (about 3,000 input and 300 output tokens) through
-  the `alchemy_task_checkpoint` model slot, which you can point at a cheaper model.
-- **Chat context:** in a chat linked to a task, a one-line reminder to checkpoint is added to each message;
-  when research finishes, a one-line note is added to your next message in the chat where
-  the task was created, so your agent can tell you about it.
-- **Scheduled jobs (created only after you approve them during setup):** see the table above. Their loader
-  scripts are written to `$HERMES_HOME/scripts/`; the hourly check messages the setup chat only when
-  something changes. The research sweep's script starts the agent only when a task is waiting.
-- **Discovery reads and writes:** discovery jobs read only the sources you approve for each stream, through
-  your existing tools and connectors; the plugin itself connects to nothing. Digests are written into the
-  chat where the stream was created by default native Hermes cron delivery (`delivery_owner=native_origin`,
-  `deliver=origin`, attached to the origin session), preserving any explicitly approved other target.
-  Its scheduled final reply is the exact immutable prepared digest; the plugin does not also send.
-  No exact-message reader or messaging API setup is required for this ordinary path. Backend delivery
-  remains `host_pending`, `delivered=false`, `verification=awaiting_host`; preparation/final return is not
-  delivery proof, and absent origin metadata is reported unconfigured. Native host retry semantics apply.
-  Optional `delivery_owner=verified_sender` requires approved actual sender/exact-reader mappings and
-  existing-message verification. Only this strict mode remains SETUP_BLOCKED/no-job until configured;
-  it switches the SAME job to local-only with a SILENT final reply and owns all posts. Approved same-origin
-  mode changes preserve job/origin/schedule, never enabling both send paths. See the bundled discovery
-  skill for setup. Same-chat new sessions require public host metadata, never model origin claims. Suggestions and source IDs retain their existing seven-/60-day policies.
-- **Explicit research pilots and historical reviews:** shadow/research_only `pilot_limit` retains the full
-  index with audited `pilot_skipped` units; production selection is unchanged. `discovery_replay` distinguishes
-  saved-input replay (original date/window/typed identities/primary resources, distinct review) from CURRENT
-  fresh validation and targeted supplements. These nonproduction operations never automatically mutate old
-  tasks or send a digest. Hash/schema incompatibility refuses replay. User corrections support approved
-  structured active recommendation overlays while keeping accepted source evidence/history immutable.
-  Normal digest text uses task titles, bounded operational status and a review token, not task UUIDs or
-  raw backend exception/cache paths. Full diagnostics remain in `discovery_runs`.
-- **Apple Reminders sync (only if you turn it on):** runs only when you ask (`/task ios`, "sync reminders").
-  It calls the Hermes mobile connector's tools (`mobile_devices`, `mobile_reminders_list`,
-  `mobile_reminder_create`, `mobile_reminder_update`, `mobile_reminder_complete`, `mobile_request_result`) on
-  the paired phone you choose, reads only the list you choose, and writes only reminders it created. Each new
-  reminder's notes hold a short marker with the task's ID. Mappings and pending phone requests are stored in
-  plugin data. The phone answers only while the Hermes app is open; there is no background sync. Requires the
-  Hermes mobile app (beta) and its device-access connector. Reminders has no "only if unchanged" write, so if
-  you edit the same reminder field on the phone in the moment between Alchemy Task reading and writing it,
-  the phone edit can be overwritten; changes made at other times are merged or shown as conflicts.
-- **Setup writes:** plugin settings through Hermes's plugin settings API; Hermes's own `timezone` only if you
-  agree during setup; a new workspace folder and Git repository if you start fresh; a
-  `.alchemy-task-owner` marker in the workspace (listed in `.git/info/exclude`) so two installs do not
-  silently share one workspace.
-- **Plugin state:** locks, push receipts, active research runs, a one-hour capability cache and pending chat
-  notes live in the plugin's profile-scoped data directory.
-- No telemetry.
+**Files and folders**
+
+- **Your task workspace:** Alchemy Task reads and writes task files in the area folders of the workspace you
+  choose. When research starts, it also reads up to three notes inside the workspace that the task links to
+  with `[[...]]`.
+- **Setup:** setup can create the workspace folder, a Git repository, a short `README.md` and empty area
+  folders. It also writes an `.alchemy-task-owner` marker, which it lists in `.git/info/exclude` so two
+  installs do not silently share one workspace. If you give it a remote URL, setup adds it as the Git remote;
+  it replaces an existing remote only when you ask it to. On a new repository it makes and pushes a first
+  commit of `README.md`.
+- **Hermes files:** the plugin reads Hermes's `config.yaml` for its own settings, your timezone and whether
+  you allowed it to message your chats. It changes Hermes's own `timezone` only if you agree during setup. It
+  copies two small loader scripts into `$HERMES_HOME/scripts/`, because Hermes's scheduler only runs scripts
+  from there.
+- **Plugin data:** everything else lives in the plugin's own data folder for the active profile:
+  - locks and push receipts
+  - research runs in progress, plus a one-hour cache of which tools you have (names only)
+  - which chat created each task and which chats worked on it, with a short digest of the last exchange
+  - notes waiting to be shown in a chat
+  - Reminders mappings and the queue of Start in chat requests
+  - discovery runs (see below)
+
+**Commands it runs**
+
+- **Git, and nothing else:** every command is run directly, never through a shell, with no interactive
+  prompts and only basic environment variables (PATH, HOME, user, locale, `SSH_AUTH_SOCK`).
+- **In your workspace:** Alchemy Task commits only the task files it changed. It pushes, and when the remote
+  has moved it pulls with rebase (never stash, reset or force). It also runs read-only checks such as
+  `status`, `ls-remote` and `rev-parse`. During setup it may run `git init` and set the remote.
+- **For research:** research agents can run four read-only Git commands (`log`, `show`, `grep`, `ls-files`)
+  in repositories under your home folder and the workspace. These run with repository hooks and external
+  programs switched off, and credential files are excluded.
+- **Process checks:** to recover discovery work after a crash, the plugin reads a few `/proc` values (process
+  start time, boot ID, PID namespace) and checks whether a recorded Hermes worker process still exists. It
+  never stops or changes any process.
+
+**Network and credentials**
+
+- **No direct connections except Git:** the plugin opens no network connections itself. Git talks only to the
+  remote you configure. All other traffic goes through Hermes: model calls to your provider, web searches to
+  your search provider, and the connectors and MCP servers you already have.
+- **No stored credentials:** your own Git and SSH setup authenticates pushes, and the plugin never reads your
+  keys or credential helpers. It refuses to push when the repository's own Git config names programs to run
+  for transport or credentials, unless you turn on `git_allow_repo_programs`. If Git has no name and email
+  set, commits are signed "Alchemy Task <alchemy-task@localhost>".
+
+**Research agents (background model use)**
+
+- **When they run:** after a task is created, when you ask for research again, and from the research sweep
+  job, Alchemy Task starts a Hermes research subagent. Discovery runs start research subagents too.
+- **Which model:** they use your main model, or the model you set with `research_model` / `research_provider`,
+  which may be a different provider. If that model can't be used, research stops and tells you. It never
+  switches to the main model on its own.
+- **Cost:** research spends your model tokens. It sends search queries based on the task text to your web
+  search provider. Each run is limited to 45 tool calls and 15 minutes, with up to 3 attempts.
+- **What they can read:**
+  - the chat that created the task, and your past sessions (through `session_search`)
+  - your skills and their reference files
+  - files (through Hermes's `read_file` and `search_files`)
+  - Git history, as described above
+  - whatever your approved discovery sources and your MCP servers return
+  - the names of your tools, MCP servers and any missing environment variables (never their values)
+- **Starting context:** Hermes starts subagents without memory, so the plugin hands the agent a starting
+  context. It contains your Hermes memory files (`memories/MEMORY.md` and `USER.md`), up to 10 related tasks
+  and the location of your scheduled-job output folder.
+- **Read-only by force:** a `pre_tool_call` hook blocks research agents from writing or editing files,
+  running commands or code, changing skills or memory, sending messages, scheduling jobs, starting other
+  agents, and using browser, kanban or Home Assistant tools. From MCP servers and hosted connectors they can
+  only use tools whose names start with a read word (get, list, read, search, fetch and similar).
+- **No credential files:** research agents cannot read credential files or folders. That covers keys, tokens,
+  `.env`, `.ssh`, cloud and browser profiles, Hermes's own config and credential stores, and a `private`
+  folder in your home. Symlinks are followed before checking. Common key formats are masked in Git output.
+  These limits apply only to research agents; your own chats are not affected.
+- **Older sweep jobs:** if the job that starts research lacks the read toolsets (for example a research sweep
+  created by an older version), that run uses only web search and the research tools. Running setup's job
+  step, or changing a discovery stream, gives the sweep job the same read toolsets as your approved
+  discovery sources.
+
+**Work sessions**
+
+- **Linked chats:** when you start work on a task in a chat, the plugin links that chat to the task. After
+  each reply it keeps a short digest of the last exchange.
+- **Background thread:** one thread per profile checks linked chats every 10 minutes.
+- **Automatic checkpoints:** if a linked chat ends or sits idle for 30 minutes without a checkpoint, the
+  plugin reads the chat's transcript from Hermes's session store (about the first message and the most
+  recent 12,000 characters). It makes one small model call (about 3,000 tokens in, at most 400 out) through
+  the `alchemy_task_checkpoint` model slot, which you can point at a cheaper model. If that call fails, it
+  tries Hermes's default auxiliary model, then falls back to a free summary of the last exchange.
+
+**What it adds to your chats**
+
+- **Every chat:** a short instruction (at most 800 characters) in the system prompt tells your agent to manage
+  tasks through the plugin's tools. Three bundled skills (tasks, setup, discovery) are available to load.
+- **Linked chats:** a one-line reminder to record a checkpoint is added to each message.
+- **When research finishes:** a one-line note is added to your next message in the chat where the task was
+  created, so your agent can tell you about it.
+- **Open discovery suggestions:** in a chat that has them, a one-line note tells your agent how to handle
+  replies like "1 and 3".
+
+**Start in chat (button in the dashboard, desktop app or phone)**
+
+- **What it does:** the button asks your agent to message you about a task and wait for your "go".
+- **Into an existing chat:** only if all three are true:
+  - your messaging gateway is running
+  - you have given the plugin Hermes's `allow_gateway_injection` permission (it is off unless you turn it on)
+  - there is a messaging chat to use: the last one that worked on the task, else your home channel
+
+  The plugin then posts the request into that chat as a message, and your agent answers there. To pick the
+  chat, it reads Hermes's session records and your gateway's home-channel settings.
+- **Otherwise:** it creates a one-time scheduled agent job that starts a new chat about the task a few
+  seconds later.
+- **Background thread:** a thread checks the request queue every second.
+
+**Scheduled jobs (created only after you approve them)**
+
+- **Research sweep:** every 30 minutes. A script checks first, and the agent wakes only when a task is
+  waiting for research.
+- **Task file check and push retry:** hourly. It's a script with no model. It gives hand-made tasks an ID,
+  retries failed pushes, and messages the setup chat only when something changes.
+- **Discovery:** one job per discovery stream you set up. It runs one agent turn on your model per run.
+- **Run now:** the dashboard's "Start research" and "Run now" buttons, and asking in chat to run a discovery
+  stream now, run the matching job immediately.
+- **Start in chat:** may create a one-time job (see above).
+- **Removal:** `/task teardown` removes the jobs and their scripts.
+
+**Discovery**
+
+- **What it reads:** each discovery run reads only the sources and scopes you approved for that stream, using
+  the tools and connectors you already have. It also reads:
+  - your profile's `SOUL.md` and memory files
+  - your installed skills
+  - files that those reader tools saved in Hermes's cache folder
+- **What it stores:** full copies of the messages and email bodies it read, plus the related task and skill
+  text, are saved in the plugin's data folder, so each run's evidence can be checked later. Finished runs
+  older than 60 days are deleted, leaving a short summary record. Suggestions you don't answer expire after
+  seven days, and a message is never suggested twice.
+- **Approval:** nothing becomes a task, and no existing task changes, until you approve the suggestion.
+- **How the digest reaches you (default):** the scheduled job's final reply is the digest, and Hermes's
+  scheduler posts it to the chat where you set up the stream, as it does for any scheduled job. The plugin
+  sends nothing itself in this mode. Because only Hermes can confirm the post, the plugin reports the digest
+  as prepared, not as delivered. If the original chat can't be identified from Hermes's own session records,
+  the plugin reports delivery as not set up. It never relies on what the model says about which chat it is
+  in.
+- **Optional checked delivery:** you can instead approve a specific tool that sends messages and a specific
+  tool that reads them back.
+  - **Setup check:** the plugin reads one existing message to check the mapping. It never sends a test
+    message.
+  - **Sending:** after each run the plugin itself sends the digest with the approved tool and reads it back
+    to confirm it arrived word for word.
+  - **No double posts:** in this mode the scheduled job's own reply is switched to silent, so the digest is
+    never posted twice. If the send fails, the plugin never resends blindly.
+  - **Before it is set up:** a stream in this mode has no scheduled job until both tools are approved and
+    checked.
+- **Trial runs and re-runs (only when you ask):** you can start a trial run of a stream. A trial can research
+  only the first few suggestions (up to 200) and list the rest as skipped. You can also re-run a past
+  discovery run, either on its saved inputs or against your sources as they are now; this needs your
+  explicit approval in chat. Trials and re-runs never create or change tasks and never send a digest. Their
+  results go to a separate review. If the saved inputs are gone or came from an incompatible version, a
+  re-run is refused.
+- **Corrections:** when you correct a recommendation, the correction is shown on top of it, and the original
+  evidence and history are kept unchanged.
+- **Digest text:** digests show task titles and short status lines, not internal IDs or file paths. Full
+  details are available through the `discovery_runs` tool.
+
+**Apple Reminders (only if you turn it on)**
+
+- **When it runs:** only when you ask (`/task ios`, "sync reminders"). There is no background sync, and the
+  phone answers only while the Hermes app is open.
+- **Requirements:** the Hermes mobile app (beta) and its Device Access connector.
+- **Tools it calls:** the connector's `mobile_devices`, `mobile_reminders_list`, `mobile_reminder_create`,
+  `mobile_reminder_update`, `mobile_reminder_complete` and `mobile_request_result`, on the phone you choose.
+- **What it touches:** it reads only the list you choose and writes only reminders it created, for open
+  tasks in the areas you choose.
+- **What reaches the phone:** each reminder carries the task's title, due date, a one-line summary, the next
+  step and a short marker with the task's ID. That text is stored by Apple Reminders on your phone.
+- **Stored data:** mappings and pending phone requests stay in plugin data.
+- **Edit conflicts:** Reminders has no "only if unchanged" write. If you edit the same reminder field on the
+  phone in the moment between Alchemy Task reading and writing it, your phone edit can be overwritten.
+  Changes made at other times are merged or shown as conflicts.
+
+**Dashboard and desktop page**
+
+- **Pages:** the Tasks tab (web dashboard) and Tasks page (desktop app) are served by Hermes's own dashboard.
+- **What they can do:** list and edit tasks, approve or dismiss discovery suggestions, change stream
+  schedules, and start jobs. Every change uses the same files, log lines and Git commits as a change made in
+  chat.
+- **Browser storage:** the page stores only display preferences in your browser's local storage.
+
+**Telemetry**
+
+- None. Alchemy Task sends no usage data anywhere.
 
 ## Development
 
