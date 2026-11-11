@@ -81,7 +81,7 @@ Jordan in #support: "Also, can we get back-in-stock alerts on the Winter Spice C
 <!-- task-research-dossier:start -->
 ## Research dossier
 
-**Content revision:** \`sha256:6471b054efa6517a2591a5303b0c66d707596e4f0e03da1d83a48a7d22c877e0\`
+**Content revision:** \`sha256:de04f36d784a104aba464d5602201525388800e50a9f7818ec25a58cab02bc98\`
 
 *Researched ${d(-1)}.*
 
@@ -117,7 +117,7 @@ Jordan in #support: "Also, can we get back-in-stock alerts on the Winter Spice C
 
 - ✅ **Klaviyo** (available): Klaviyo MCP server
 - ✅ **Theme code** (available): ~/code/lumen-leaf-theme
-- ⛔ **Permission to edit the theme** (missing): Shopify Admin API is connected, but its token lacks write_themes. To set up: In Shopify admin, add the write_themes permission to the Hermes app
+- ⛔ **Permission to edit the theme** (missing): Shopify Admin API is connected, but its token lacks \`write_themes\`. To set up: In Shopify admin, add the \`write_themes\` permission to the Hermes app
 - ❔ **Shopify admin** (unverified): logged-in browser profile. To set up: Sign in once in the Lumen & Leaf browser profile
 
 ### Established approaches
