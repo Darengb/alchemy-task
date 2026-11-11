@@ -164,9 +164,16 @@ class DiscoveryConversion:
         if scan.errors:
             raise UserError('canonical task inventory is incomplete; resolve parse failures before matching')
         exact, semantic = [], []
+        closed = []
         for item in scan.tasks:
             doc = tf.parse_file(item.path)  # full current bytes, not cached summaries
             rel = tasks.rel(doc.path)
+            if doc.is_closed:
+                # Done or cancelled tasks are research context, never a destination: a follow-up
+                # on finished work is new work, so it is proposed as a new task.
+                if rel in nominations:
+                    closed.append({**tasks.summary(doc), 'revision': tf.content_hash(doc.raw)})
+                continue
             values = self._exact_values(doc, slack_workspaces=workspaces)
             overlap = sorted(r for r in wanted if any(s == r or (source_identity_covers(s, r) and (not candidate.get('parent_candidate_id') or not is_message_refinement(r) or nominations.get(rel) == 'exact')) for s in values))
             # A genuine message is a container for independent frozen actions.
@@ -180,7 +187,7 @@ class DiscoveryConversion:
                 exact.append(target)
             elif rel in nominations:
                 semantic.append(target)
-        return {'run_id': run, 'unit_id': wid, 'kind': 'conflict' if len(exact) > 1 else 'exact' if exact else 'selection' if len(semantic) > 1 else 'semantic' if semantic else 'new', 'targets': exact or semantic, 'research': research}
+        return {'run_id': run, 'unit_id': wid, 'kind': 'conflict' if len(exact) > 1 else 'exact' if exact else 'selection' if len(semantic) > 1 else 'semantic' if semantic else 'new', 'targets': exact or semantic, 'closed_related': closed, 'research': research}
 
     def _paths(self, run, wid):
         self.store.get_candidate(run, wid)  # validate identifiers before constructing paths

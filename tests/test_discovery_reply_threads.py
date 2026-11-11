@@ -404,3 +404,20 @@ def test_selection_among_several_existing_tasks_asks_which_task_to_update(settin
     assert f'**Choice:** Reply "{ref}, update" and name which existing task to add this to' in digest['text']
     existing = next(l for l in digest['text'].splitlines() if l.startswith('**Existing task:** '))
     assert 'Plan the launch page' in existing and 'Plan the launch email' in existing
+
+
+def test_completed_tasks_are_never_suggested_as_existing_task_updates(settings, data_dir, tmp_path):
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    docs = [rt.store().create(title=t, area='work', undated=True, research=False, confirm_new=True)
+            for t in ('Plan the launch page', 'Plan the launch email')]
+    done = docs[1].path
+    done.write_text(done.read_text().replace('status: open', 'status: done', 1))
+    _, store, run, wid, _ = custom_joined(settings, data_dir, tmp_path,
+        [{'path': rt.store().rel(d.path), 'match_basis': 'related_only'} for d in docs])
+    _own(store, run); _coverage_complete(store, run)
+    outcome = integration.conversion.match(run, wid)
+    assert outcome['kind'] == 'semantic' and [t['title'] for t in outcome['targets']] == ['Plan the launch page']
+    assert [t['title'] for t in outcome['closed_related']] == ['Plan the launch email']
+    first = docs[0].path
+    first.write_text(first.read_text().replace('status: open', 'status: done', 1))
+    assert integration.conversion.match(run, wid)['kind'] == 'new'
