@@ -1,4 +1,4 @@
-// Synthetic demo data for the preview harness (and demo recordings): a fictional operator, "Maya",
+// Synthetic demo data for the preview harness (and demo recordings): a fictional operator, "Michael",
 // who runs operations at a small tea brand. Nothing here comes from a real workspace.
 import { addDays } from '../src/lib/dates.js'
 
@@ -21,7 +21,7 @@ export function demoData(today) {
       body: `
 ## Current state
 
-Pressworks sent revision 3 of the dieline on Friday. The window cut-out is now 4 mm narrower, which fixes the tab collision. Waiting only on Maya's approval.
+Pressworks sent revision 3 of the dieline on Friday. The window cut-out is now 4 mm narrower, which fixes the tab collision. Waiting only on Michael's approval.
 
 ## Notes
 
@@ -58,6 +58,120 @@ Sources: Pressworks lead-time sheet; Slack thread in #packaging.
 
 Sources: Slack #packaging thread (3 messages).
 <!-- discovery-dossier:end dos-demo1 -->
+`,
+    }),
+    T('Update every price and move subscriptions from 20 to 30 days', 'work', 0, {
+      priority: 'urgent',
+      summary: "The team agreed in #pricing to raise every price and move subscriptions from 20 to 30 days. The plan is ready: update 48 prices, change the Recharge interval, migrate 1,312 subscribers.",
+      body: `
+## Notes
+
+Found by discovery in Slack #pricing (112 messages, 6:10 to 7:40 PM).
+
+## Log
+
+- ${today}: Created from discovery (Slack #pricing).
+- ${today}: Research complete.
+
+<!-- task-research-dossier:start -->
+## Research dossier
+
+**Content revision:** \`sha256:b28a4eb79c7826e63e42f9694795ff1f3d66ba2dd818a6a90b66087499019234\`
+
+*Researched ${today}.*
+
+**Can Hermes do this?** Hermes can do this with what is already set up.
+
+### Recommended approach
+
+- Update all 48 product prices in Shopify from the new price sheet in #pricing, as one bulk change you can review before it goes live.
+- Change the subscription interval in Recharge from 20 days to 30 days on every subscription product.
+- Migrate the 1,312 existing subscribers to the 30-day interval with Recharge's bulk update. Run a test batch of 10 first.
+- Spot-check prices, subscriptions and the next charge dates afterwards, then post a summary in #pricing.
+
+### Useful context
+
+- The team settled it in #pricing between 6:10 and 7:40 PM (112 messages): prices rise about 8%, deliveries move to every 30 days from December 1.
+- Current prices pulled from Shopify: 48 products and 3 bundles.
+- Priya posted the final price sheet in #pricing at 7:32 PM.
+- Recharge runs bulk subscription updates as background jobs; its guide recommends a small test batch first.
+
+### Dependencies and risks
+
+- Customers should hear about the change before their next charge (a separate task).
+
+### Access plan
+
+- ✅ **Shopify** (available): Shopify MCP server
+- ✅ **Recharge** (available): Recharge API key
+- ✅ **Slack #pricing** (available): discovery reader
+
+### Established approaches
+
+- \`shopify-products\`
+- \`recharge-subscriptions\`
+
+### Sources
+
+- [Recharge: bulk updating subscriptions](https://developer.rechargepayments.com/) - Bulk interval changes and test batches
+- [Shopify: editing products in bulk](https://help.shopify.com/en/manual/products/details/edit-products-in-bulk) - Bulk price changes
+- [Slack #pricing thread](https://lumenleaf.slack.com/archives/C0PRICING/p1794426000112233) - The decision and the new price sheet
+<!-- task-research-dossier:end -->
+`,
+    }),
+    T('Tell customers about the new prices and delivery schedule', 'work', 0, {
+      priority: 'high',
+      summary: "Tell subscribers about the new prices and 30-day deliveries before their next charge, in Klaviyo with the brand template.",
+      body: `
+## Notes
+
+Michael in chat: "Add a task to tell our customers."
+
+## Log
+
+- ${today}: Created from chat.
+- ${today}: Research complete.
+
+<!-- task-research-dossier:start -->
+## Research dossier
+
+**Content revision:** \`sha256:fc63e022e055cef18ccdfa05a4f517d6ccfda680981de89976d81a333e5984ff\`
+
+*Researched ${today}.*
+
+**Can Hermes do this?** Hermes can do this once the access below is set up.
+
+### Recommended approach
+
+- Send one warm, plain email to all active subscribers before their next charge: what changes, when, and why.
+- Lead with the benefit (fresher tea, fewer boxes), state the new price and the December 1 date plainly, and link to change or pause a subscription.
+- Build it in Klaviyo from the brand template, send Michael a test, then schedule it for 9 AM tomorrow.
+- Add a short note to the account page and the FAQ.
+
+### Useful context
+
+- The team sends email with Klaviyo (campaign links in #marketing).
+- Advice on price-change emails agrees: give notice, explain the reason, be specific, and make it easy to change or cancel.
+
+### Dependencies and risks
+
+- Send after the price update finishes, so the numbers in the email match the store.
+
+### Access plan
+
+- ⛔ **Klaviyo MCP** (missing): not connected
+- ⛔ **Klaviyo API key** (missing): not set up
+- ❔ **Klaviyo in the browser** (unverified): logged-in browser profile. To set up: Sign in to Klaviyo once in the Lumen & Leaf browser profile
+
+### Established approaches
+
+- \`klaviyo-campaigns\`
+
+### Sources
+
+- [Klaviyo Help Center: create a campaign](https://help.klaviyo.com/) - Building and scheduling the email
+- [Shopify blog: how to announce a price increase](https://www.shopify.com/blog/price-increase-letter) - Tone and structure for a sensitive change
+<!-- task-research-dossier:end -->
 `,
     }),
     T('Answer "when is it back?" for the Winter Spice Chai', 'work', 5, {
@@ -291,7 +405,7 @@ Three bundles: Starter, Classic and Collector. Use the new lifestyle photos.
       proposals: [
         { proposal_id: 'p_chai1', unit_id: 'c1', ref: 'A1', number: 1, kind: 'new', day: d(-2), expires: d(5), state: 'complete', expired: false,
           title: chai.title,
-          current_understanding: 'Customers keep emailing support to ask when the sold-out Winter Spice Chai is back. Jordan asked for back-in-stock alerts, and Maya said at Monday\u2019s standup that she would set it up before the restock.',
+          current_understanding: 'Customers keep emailing support to ask when the sold-out Winter Spice Chai is back. Jordan asked for back-in-stock alerts, and Michael said at Monday\u2019s standup that he would set it up before the restock.',
           substantive_next_action: 'Tell customers when it is back and let them sign up to be notified.',
           source_links: ['https://example.slack.com/archives/C0SUPPORT/p3', 'https://mail.google.com/mail/u/0/#inbox/demo-standup'], targets: [],
           result: { task_id: chai.task_id, title: chai.title, operation: 'created', state: 'complete' } },
