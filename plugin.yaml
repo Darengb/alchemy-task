@@ -82,6 +82,16 @@ config_schema:
     type: bool
     default: true
     description: "Research every new task automatically unless the user says no research is needed."
+  research_model:
+    type: str
+    default: ""
+    label: "Research model"
+    description: "Model for research workers (task research, the sweep, discovery research). Empty uses the main model."
+  research_provider:
+    type: str
+    default: ""
+    label: "Research provider"
+    description: "Provider for the research model (for example openrouter or nous). Empty uses Hermes's delegation or main provider."
   git_transport:
     type: str
     choices: [system, none]

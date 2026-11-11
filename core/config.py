@@ -28,6 +28,8 @@ class Settings:
     default_area: str = ""
     timezone: str = ""
     research_by_default: bool = True
+    research_model: str = ""  # empty: research runs on the main model
+    research_provider: str = ""
     git_transport: str = "system"
     git_remote: str = "origin"
     git_branch: str = ""
@@ -50,6 +52,8 @@ class Settings:
             default_area=str(g("default_area", "")).strip().lower(),
             timezone=str(g("timezone", "")).strip() or hermes_timezone,
             research_by_default=bool(g("research_by_default", True)),
+            research_model=str(g("research_model", "")).strip(),
+            research_provider=str(g("research_provider", "")).strip(),
             git_transport=_transport(g("git_transport", "system")),
             git_remote=str(g("git_remote", "origin")).strip() or "origin",
             git_branch=str(g("git_branch", "")).strip(),
