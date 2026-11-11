@@ -27,6 +27,7 @@ if (params.get('video') === 'pending') {
     source_links: ['https://example.slack.com/archives/C0SUPPORT/p3', 'https://mail.google.com/mail/u/0/#inbox/demo-standup'],
     research_disposition: 'confident', targets: [],
   })
+  run.proposals.forEach((p, i) => { p.number = i + 1; p.ref = `A${i + 1}` })
   run.summary.pending += 1
 }
 window.__demo = backend
