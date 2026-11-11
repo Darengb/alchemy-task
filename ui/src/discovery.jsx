@@ -7,6 +7,7 @@ import { useApp } from './store.js'
 import { AreaDot, Button, DatePicker, Disclosure, Icon, IconButton, Menu, Segmented, Spinner, copyText, cx, useOverlay, useToast } from './ui.jsx'
 
 export { pendingCount, discoveryBadge } from './lib/discovery.js'
+import { nextRunLabel } from './lib/discovery.js'
 
 const titleCase = (s) => String(s || '').replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
@@ -100,13 +101,25 @@ const SOURCE_ICONS = { email: 'inbox', chat: 'chat', transcript: 'list', meeting
 // the message to send Hermes, with a copy button (sources are connected in chat, not here).
 function SourcesBar({ streams }) {
   const [adding, setAdding] = React.useState(false)
+  const [running, setRunning] = React.useState(null)
+  const { api } = useApp()
+  const toast = useToast()
+  const runNow = async (s) => {
+    setRunning(s.name)
+    try { const res = await api.runStream(s.name); toast(res.message || 'Discovery run started') }
+    catch (err) { toast(describeError(err), { tone: 'error' }) }
+    setRunning(null)
+  }
   const many = streams.length > 1
   return (
     <div className="at-sources">
       <div className="at-sources-rows">
         {streams.map((s) => (
           <div key={s.name} className="at-sources-row">
-            <span className="at-sources-label">{many ? `${titleCase(s.name)} reads` : 'Reads'}</span>
+            <span className="at-sources-head">
+              <span className="at-sources-label">{many ? `${titleCase(s.name)} reads` : 'Reads'}</span>
+              {nextRunLabel(s.next_run_at) ? <span className="at-sources-next" title="Next scheduled run">// Next {nextRunLabel(s.next_run_at)}</span> : null}
+            </span>
             <div className="at-sources-chips">
               {(s.sources || []).length ? (s.sources || []).map((src, i) => (
                 <span key={`${src.name}-${i}`} className="at-source-chip" title={src.scope || src.name}>
@@ -114,6 +127,10 @@ function SourcesBar({ streams }) {
                 </span>
               )) : <span className="at-muted">No sources yet</span>}
             </div>
+            <Button size="sm" icon="play" className="at-sources-run" disabled={!!running}
+                    onClick={() => runNow(s)} title={`Run ${titleCase(s.name)} discovery now`}>
+              {running === s.name ? 'Starting…' : 'Run now'}
+            </Button>
           </div>
         ))}
       </div>
@@ -123,7 +140,7 @@ function SourcesBar({ streams }) {
   )
 }
 
-function CopyPrompt({ text, className }) {
+export function CopyPrompt({ text, className }) {
   const toast = useToast()
   const copy = async () => toast((await copyText(text)) ? 'Copied. Paste it into a chat with Hermes.' : 'Could not copy')
   return (

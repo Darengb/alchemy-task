@@ -120,6 +120,7 @@ class DiscoveryRunner:
         self.context_resources = context_resources or {}
         self._deadlines = {}  # Monotonic timers survive same-object reconnect only.
         self._seen_runs = set()
+        self._model_holds = set()  # runs held on the research model during this object's calls
 
     @contextlib.contextmanager
     def _state(self, run):
@@ -338,7 +339,9 @@ class DiscoveryRunner:
         if len(context) > 32000:
             raise UserError('bootstrap exceeds lifecycle context; context resource manifest must be paged')
         request = {'goal': 'Research the exact immutable source assignment fully before proposing any task. Submit a full discovery bundle and stop.', 'context': context, 'role': 'leaf', 'correlation_id': attempt['correlation_id']}
-        route = ledger['config'].get('research_route', {})
+        route = dict(ledger['config'].get('research_route', {}))
+        from .core.research import model_route
+        route.update(model_route(getattr(self.rt, 'settings', None)))
         for key in ('provider', 'model'):
             if route.get(key): request[key] = route[key]
         return request
@@ -387,12 +390,42 @@ class DiscoveryRunner:
         if attempt['fenced'] and attempt.get('fence_reason') not in {'execution_timeout', 'admission_timeout'}:
             return
         reason = None
-        if attempt['fenced']: reason = attempt.get('fence_reason', 'fenced')
+        blocked = None
+        if state != 'SUCCEEDED':
+            from .core.research import model_failure
+            blocked = model_failure(result.get('summary'), getattr(self.rt, 'settings', None))
+        if blocked:
+            # The child failed on the configured research model: hold the run and tell the user. The
+            # retry waits for the hold release, so it runs on the changed model, never the same one.
+            self._hold_model(run, blocked)
+            reason = 'research model could not be used'
+        elif attempt['fenced']: reason = attempt.get('fence_reason', 'fenced')
         elif state != 'SUCCEEDED': reason = 'lifecycle terminal ' + state
         elif not attempt['payload']: reason = 'successful execution without a full bound callback'
         elif attempt.get('validation_error'): reason = attempt['validation_error']
         if reason:
             self.store.reject_attempt(run, token, reason=reason[:500], retryable=True)
+
+    def _hold_model(self, run_id, message):
+        with self._state(run_id) as state:
+            state['holds'] = sorted(set(state['holds'] + ['research_model']))
+            state['research_model_error'] = message
+        self._model_holds.add(run_id)
+
+    @staticmethod
+    def _held_report(run_id, state):
+        holds = state['holds']
+        if 'research_model' in holds:
+            error = state.get('research_model_error') or 'the research model could not be used.'
+            action = ('Research is blocked and unfinished: %s Tell the user. After they change or clear the research model, '
+                      'call discovery_release_hold, then discovery_research_run again with run_id %s.' % (error, run_id))
+            others = [h for h in holds if h != 'research_model']
+            if others:
+                action += (' This run also has other holds (%s): first reconcile the saved unknown or hold with discovery_recover, '
+                           'and only then call discovery_release_hold.' % ', '.join(others))
+            return {'run_id': run_id, 'status': 'held', 'holds': holds, 'research_model_error': error, 'next_action': action}
+        return {'run_id': run_id, 'status': 'held', 'holds': holds,
+                'next_action': 'Research is held (%s). Reconcile the saved unknown or hold in this run with discovery_recover or discovery_release_hold, then call discovery_research_run again with run_id %s.' % (', '.join(holds), run_id)}
 
     def recover(self, run_id, *, session_id, owner_restarted=False, adopt=False):
         if not session_id or self._child_for(session_id):
@@ -460,8 +493,8 @@ class DiscoveryRunner:
             raise UserError('freeze full selected manifest before research')
         with self._state(run_id) as state:
             if state['holds']:
-                return {'run_id': run_id, 'status': 'held', 'holds': state['holds'],
-                        'next_action': 'Research is held (%s). Reconcile the saved unknown or hold in this run with discovery_recover or discovery_release_hold, then call discovery_research_run again with run_id %s.' % (', '.join(state['holds']), run_id)}
+                return self._held_report(run_id, state)
+        self._model_holds.discard(run_id)
         invocation = uuid.uuid4().hex
         policy = self.policy
         self.store.claim_lease(run_id, owner=invocation, expires_at=_utc(self.clock.time() + policy.call_seconds + CALL_DEADLINE_MARGIN))
@@ -539,7 +572,16 @@ class DiscoveryRunner:
                     # fenced or bound, so a start hook racing the reply is still
                     # recorded on this run (the finally releases it on errors).
                     if error:
-                        self.store.fence_attempt(run_id, token, reason='launch_unknown', cancellation={'accepted': False, 'outcome': 'unknown', 'diagnostic': error})
+                        from .core.research import model_failure
+                        blocked = model_failure(error, getattr(self.rt, 'settings', None))
+                        if blocked:
+                            # The configured research model cannot be used: hold the run and tell the user,
+                            # never relaunch on another model. The launch was refused synchronously, so no
+                            # child exists: withdraw the attempt (not fenced) so it relaunches after release.
+                            self.store.withdraw_launch(run_id, token, reason=blocked)
+                            self._hold_model(run_id, blocked)
+                        else:
+                            self.store.fence_attempt(run_id, token, reason='launch_unknown', cancellation={'accepted': False, 'outcome': 'unknown', 'diagnostic': error})
                         self._inflight(run_id, token)
                         active.pop(token)
                         admit_until = self.clock.monotonic()
@@ -595,7 +637,7 @@ class DiscoveryRunner:
                 if orphans:
                     settle_orphans()
                 eligible = [c for c in self._eligible(run_id) if c not in deferred]
-                while self.clock.monotonic() < admit_until and len(active) + len(orphans) < policy.slots and eligible:
+                while self.clock.monotonic() < admit_until and run_id not in self._model_holds and len(active) + len(orphans) < policy.slots and eligible:
                     cid = eligible.pop(0)
                     try:
                         a = self.store.reserve_attempt(run_id, cid, owner_session=session_id, daily_limit=ledger['config'].get('research_cap', policy.daily_limit))
@@ -689,6 +731,13 @@ class DiscoveryRunner:
         else:
             next_action = ('Research is still running (%d running, %d queued). Call discovery_research_run again with run_id %s; '
                            'do not join or prepare a digest yet.' % (counts['running'], counts['queued'], run_id))
+        with self._state(run_id) as state:
+            if 'research_model' in state['holds']:
+                # Reported in the call that set it, never as complete.
+                return {**self._held_report(run_id, state), 'counts': counts, 'max_logical_slots': maximum,
+                        'awaiting_parent': awaiting, 'unknown_candidates': unknowns, 'queued': queued,
+                        'budget_deferred': deferred, 'call_seconds': self.policy.call_seconds,
+                        'elapsed_seconds': round(elapsed, 3)}
         return {'run_id': run_id, 'status': 'complete' if complete else 'running', 'counts': counts,
                 'next_action': next_action, 'max_logical_slots': maximum, 'awaiting_parent': awaiting,
                 'unknown_candidates': unknowns, 'queued': queued, 'budget_deferred': deferred,

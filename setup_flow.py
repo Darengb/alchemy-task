@@ -25,7 +25,9 @@ from .runtime import Runtime
 
 SAVABLE = {"workspace_root": str, "task_dir": str, "areas": list, "default_area": str, "timezone": str,
            "research_by_default": bool, "git_transport": str, "git_remote": str, "git_branch": str,
-           "git_run_hooks": bool}
+           "git_run_hooks": bool, "research_model": str, "research_provider": str}
+MODEL_SETTING_MAX = 200
+PROVIDER_SETTING_MAX = 64  # Hermes rejects a longer launch provider
 DEFAULT_AREAS = ["general"]
 
 
@@ -199,6 +201,15 @@ def save(rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
         raise SetupError(f"git_transport must be one of {', '.join(TRANSPORTS)}")
     if "task_dir" in changes and "{area}" not in changes["task_dir"]:
         raise SetupError("task_dir must contain {area}, for example areas/{area}/tasks")
+    for key, limit in (("research_model", MODEL_SETTING_MAX), ("research_provider", PROVIDER_SETTING_MAX)):
+        if key in changes and len(changes[key]) > limit:
+            raise SetupError(f"{key} must be at most {limit} characters")
+    if "research_model" in changes or "research_provider" in changes:
+        model = changes.get("research_model", getattr(rt.settings, "research_model", "") or "")
+        provider = changes.get("research_provider", getattr(rt.settings, "research_provider", "") or "")
+        if provider and not model:
+            raise SetupError("a research provider needs a research model: save research_model with it, "
+                             "or clear both to use the main model")
     if "default_area" in changes and changes["default_area"]:
         changes["default_area"] = validate_area_name(changes["default_area"])
     notes = []
@@ -474,7 +485,8 @@ def status(rt: Runtime) -> dict[str, Any]:
                   "problem": receipt.get("last_error")}
     if s.git_transport == "none":
         out["git"]["note"] = "local history only, not backed up"
-    out["research"] = {"ready": True, "automatic": s.research_by_default}
+    out["research"] = {"ready": True, "automatic": s.research_by_default, "model": s.research_model or None,
+                       "provider": s.research_provider or None}
     out["checkpoints"] = {"ready": True}
     preview = jobs_preview(rt)
     out["jobs"] = {"ready": not preview["approval_needed"],
@@ -509,6 +521,9 @@ def receipt_text(rep: dict[str, Any]) -> str:
         lines.append(f"{icon(g['ready'])} Git: {detail}")
     if "research" in rep:
         lines.append(f"✅ Research: {'automatic for every new task' if rep['research']['automatic'] else 'only on request'}")
+        r = rep["research"]
+        lines.append("✅ Research model: " + (f"{r['model']}" + (f" ({r['provider']})" if r.get("provider") else "")
+                                             if r.get("model") else "main model"))
         lines.append("✅ Work sessions and checkpoints: on")
     if "jobs" in rep:
         j = rep["jobs"]

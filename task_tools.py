@@ -346,6 +346,10 @@ SETUP_SCHEMA = {
         "timezone": {"type": "string", "description": "IANA name the user confirmed, e.g. America/New_York."},
         "set_hermes_timezone": {"type": "boolean", "description": "Also set Hermes's own timezone (when it was unset)."},
         "research_by_default": {"type": "boolean"},
+        "research_model": {"type": "string", "description": "save: model for research workers; empty string clears "
+                                                            "(use the main model)."},
+        "research_provider": {"type": "string", "description": "save: provider for the research model (at most 64 characters); needs research_model "
+                                                               "in the same save; empty clears."},
         "git_transport": {"type": "string", "enum": ["system", "none"]},
         "git_remote": {"type": "string"},
         "git_branch": {"type": "string"},

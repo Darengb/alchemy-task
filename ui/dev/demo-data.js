@@ -216,12 +216,12 @@ Three bundles: Starter, Classic and Collector. Use the new lifestyle photos.
     streams: [
       { name: 'work', when: 'weekdays at 7:00 AM', frequency: 'weekdays', time: '7:00 AM', timezone: 'America/New_York', areas: ['work'],
         sources: [{ name: 'Gmail inbox', type: 'email', scope: 'Inbox, last 24 hours' }, { name: 'Slack #ops', type: 'chat', scope: '#ops' }, { name: 'Slack #marketing', type: 'chat', scope: '#marketing' }, { name: 'Zoom transcripts', type: 'transcript', scope: 'Emailed after meetings' }],
-        last_run: `${today}T12:02:00Z`, activation_state: 'active' },
+        last_run: `${today}T12:02:00Z`, next_run_at: `${d(1)}T12:00:00Z`, activation_state: 'active' },
       { name: 'home', when: 'daily at 6:00 PM', frequency: 'daily', time: '6:00 PM', timezone: 'America/New_York', areas: ['home'],
         sources: [{ name: 'Personal email', type: 'email', scope: 'Inbox' }, { name: 'Family calendar', type: 'other', scope: 'Next 14 days' }],
-        last_run: `${d(-1)}T23:00:00Z`, activation_state: 'active' },
+        last_run: `${d(-1)}T23:00:00Z`, next_run_at: `${today}T23:00:00Z`, activation_state: 'active' },
     ],
-    tasks: { default_area: 'work', research_by_default: true, timezone: 'America/New_York', workspace_root: '~/tasks', areas: ['work', 'studio', 'home'] },
+    tasks: { default_area: 'work', research_by_default: true, research_model: null, research_provider: null, timezone: 'America/New_York', workspace_root: '~/tasks', areas: ['work', 'studio', 'home'] },
     sync: { git: 'Committed and pushed', reminders: 'Not connected' },
   }
   return { tasks, runs, settings, areas: ['work', 'studio', 'home'] }

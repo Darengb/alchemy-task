@@ -267,7 +267,8 @@ def test_model_cannot_claim_http_authority_or_override_expiry(tmp_path, settings
     rt.ctx.register_hook = lambda *a, **kw: None
     register(rt.ctx, integration=service)
     assert json.loads(tools['discovery_runs']({'dashboard_owner': True}, session_id='outsider'))['ok'] is False
-    assert json.loads(tools['discovery_runs']({}, session_id='outsider'))['result']['runs'] == []
+    # Any chat of the profile may list runs.
+    assert [r['run_id'] for r in json.loads(tools['discovery_runs']({}, session_id='other-chat'))['result']['runs']] == [run]
     # The durable host start/binding fixture is the same verified-child path used
     # by production tool wrappers, not caller-supplied session arguments.
     child_run = service.store.init_run(origin={'session_id': 'parent'})

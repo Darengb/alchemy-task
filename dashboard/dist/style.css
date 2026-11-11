@@ -2133,6 +2133,28 @@ html.at-dragging {
   align-items: center;
   font-size: 13px;
 }
+.at-research-model {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.at-model-input {
+  cursor: text;
+  width: 220px;
+  font-family: inherit;
+  outline: none;
+}
+.at-model-input.is-small {
+  width: 150px;
+}
+.at-model-input:focus {
+  border-color: var(--at-line-strong);
+  color: var(--at-fg);
+}
+.at-research-model .at-copy-prompt {
+  flex-basis: 100%;
+}
 .at-more-grid > .at-muted,
 .at-set-grid > .at-muted {
   font-family: var(--at-mono);
@@ -2415,6 +2437,35 @@ html.at-dragging {
 .at-source-chip .at-icon {
   flex: none;
   color: var(--at-accent-text);
+}
+.at-sources-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.at-sources-next {
+  font-family: var(--at-mono);
+  font-size: 9.5px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--at-faint);
+  white-space: nowrap;
+}
+.at-btn.at-sources-run {
+  flex: none;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+  gap: 4px;
+  margin-left: auto;
+  align-self: center;
+}
+@media (max-width: 560px) {
+  .at-btn.at-sources-run {
+    margin-left: 0;
+    align-self: flex-start;
+  }
 }
 .at-btn.at-sources-add {
   flex: none;

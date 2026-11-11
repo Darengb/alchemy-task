@@ -78,7 +78,8 @@ Every task change is committed and pushed so it syncs to their other devices. Ca
 
 Tell them plainly, once:
 - Every new task is researched in the background on their model (it uses their tokens), unless they say no
-  research is needed. Research only reads; it never changes anything.
+  research is needed. Research only reads; it never changes anything. Research model: research can run on a
+  different, cheaper model; to set one, follow the Research model section of `alchemy-task:tasks`.
 - Work sessions ("work on X") keep a Current state section in the task; if a chat stops without a
   checkpoint, Alchemy Task writes one itself.
 

@@ -64,8 +64,53 @@ def state(fm: Mapping[str, Any]) -> dict[str, Any] | None:
     return block if isinstance(block, Mapping) else None  # type: ignore[return-value]
 
 
-def eligibility(fm: Mapping[str, Any]) -> str:
-    """'eligible', or why not: none, closed, skipped, failed, complete, running, exhausted, unsupported."""
+def model_route(settings: Any) -> dict[str, str]:
+    """The research model setting as launch fields; empty when research runs on the main model."""
+    route = {}
+    for key in ("model", "provider"):
+        value = str(getattr(settings, f"research_{key}", "") or "").strip()
+        if value:
+            route[key] = value
+    return route
+
+
+def model_key(settings: Any) -> str:
+    """Identity of the research model setting, stored on a task blocked by it (``blocked_model``)."""
+    route = model_route(settings)
+    return f"{route.get('model', '')}|{route.get('provider', '')}"
+
+
+# Specific failure phrases from a model or provider, never bare words: research prose about models,
+# providers or authors must not block a task. Transient failures (rate limits, timeouts, connection
+# errors) take the ordinary retry path.
+_MODEL_FAILURE = re.compile(
+    r"\bmodel\b[^.;\n]{0,80}?\b(not found|does not exist|not supported|unsupported|invalid|unavailable|"
+    r"not available)\b|\bmodel_not_found\b|\b(unknown|unsupported|invalid) (model|provider)\b|"
+    r"\binvalid api[ _-]?key\b|\bunauthori[sz]ed\b|\b401\b|\b(no|missing) (api[ _-]?key|credentials)\b|"
+    r"\binsufficient (credits?|balance|quota|funds)\b|\bbilling\b|\bpayment required\b|\b402\b", re.I)
+_TRANSIENT = re.compile(r"rate[ _-]?limit|\b429\b|timed? ?out|timeout|connection", re.I)
+MODEL_FAILURE_STATUSES = ("failed", "error")
+
+
+def model_failure(error: Any, settings: Any) -> str | None:
+    """The user-facing message when ``error`` comes from the configured research model or provider, else None.
+
+    Only with a research model set: a failure on the main model is the ordinary retry path."""
+    route = model_route(settings)
+    text = " ".join(str(error or "").split())
+    if not route or not text or "toolset" in text.lower() or _TRANSIENT.search(text) or \
+            not _MODEL_FAILURE.search(text):
+        return None
+    name = route.get("model") or f"on provider {route['provider']}"
+    return (f"the research model {name} could not be used: {text[:240]}. Change it with \"set my research model\" "
+            "or clear it to use the main model.")
+
+
+def eligibility(fm: Mapping[str, Any], model_key: str | None = None) -> str:
+    """'eligible', or why not: none, closed, skipped, failed, complete, running, exhausted, unsupported.
+
+    ``model_key`` is the current research model setting: research that failed because of an earlier setting
+    (``blocked_model``) becomes eligible again once the setting changes."""
     ok, _ = tf.writable(dict(fm))
     if not ok:
         return "unsupported"
@@ -78,6 +123,9 @@ def eligibility(fm: Mapping[str, Any]) -> str:
         return "none"
     status = str(st.get("status") or "").lower()
     attempts = int(st.get("attempts") or 0)
+    if status == "failed" and "blocked_model" in st and model_key is not None and \
+            str(st.get("blocked_model")) != model_key:
+        return "eligible"
     if status in ("skipped", "failed", "complete"):
         return status
     if attempts >= MAX_ATTEMPTS:
@@ -89,12 +137,16 @@ def eligibility(fm: Mapping[str, Any]) -> str:
     return "unknown"
 
 
-def claim(fm: Any) -> str:
+def claim(fm: Any, model_key: str | None = None) -> str:
     """Mark the task running for a new run; returns the run_id. Mutates ``fm``."""
-    why = eligibility(fm)
+    why = eligibility(fm, model_key)
     if why != "eligible":
         raise ResearchError(f"not eligible for research: {why}")
     st = state(fm)
+    if "blocked_model" in st:  # type: ignore[operator]
+        # The research model setting changed since it failed: start over with fresh attempts.
+        del st["blocked_model"]  # type: ignore[union-attr]
+        st["attempts"] = 0  # type: ignore[index]
     run_id = uuid.uuid4().hex[:12]
     attempts = int(st.get("attempts") or 0) + 1  # type: ignore[union-attr]
     for key, value in (("status", "running"), ("attempts", attempts), ("updated", now_iso()),
@@ -122,6 +174,19 @@ def fail(fm: Any, run_id: str, error: str) -> str | None:
     return new
 
 
+def fail_model(fm: Any, run_id: str, error: str, model_key: str) -> bool:
+    """The research model setting could not be used: stop (no retries) until the setting changes."""
+    if not holds_claim(fm, run_id):
+        return False
+    st = state(fm)
+    st["status"] = "failed"  # type: ignore[index]
+    st["attempts"] = max(int(st.get("attempts") or 0), MAX_ATTEMPTS)  # type: ignore[union-attr,index]
+    st["blocked_model"] = model_key  # type: ignore[index]
+    st["updated"] = now_iso()  # type: ignore[index]
+    st["last_error"] = " ".join(str(error).split())[:300]  # type: ignore[index]
+    return True
+
+
 def request(fm: Any, reason: str = "") -> None:
     """Queue research explicitly (the user asked for it). Resets attempts."""
     st = state(fm)
@@ -132,6 +197,7 @@ def request(fm: Any, reason: str = "") -> None:
         raise ResearchError("research is already running for this task")
     st["status"] = "pending"
     st["attempts"] = 0
+    st.pop("blocked_model", None)
     st["updated"] = now_iso()
     if reason:
         st["requested_reason"] = " ".join(reason.split())[:200]

@@ -85,6 +85,23 @@ If they say no or ignore the offer, do not ask again about the same item.
 - When a note says research finished, tell the user in a sentence. If access is missing, offer to set it up
   now or when they start the task; setting up access is not permission to do the task.
 
+## Research model
+
+Research workers (task research, the research sweep and discovery research) run on the main model unless a
+research model is set. The setting is `research_model` plus an optional `research_provider`, saved with
+`task_setup` `save`; an empty string clears it (back to the main model). A provider needs a model: set a model
+whenever you set a provider, and save both in the same `task_setup` `save` (a provider without a model is refused).
+To go back to the main model, clear both. `task_setup` `status` shows the current one.
+- "set my research model", "use a cheaper model for research", "help me pick a research model": talk it
+  through openly. Check which providers and models the user has configured (Hermes config and model info
+  available to you, Nous Portal, OpenRouter, direct API keys), recommend one, save it after they agree.
+- Always recommend the newest version of a model, never an old one. When a model has a flash version,
+  suggest its most recent flash version.
+- Defaults to suggest when available: the most recent DeepSeek Flash, the most recent OpenAI Luna model,
+  the most recent GLM Flash, the most recent Qwen model.
+- If research says the research model could not be used, tell the user and offer to change or clear it.
+  Research never falls back to the main model on its own.
+
 ## Plain-language requests (users rarely remember slash commands)
 
 Map what people say to tools; never tell them to type a command when you can do it yourself.

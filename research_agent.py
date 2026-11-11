@@ -119,6 +119,12 @@ def _run_for(task_id: str = "", run_id: str = "", session_id: str = "") -> tuple
 
 # ------------------------------------------------------------------ Hermes seams (stubbed in tests)
 
+model_route = rs.model_route
+model_key = rs.model_key
+
+from .core.research import MODEL_FAILURE_STATUSES, model_failure  # noqa: E402,F401 - shared with discovery
+
+
 def _make_request(**kwargs: Any) -> Any:
     from agent.subagent_lifecycle import SubagentLaunchRequest
     return SubagentLaunchRequest(**kwargs)
@@ -318,7 +324,7 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
     doc = store.resolve(ref)
     with task_lock(rt.data_dir, doc.task_id, doc.path):
         doc = tf.parse_file(doc.path)
-        run_id = rs.claim(doc.fm)
+        run_id = rs.claim(doc.fm, model_key(rt.settings))
         tf.atomic_write(doc.path, tf.render(doc.fm, doc.body, seq_offset=doc.seq_offset,
                                             keep_blank=doc.blank_keys).encode(), expect=doc.raw)
     fields = {k: tf.norm_date(doc.fm.get(k)) or doc.fm.get(k) for k in ("area", "status", "priority", "due",
@@ -332,6 +338,7 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
         created_in = origin_session
     notice_to = origin_session or created_in
     toolsets = worker_toolsets(rt)
+    route = model_route(rt.settings)  # same model on the toolset fallback; never the main model instead
     report = _toolset_report(toolsets)
     if report.get("not_available_to_worker"):
         # Approved reader toolsets that no longer exist would make every launch fail ("Unknown toolsets"):
@@ -346,7 +353,7 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
         try:
             handle = rt.ctx.subagent_lifecycle.launch(_make_request(
                 goal=goal, context=context, role="leaf", allowed_toolsets=toolsets,
-                correlation_id=f"alchemy-task:{doc.task_id}:{run_id}"))
+                correlation_id=f"alchemy-task:{doc.task_id}:{run_id}", **route))
         except Exception as first:  # noqa: BLE001
             text = str(first).lower()
             if "toolset" not in text and "broaden" not in text:
@@ -363,9 +370,13 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
                                                   "run; report local access you could not check as unverified."))
             handle = rt.ctx.subagent_lifecycle.launch(_make_request(
                 goal=goal, context=context, role="leaf", allowed_toolsets=toolsets,
-                correlation_id=f"alchemy-task:{doc.task_id}:{run_id}:fallback"))
+                correlation_id=f"alchemy-task:{doc.task_id}:{run_id}:fallback", **route))
         handle = dict(handle) if not hasattr(handle, "to_dict") else handle.to_dict()
     except Exception as exc:  # noqa: BLE001 - recovery retries later
+        blocked = model_failure(exc, rt.settings)
+        if blocked:  # no fallback to the main model: stop and tell the user
+            _finish_model_failure(rt, doc.task_id, run_id, blocked, notice_to, doc.title)
+            return {"started": False, "error": blocked, "task_id": doc.task_id, "research_model_failed": True}
         _finish_failure(rt, doc.task_id, run_id, f"could not start research: {exc}")
         return {"started": False, "error": str(exc)[:300], "task_id": doc.task_id}
     with _lock:
@@ -417,6 +428,36 @@ def _finish_failure(rt: Runtime, task_id: str, run_id: str, error: str) -> str |
                                             keep_blank=doc.blank_keys).encode(), expect=doc.raw)
     _deliver(rt, doc.path, f"task: research {'failed' if new == 'failed' else 'retry queued'} {doc.title[:60]}")
     return new
+
+
+def _finish_model_failure(rt: Runtime, task_id: str, run_id: str, message: str, origin: str, title: str) -> None:
+    """Research stops (no retries until the research model setting changes) and the user is told."""
+    store = rt.store()
+    try:
+        doc = store.resolve(task_id)
+    except NeedsInput:
+        return
+    with task_lock(rt.data_dir, doc.task_id, doc.path):
+        doc = tf.parse_file(doc.path)
+        if not rs.fail_model(doc.fm, run_id, message, model_key(rt.settings)):
+            return
+        body = tf.append_log(doc.body, f"Research failed: {message}", rt.settings.today())
+        tf.atomic_write(doc.path, tf.render(doc.fm, body, seq_offset=doc.seq_offset,
+                                            keep_blank=doc.blank_keys).encode(), expect=doc.raw)
+    _deliver(rt, doc.path, f"task: research failed {doc.title[:60]}")
+    if origin:
+        _push_notice(rt, origin, f"Research for \"{title or doc.title}\" stopped: {message} Tell the user.")
+
+
+def _push_notice(rt: Runtime, session_id: str, text: str) -> None:
+    try:
+        with _lock:
+            notices = rt.ctx.state.get("notices", default={}) or {}
+            notices.setdefault(session_id, []).append(text)
+            notices[session_id] = notices[session_id][-5:]
+            rt.ctx.state.set("notices", notices)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def submit(rt: Runtime, run_id: str, payload: dict[str, Any], caller_task_id: str = "") -> dict[str, Any]:
@@ -569,6 +610,16 @@ def subagent_stop(child_session_id: str = "", child_status: str = "", child_summ
         run["done"] = True
     try:
         rt = Runtime()
+        status = str(child_status or "").lower()
+        # Only a failed child can blame the model: an interrupted child's summary is its partial research prose.
+        blocked = None if status not in MODEL_FAILURE_STATUSES else \
+            model_failure(child_summary if isinstance(child_summary, str) else json.dumps(child_summary, default=str),
+                          rt.settings)
+        if blocked:
+            _finish_model_failure(rt, run["task_id"], run["run_id"], blocked, run.get("origin_session") or "",
+                                  run.get("title") or "")
+            _persist(rt)
+            return
         _finish_failure(rt, run["task_id"], run["run_id"],
                         f"research agent ended ({child_status or 'unknown'}) without submitting")
         _persist(rt)
@@ -598,7 +649,8 @@ def pre_llm_call(session_id: str = "", **_: Any):
 def recover(rt: Runtime, *, limit: int = 3, wait_seconds: float = 300) -> dict[str, Any]:
     """Launch research for queued tasks (pending, or a stale running claim) and wait for them."""
     store = rt.store()
-    queued = [t for t in store.scan().tasks if rs.eligibility(t.fm) == "eligible"]
+    key = model_key(rt.settings)
+    queued = [t for t in store.scan().tasks if rs.eligibility(t.fm, key) == "eligible"]
     queued.sort(key=lambda t: str((rs.state(t.fm) or {}).get("updated") or ""))
     started, errors = [], []
     for doc in queued[: max(1, min(limit, 8))]:

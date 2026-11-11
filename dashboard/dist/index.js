@@ -2308,6 +2308,18 @@
     if (pending) return pending;
     return Array.isArray(runs) && !runs.length && Array.isArray(streams) && !streams.length ? 1 : 0;
   };
+  function nextRunLabel(iso, now = /* @__PURE__ */ new Date()) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const time = d.toLocaleTimeString(void 0, { hour: "numeric", minute: "2-digit" });
+    const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diff = Math.round((day(d) - day(now)) / 864e5);
+    if (diff <= 0) return `at ${time}`;
+    if (diff === 1) return `tomorrow at ${time}`;
+    if (diff < 7) return `${d.toLocaleDateString(void 0, { weekday: "short" })} at ${time}`;
+    return `${d.toLocaleDateString(void 0, { month: "short", day: "numeric" })} at ${time}`;
+  }
 
   // ui/src/discovery.jsx
   var titleCase = (s) => String(s || "").replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -2375,8 +2387,32 @@
   var SOURCE_ICONS = { email: "inbox", chat: "chat", transcript: "list", meeting_notes: "list", document: "edit", tracker: "check" };
   function SourcesBar({ streams }) {
     const [adding, setAdding] = react_dashboard_default.useState(false);
+    const [running, setRunning] = react_dashboard_default.useState(null);
+    const { api } = useApp();
+    const toast = useToast();
+    const runNow = async (s) => {
+      setRunning(s.name);
+      try {
+        const res = await api.runStream(s.name);
+        toast(res.message || "Discovery run started");
+      } catch (err) {
+        toast(describeError(err), { tone: "error" });
+      }
+      setRunning(null);
+    };
     const many = streams.length > 1;
-    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-rows" }, streams.map((s) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: s.name, className: "at-sources-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-label" }, many ? `${titleCase(s.name)} reads` : "Reads"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-chips" }, (s.sources || []).length ? (s.sources || []).map((src, i) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: `${src.name}-${i}`, className: "at-source-chip", title: src.scope || src.name }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: SOURCE_ICONS[src.type] || "dot", size: 12 }), src.name)) : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "No sources yet"))))), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", icon: "plus", className: "at-sources-add", onClick: () => setAdding((v) => !v), "aria-expanded": adding }, "Add a source"), adding ? /* @__PURE__ */ react_dashboard_default.createElement(CopyPrompt, { className: "is-compact", text: ADD_SOURCE_PROMPT }) : null);
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-rows" }, streams.map((s) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: s.name, className: "at-sources-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-head" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-label" }, many ? `${titleCase(s.name)} reads` : "Reads"), nextRunLabel(s.next_run_at) ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-sources-next", title: "Next scheduled run" }, "// Next ", nextRunLabel(s.next_run_at)) : null), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-sources-chips" }, (s.sources || []).length ? (s.sources || []).map((src, i) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: `${src.name}-${i}`, className: "at-source-chip", title: src.scope || src.name }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: SOURCE_ICONS[src.type] || "dot", size: 12 }), src.name)) : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "No sources yet")), /* @__PURE__ */ react_dashboard_default.createElement(
+      Button,
+      {
+        size: "sm",
+        icon: "play",
+        className: "at-sources-run",
+        disabled: !!running,
+        onClick: () => runNow(s),
+        title: `Run ${titleCase(s.name)} discovery now`
+      },
+      running === s.name ? "Starting\u2026" : "Run now"
+    )))), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", icon: "plus", className: "at-sources-add", onClick: () => setAdding((v) => !v), "aria-expanded": adding }, "Add a source"), adding ? /* @__PURE__ */ react_dashboard_default.createElement(CopyPrompt, { className: "is-compact", text: ADD_SOURCE_PROMPT }) : null);
   }
   function CopyPrompt({ text, className }) {
     const toast = useToast();
@@ -2563,6 +2599,7 @@
     ["every 2 hours", "Every 2 hours"],
     ["hourly", "Every hour"]
   ];
+  var RESEARCH_MODEL_PROMPT = "Help me pick a research model";
   var timed = (f) => f === "daily" || f === "weekdays";
   function to24(t) {
     const m = String(t || "").trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
@@ -2663,7 +2700,37 @@
         onClick: () => set({ research_by_default: !t.research_by_default })
       },
       /* @__PURE__ */ react_dashboard_default.createElement("i", null)
-    )));
+    )), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Research model"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-research-model" }, /* @__PURE__ */ react_dashboard_default.createElement(ModelInput, { label: "Research model", value: t.research_model, onSave: (v) => set({ research_model: v }) }), /* @__PURE__ */ react_dashboard_default.createElement(ModelInput, { label: "Research provider", value: t.research_provider, small: true, onSave: (v) => set({ research_provider: v }) }), /* @__PURE__ */ react_dashboard_default.createElement(CopyPrompt, { className: "is-compact", text: RESEARCH_MODEL_PROMPT })));
+  }
+  function ModelInput({ label, value, small, onSave }) {
+    const [text, setText] = react_dashboard_default.useState(value || "");
+    react_dashboard_default.useEffect(() => {
+      setText(value || "");
+    }, [value]);
+    const commit = () => {
+      const v = text.trim();
+      if (v !== (value || "")) onSave(v);
+    };
+    return /* @__PURE__ */ react_dashboard_default.createElement(
+      "input",
+      {
+        type: "text",
+        className: cx("at-field at-model-input", small && "is-small"),
+        "aria-label": label,
+        value: text,
+        placeholder: small ? "Provider (optional)" : "Use main model",
+        maxLength: 200,
+        spellCheck: false,
+        onChange: (e) => setText(e.target.value),
+        onBlur: commit,
+        onKeyDown: (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.currentTarget.blur();
+          }
+        }
+      }
+    );
   }
 
   // ui/src/App.jsx

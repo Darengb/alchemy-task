@@ -18,14 +18,28 @@ router = APIRouter()
 FREQUENCIES = ("daily", "weekdays", "hourly", "every 2 hours", "every 3 hours", "every 4 hours")
 
 
+def _next_runs(rt: Any) -> dict[str, str]:
+    """Each job's next run time from the public cron list ({} when it cannot be read)."""
+    try:
+        raw = rt.ctx.dispatch_tool("cronjob_manage", {"action": "list", "include_disabled": True})
+        data = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        return {str(j.get("job_id") or j.get("id")): j.get("next_run_at") for j in data.get("jobs", [])
+                if j.get("next_run_at") and j.get("enabled", True) is not False and j.get("state") != "paused"}
+    except Exception:  # noqa: BLE001 - next run is display only
+        return {}
+
+
 def _streams(rt: Any) -> list[dict[str, Any]]:
     from .. import discovery
     out = []
-    for name, s in sorted(discovery._streams(rt).items()):
+    streams = sorted(discovery._streams(rt).items())
+    nexts = _next_runs(rt) if any(s.get("job_id") for _, s in streams) else {}
+    for name, s in streams:
         pub = discovery._public(s)
         pub["frequency"] = s.get("frequency") or "daily"
         pub["time"] = s.get("time") or ""
         pub["sources"] = [{"name": x.get("name"), "type": x.get("type"), "scope": x.get("scope")} for x in s.get("sources") or []]
+        pub["next_run_at"] = nexts.get(str(s.get("job_id"))) if s.get("job_id") else None
         out.append(pub)
     return out
 
@@ -51,6 +65,8 @@ async def settings(request: Request):
             streams = []
         return {"ok": True, "streams": streams,
                 "tasks": {"default_area": s.default_area or None, "research_by_default": bool(s.research_by_default),
+                          "research_model": s.research_model or None,
+                          "research_provider": s.research_provider or None,
                           "timezone": s.timezone or None, "workspace_root": s.workspace_root or None,
                           "areas": s.known_areas() if s.configured else []},
                 "sync": {"git": _git_status(rt)}}
@@ -91,14 +107,21 @@ async def run_stream(request: Request, name: str):
             raise UIError("not_found", str(exc), 404) from exc
         if not stream.get("job_id"):
             raise UIError("invalid_request", "This stream has no scheduled job yet. Finish its setup in chat.")
-        raw = rt.ctx.dispatch_tool("cronjob_manage", {"action": "run", "job_id": stream["job_id"]})
-        try:
-            result = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
-        except (TypeError, ValueError):
-            result = {}
-        if result.get("success") is False or result.get("error"):
-            raise UIError("error", f"Could not start the run: {str(result.get('error') or raw)[:300]}", 502)
-        return {"ok": True, "message": f"The {stream['name']} discovery run has started. Its proposals will appear in Discovery."}
+        from .tasks_api import _background, _sweep_job_state
+        state = _sweep_job_state(rt, stream["job_id"])
+        if state == "missing":
+            raise UIError("invalid_request", "This stream's scheduled job is missing. Ask Hermes in chat to repair the stream.")
+        job_id = stream["job_id"]
+
+        def fire() -> None:
+            # From a dashboard request the host runs the job inline for minutes, so fire it off the request.
+            try:
+                rt.ctx.dispatch_tool("cronjob_manage", {"action": "run", "job_id": job_id})
+            except Exception:  # noqa: BLE001 - the run's own result posts to the stream's chat
+                pass
+        _background(fire)
+        return {"ok": True, "message": f"The {stream['name']} discovery run has started. Its digest will post to the "
+                                       "stream's chat, and its proposals will appear here."}
     return await handle(request, run, set())
 
 
@@ -115,5 +138,12 @@ async def patch_tasks(request: Request):
             if not isinstance(body["research_by_default"], bool):
                 raise UIError("invalid_request", "research_by_default must be true or false")
             rt.ctx.set_config("research_by_default", body["research_by_default"])
+        for key in ("research_model", "research_provider"):
+            if key in body:
+                value = body[key] if body[key] is not None else ""
+                limit = 64 if key == "research_provider" else 200  # Hermes rejects a longer launch provider
+                if not isinstance(value, str) or len(value.strip()) > limit:
+                    raise UIError("invalid_request", f"{key} must be text of at most {limit} characters")
+                rt.ctx.set_config(key, value.strip())  # empty: research uses the main model
         return {"ok": True, "plugin": PLUGIN}
-    return await handle(request, run, {"default_area", "research_by_default"})
+    return await handle(request, run, {"default_area", "research_by_default", "research_model", "research_provider"})

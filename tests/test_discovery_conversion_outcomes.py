@@ -384,8 +384,10 @@ def test_registered_link_audit_tool_is_read_only(settings, data_dir, tmp_path):
     assert result['ok'] is True and result['result']['dry_run'] is True
     assert [r['task_id'] for r in result['result']['repairs']] == [out['results'][0]['task_id']]
     assert path.read_bytes() == tampered
-    outsider = json.loads(tools['discovery_link_audit']({}, session_id='outsider'))
-    assert outsider['ok'] is True and outsider['result']['repairs'] == []
+    # Any chat of the profile may read (authority by who acts, not where)...
+    other_chat = json.loads(tools['discovery_link_audit']({}, session_id='other-chat'))
+    assert other_chat['ok'] is True and [r['task_id'] for r in other_chat['result']['repairs']] == [out['results'][0]['task_id']]
+    assert path.read_bytes() == tampered
 
 
 def test_link_audit_reports_a_task_whose_frontmatter_lost_the_dossier_id(settings, data_dir, tmp_path):

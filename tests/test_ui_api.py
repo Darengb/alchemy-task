@@ -174,6 +174,25 @@ def test_settings_task_defaults(client, ctx):
     assert client.patch("/settings/tasks", json={"default_area": "mars"}).json()["error"]["code"] == "area"
 
 
+def test_settings_research_model(client, ctx):
+    s = client.get("/settings").json()["tasks"]
+    assert s["research_model"] is None and s["research_provider"] is None
+    out = client.patch("/settings/tasks", json={"research_model": "  deepseek-v4-flash ",
+                                                "research_provider": "openrouter"}).json()
+    assert out["ok"]
+    s = client.get("/settings").json()["tasks"]
+    assert s["research_model"] == "deepseek-v4-flash" and s["research_provider"] == "openrouter"
+    assert client.patch("/settings/tasks", json={"research_model": 5}).json()["error"]["code"] == "invalid_request"
+    assert client.patch("/settings/tasks", json={"research_model": "x" * 201}).json()["error"]["code"] == \
+        "invalid_request"
+    assert client.patch("/settings/tasks", json={"research_provider": "p" * 65}).json()["error"]["code"] == \
+        "invalid_request"
+    assert client.patch("/settings/tasks", json={"research_provider": "p" * 64}).json()["ok"]
+    assert client.patch("/settings/tasks", json={"research_model": "", "research_provider": ""}).json()["ok"]
+    s = client.get("/settings").json()["tasks"]
+    assert s["research_model"] is None and s["research_provider"] is None
+
+
 # ------------------------------------------------------------------ research button
 
 def _set_research(workspace_task_path, enrichment):
@@ -321,3 +340,38 @@ def test_research_button_does_not_say_starting_now_for_a_paused_or_missing_sweep
         assert words in out["message"] and "Starting now" not in out["message"], out
         assert _enrichment(c, t["task_id"])["status"] == "pending"
     assert c.runs == []
+
+
+def test_discovery_run_now_fires_the_streams_own_job_in_the_background(rclient, monkeypatch):
+    client, c = rclient
+    app = client.app
+    app.include_router(settings_api.router)
+    monkeypatch.setattr(settings_api, "runtime", lambda: runtime.Runtime(c))
+    fired = []
+    monkeypatch.setattr(tasks_api, "_background", lambda fn: fired.append(fn))
+    c.sweep_jobs = {"jobmbg": {"enabled": True, "state": "scheduled"}}
+    c.state.set("streams", {"mbg": {"name": "mbg", "areas": ["work"], "sources": [], "job_id": "jobmbg",
+                                    "schedule": "0 18 * * *", "timezone": "America/New_York"}})
+    out = client.post("/settings/streams/mbg/run")
+    assert out.status_code == 200 and out.json()["ok"], out.text
+    assert c.runs == [] and len(fired) == 1  # the request returns before the run
+    fired[0]()
+    assert c.runs == ["jobmbg"]
+    # a stream whose job is gone is refused with a clear message
+    c.sweep_jobs = {}
+    out = client.post("/settings/streams/mbg/run")
+    assert out.status_code == 400 and "missing" in out.json()["error"]["message"].lower(), out.text
+
+
+def test_settings_streams_include_next_run(rclient, monkeypatch):
+    client, c = rclient
+    client.app.include_router(settings_api.router)
+    monkeypatch.setattr(settings_api, "runtime", lambda: runtime.Runtime(c))
+    c.sweep_jobs = {"jobmbg": {"enabled": True, "state": "scheduled", "next_run_at": "2026-11-11T18:00:00-05:00"},
+                    "jobav": {"enabled": False, "state": "paused", "next_run_at": "2026-11-11T18:00:00-05:00"}}
+    c.state.set("streams", {
+        "mbg": {"name": "mbg", "areas": ["work"], "sources": [], "job_id": "jobmbg", "schedule": "0 18 * * *", "timezone": "America/New_York"},
+        "av": {"name": "av", "areas": ["work"], "sources": [], "job_id": "jobav", "schedule": "0 18 * * *", "timezone": "America/New_York"}})
+    streams = {s["name"]: s for s in client.get("/settings").json()["streams"]}
+    assert streams["mbg"]["next_run_at"] == "2026-11-11T18:00:00-05:00"
+    assert streams["av"]["next_run_at"] is None  # paused: no next run shown

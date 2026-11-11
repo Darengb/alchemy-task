@@ -432,6 +432,8 @@ def test_scheduled_delivery_requires_origin_approval_and_disables_scheduler_copy
     integration.configure_delivery('work', binding, user_approved=True)
     assert ctx.cron['job-one']['deliver'] == 'local'
     digest = integration.digest.prepare('scheduled-digest', stream='work', day='2030-01-01', origin={'session_id': 'parent'}, items=[])
+    # An unrelated scheduled job cannot send, whatever session it claims.
+    ctx.current_cron_execution = lambda: {'job_id': 'job-other', 'execution_id': 'fire-x', 'profile': 'test', 'scheduled_instant': '2030-01-01T00:00:00Z'}
     with pytest.raises(UserError): integration.deliver('scheduled-digest', session_id='claimed-scheduler')
     ctx.current_cron_execution = lambda: {'job_id': 'job-one', 'execution_id': 'fire-one', 'profile': 'test', 'scheduled_instant': '2030-01-01T00:00:00Z'}
     original = ctx.dispatch_tool
@@ -502,8 +504,6 @@ def test_scheduled_new_session_adopts_same_saved_config_window(settings, data_di
     ctx.current_cron_execution = lambda: None
     started = integration.start('work', session_id='parent')
     saved = copy.deepcopy(integration.store.get_run(started['run_id']))
-    with pytest.raises(UserError):
-        integration.start('work', session_id='new-session')
     ctx.current_cron_execution = lambda: dict(job_id='job-other', execution_id='fire-one', profile='test', scheduled_instant='2030-01-01T00:00:00Z', source='builtin')
     with pytest.raises(UserError):
         integration.start('work', session_id='new-session')
@@ -513,6 +513,31 @@ def test_scheduled_new_session_adopts_same_saved_config_window(settings, data_di
     assert integration.store.get_run(started['run_id'])['config'] == saved['config']
     assert integration.runner._parent(started['run_id'], 'new-session')
     assert integration.backend(started['run_id'], session_id='new-session')['recovery']['adoptions'][-1]['execution']['execution_id'] == 'fire-one'
+    # Any chat of the profile may then take the same run over again (authority by who acts, not where).
     ctx.current_cron_execution = lambda: None
+    assert integration.start('work', session_id='third-session')['run_id'] == started['run_id']
+    assert integration.store.get_run(started['run_id'])['config'] == saved['config']
+
+
+def test_manual_run_now_of_the_bound_job_can_start_the_stream(settings, data_dir, tmp_path):
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    configure(integration)
+    streams = ctx.state.get('streams')
+    streams['work'].update(schedule='0 18 * * *', timezone='America/New_York', job_id='job-one', job_binding={'job_id': 'job-one', 'origin_session': 'parent', 'profile': 'test', 'verified': True})
+    ctx.state.set('streams', streams)
+    ctx.profile_name = 'test'
+    base = dict(job_id='job-one', execution_id='fire-now', profile='test', scheduled_instant=None, started_at='2030-01-01T02:48:32Z')
+    # an off-schedule fire that is not a direct run, or has no start time, is still refused
+    ctx.current_cron_execution = lambda: {**base, 'source': 'builtin'}
     with pytest.raises(UserError):
-        integration.start('work', session_id='third-session')
+        integration.start('work', session_id='cron-session')
+    ctx.current_cron_execution = lambda: {**base, 'source': 'direct', 'started_at': None}
+    with pytest.raises(UserError):
+        integration.start('work', session_id='cron-session')
+    # another job's run now is refused
+    ctx.current_cron_execution = lambda: {**base, 'source': 'direct', 'job_id': 'job-other'}
+    with pytest.raises(UserError):
+        integration.start('work', session_id='cron-session')
+    ctx.current_cron_execution = lambda: {**base, 'source': 'direct'}
+    started = integration.start('work', session_id='cron-session')
+    assert started['run_id']
