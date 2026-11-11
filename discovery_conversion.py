@@ -101,8 +101,18 @@ class DiscoveryConversion:
     def _exact_values(self, doc, *, slack_workspaces=None):
         # Related-only identities in a managed dossier never grant write authority.
         body = doc.body
-        self._validate_dossiers(body)
         values = set()
+        try:
+            self._validate_dossiers(body)
+        except UserError:
+            # One task whose text merely mentions a marker (for example in a code span) must not block
+            # matching for every unit. Its dossier blocks grant no exact identity; plain metadata and
+            # body identities still count, and writing into it is still refused at the write check.
+            body = re.sub(r'<!-- discovery-dossier:[^>]*-->', '', body)
+            metadata = {k: v for k, v in doc.fm.items() if k not in {'related_source_ids', 'discovery_related_source_ids'}}
+            values.update(extract_identities(metadata, slack_workspaces=slack_workspaces))
+            values.update(extract_identities(body, slack_workspaces=slack_workspaces))
+            return values
         for match in re.finditer(r'<!-- discovery-dossier:start ([A-Za-z0-9._-]+) -->(.*?)<!-- discovery-dossier:end \1 -->', body, re.S):
             values.add('dossier:' + match[1])
             decisive = re.search(r'### Decisive Source Identities\n(.*?)(?=\n### |$)', match[2], re.S)
