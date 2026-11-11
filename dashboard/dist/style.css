@@ -2467,6 +2467,13 @@ html.at-dragging {
     align-self: flex-start;
   }
 }
+.at-btn.at-sources-run.is-running {
+  opacity: 1;
+  color: var(--at-accent-text);
+  border-color: currentColor;
+  cursor: default;
+  gap: 6px;
+}
 .at-btn.at-sources-add {
   flex: none;
   margin-left: auto;
