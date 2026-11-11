@@ -285,9 +285,161 @@ def validate_source_config(config):
             raise UserError('source relevance identity account mismatch')
 
 
-def _persist_items(store, stream, config, items):
+PRIMARY_POINTER_KEYS = ('primary_cache', 'cache_path', 'path', 'file')
+PRIMARY_MAX_BYTES = 5 * 1024 * 1024
+
+
+def _hermes_home() -> Path:
+    try:
+        from hermes_constants import get_hermes_home
+        return Path(get_hermes_home())
+    except Exception:
+        return Path.home() / '.hermes'
+
+
+def _primary_roots(store) -> list[Path]:
+    roots = [_hermes_home() / 'cache']
+    state_root = getattr(store, 'state_root', None)
+    if state_root is not None:
+        state_root = Path(state_root)
+        roots += [state_root, state_root.parent]
+        roots += [p for p in state_root.parents if p.name == 'plugin-data'][:1]
+    out = []
+    for root in roots:
+        try:
+            out.append(root.resolve())
+        except OSError:
+            pass
+    return out
+
+
+def _has_text(value) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, dict):
+        return any(_has_text(value.get(k)) for k in ('text', 'body', 'content', 'snippet'))
+    return False
+
+
+def has_primary_content(item) -> bool:
+    messages = item.get('messages')
+    if isinstance(messages, list) and any(_has_text(m) for m in messages):
+        return True
+    if any(isinstance(item.get(k), str) and item[k].strip() for k in ('body', 'text', 'content')):
+        return True
+    return item.get('primary_content') not in (None, '', [], {})
+
+
+def _pointer(item):
+    for key in PRIMARY_POINTER_KEYS:
+        value = item.get(key)
+        if isinstance(value, str) and value.startswith('/') and Path(value).is_file():
+            return key, value
+    for key, value in item.items():
+        if isinstance(value, str) and value.startswith('/') and '\n' not in value and len(value) < 4096:
+            try:
+                if Path(value).is_file():
+                    return key, value
+            except OSError:
+                continue
+    for key in PRIMARY_POINTER_KEYS:
+        if isinstance(item.get(key), str) and item[key].startswith('/'):
+            return key, item[key]
+    return None, None
+
+
+def inline_primary(item, store=None):
+    """Return a copy of item that carries its full primary text in the run.
+
+    Agents sometimes hand over a pointer to a cache file instead of the text.
+    Only files under the Hermes cache or this plugin's data dir are read; the
+    pointer is replaced by the content and only the file basename is kept.
+    """
+    if has_primary_content(item):
+        return item
+    label = '%r (%s)' % (item.get('title') or 'untitled', ', '.join(map(str, item.get('source_ids') or [])) or 'no source id')
+    missing = 'item has no primary content: include the full message text (or full email body) in the envelope item: ' + label
+    key, value = _pointer(item)
+    if key is None:
+        raise UserError(missing)
+    try:
+        path = Path(value).resolve(strict=True)
+    except OSError:
+        raise UserError('primary content file is unreadable for ' + label + '; ' + missing)
+    if not any(path.is_relative_to(root) for root in _primary_roots(store)):
+        raise UserError('primary content file is outside the Hermes cache and plugin data for ' + label + '; ' + missing)
+    if not path.is_file() or path.stat().st_size > PRIMARY_MAX_BYTES:
+        raise UserError('primary content file is missing or larger than 5 MB for ' + label + '; ' + missing)
+    raw = path.read_text(encoding='utf-8', errors='replace')
+    try:
+        content = json.loads(raw)
+    except ValueError:
+        content = raw
+    if content in (None, '', [], {}) or (isinstance(content, str) and not content.strip()):
+        raise UserError('primary content file is empty for ' + label + '; ' + missing)
+    content = _select_for_item(content, item)
+    if content in (None, '', [], {}):
+        raise UserError('primary content file does not contain this item for ' + label + '; ' + missing)
+    result = copy.deepcopy(item)
+    result.pop(key, None)
+    result.pop('primary_thread_id', None)
+    result['primary_content'] = content
+    if isinstance(content, dict) and isinstance(content.get('messages'), list):
+        result['messages'] = content['messages']
+    elif isinstance(content, list) and content and all(isinstance(m, dict) for m in content) and not isinstance(result.get('messages'), list):
+        result['messages'] = content
+    result['primary_inlined_from'] = path.name
+    return result
+
+
+def _header(msg, name):
+    for h in ((msg.get('payload') or {}).get('headers') or []):
+        if str(h.get('name', '')).lower() == name:
+            return h.get('value', '')
+    return ''
+
+
+def _gmail_text(msg):
+    return {'from': _header(msg, 'from'), 'to': _header(msg, 'to'), 'cc': _header(msg, 'cc'),
+            'date': _header(msg, 'date'), 'subject': _header(msg, 'subject'), 'id': msg.get('id'),
+            'text': extract_body_text(msg.get('payload') or {}) or msg.get('snippet', '')}
+
+
+def _slack_text(msg):
+    return {'user': msg.get('user') or msg.get('username') or msg.get('bot_id'), 'ts': msg.get('ts'),
+            'thread_ts': msg.get('thread_ts'), 'text': msg.get('text', ''),
+            'files': [f.get('name') for f in msg.get('files') or [] if isinstance(f, dict)]}
+
+
+def _select_for_item(content, item):
+    """From a shared cache file, keep only this item's own thread as plain text (no raw base64 payloads)."""
+    ids = [str(x) for x in item.get('source_ids') or []]
+    gmail = [x.rsplit(':', 1)[-1] for x in ids if x.startswith('gmail:')]
+    want = str(item.get('primary_thread_id') or (gmail[0] if gmail else '') or '')
+    # Gmail: a list of thread objects {id, messages: [raw messages]}, or one thread object.
+    threads = content if isinstance(content, list) else [content] if isinstance(content, dict) and 'id' in content else None
+    if threads and all(isinstance(t, dict) for t in threads) and any('messages' in t and 'id' in t for t in threads):
+        chosen = [t for t in threads if str(t.get('id')) == want] if want else (threads if len(threads) == 1 else [])
+        if not chosen:
+            return None
+        return [_gmail_text(m) if 'payload' in m else m for m in chosen[0].get('messages') or [] if isinstance(m, dict)]
+    # Slack: a channel dump {messages: [...]}; keep the thread root and its replies.
+    if isinstance(content, dict) and isinstance(content.get('messages'), list):
+        slack = [x for x in ids if x.startswith('slack:')]
+        root = slack[0].rsplit(':', 1)[-1] if slack else ''
+        msgs = [m for m in content['messages'] if isinstance(m, dict)]
+        if root:
+            mine = [m for m in msgs if str(m.get('ts')) == root or str(m.get('thread_ts')) == root]
+            msgs = mine or msgs
+        return [_slack_text(m) if ('ts' in m and 'text' in m) else m for m in msgs]
+    return content
+
+
+def _persist_items(store, stream, config, items, *, inline=False):
     entries = []
     for item in items:
+        if inline:
+            item = inline_primary(item, store)
         ids = [canonical_source_id(x) for x in item['source_ids']]
         # Configured adapters must prove provider scope before this boundary.
         prefix = f"source:{config['source_key']}:{config['account_key']}:"
@@ -393,7 +545,7 @@ def collect_attested(store, stream, config, envelope):
         raise UserError('attested account mismatch')
     if _date(envelope['start']) >= _date(envelope['end']):
         raise UserError('source window must increase')
-    state = _persist_items(store, stream, config, envelope.get('items', []))
+    state = _persist_items(store, stream, config, envelope.get('items', []), inline=True)
     receipt = {k: envelope.get(k) for k in ('status', 'start', 'end', 'pagination_exhausted', 'continuation', 'error')}
     receipt.update(verification='agent_attested', backlog_ids=[x['backlog_id'] for x in state['backlog']], account_key=config['account_key'])
     store.record_coverage(stream, config['source_key'], receipt)

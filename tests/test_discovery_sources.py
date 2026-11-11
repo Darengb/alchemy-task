@@ -6,7 +6,7 @@ CFG = {'source_key': 'source', 'account_key': 'account', 'scope': {'folder': 'al
 START, END = '2026-01-01T00:00:00+00:00', '2026-01-02T00:00:00+00:00'
 
 def item(i):
-    return {'source_ids': [f'source:source:account:thread:t{i}'], 'source_revision': f'r{i}', 'title': f'Work {i}'}
+    return {'source_ids': [f'source:source:account:thread:t{i}'], 'source_revision': f'r{i}', 'title': f'Work {i}', 'body': f'Full text of work item {i}.'}
 
 def test_all_pages_durable_before_verified_watermark(tmp_path):
     from alchemy_task.discovery_sources import SourceAdapter

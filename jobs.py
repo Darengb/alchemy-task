@@ -147,7 +147,7 @@ def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None, 
                                               'skills', 'web', 'file', 'session_search', *(reader_toolsets or [])])),
         'prompt': (f'Run the Alchemy Task discovery stream "{stream}". Load alchemy-task:discovery. '
                    'Call discovery_start and resume its SAME saved run/window before scanning anything new. '
-                   'Collect every approved source with discovery_collect; freeze complete source/task/skill context with discovery_context. '
+                   'Collect every approved source with discovery_collect, putting full message text and full email bodies into the envelope, never paths; freeze complete source/task/skill context with discovery_context. '
                    'Research runs as short calls: call discovery_research_run with the SAME run_id, fetch every page of each awaiting_parent '
                    'payload and perform substantive parent semantic acceptance/repair, and call discovery_research_run again until it returns '
                    'status complete. If it refuses with explicit recovery required (a new session id), call discovery_recover with adopt=true '

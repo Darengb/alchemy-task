@@ -19,7 +19,7 @@ from .core.discovery_dossiers import content_revision
 from .core import taskfile as tf
 from .core.discovery_research import child_schema, CANARY, SECRET_VALUE, MAX_TITLE_CHARS, MAX_REASON_CHARS, MAX_STRING_CHARS
 from .discovery_context import DiscoveryContext, resolve_identity
-from .discovery_sources import (SourceAdapter, collect_attested, validate_source_config, DEFAULT_TRANSCRIPT_SENDERS,
+from .discovery_sources import (SourceAdapter, collect_attested, inline_primary, has_primary_content, PRIMARY_POINTER_KEYS, validate_source_config, DEFAULT_TRANSCRIPT_SENDERS,
                                 DEFAULT_TRANSCRIPT_KEYWORDS, transcript_keywords, transcript_senders)
 from .discovery_runner import DiscoveryRunner, RunnerPolicy, make_tool_handlers, make_hooks, CHECKLIST, BINDING_KEYS
 from .discovery_conversion import DiscoveryConversion
@@ -810,14 +810,33 @@ class DiscoveryIntegration:
             grouped.setdefault(candidate_id(candidate['source_ids']), []).append(candidate)
         source_index, compact = [], []
         allowed = {'title', 'source_ids', 'prefilter_disposition', 'prefilter_reason', 'summary', 'due', 'priority', 'source_revision', 'source_key'}
-        for cid, versions in grouped.items():
-            body = self.store.put_resource(run_id, 'source-body-' + cid, versions)
-            source_index.append({'candidate_id': cid, 'body': body, 'versions': len(versions)})
-            compact.append((cid, _project_metadata({k: v for k, v in versions[-1].items() if k in allowed})))
-        primary_index = self.store.put_resource(run_id, 'source-material', source_index)
         # One unindexable item must never wedge the stream: withhold it with a
         # visible reason and block its backlog entry; the body stays saved.
         withheld = []
+        for cid, versions in grouped.items():
+            # Items saved before collect inlined file pointers: inline them
+            # now so children read the full primary text from the run.
+            inlined, missing = [], ''
+            for version in versions:
+                # Only items that point at a file instead of carrying text are inlined here; verified
+                # structured readers supply complete items of their own shape.
+                if has_primary_content(version) or not any(k in version for k in PRIMARY_POINTER_KEYS):
+                    inlined.append(version)
+                    continue
+                try:
+                    inlined.append(inline_primary(version, self.store))
+                except UserError as exc:
+                    inlined.append(version)
+                    missing = str(exc)
+            versions = inlined
+            body = self.store.put_resource(run_id, 'source-body-' + cid, versions)
+            source_index.append({'candidate_id': cid, 'body': body, 'versions': len(versions)})
+            item = _project_metadata({k: v for k, v in versions[-1].items() if k in allowed})
+            if missing and not any(has_primary_content(v) for v in versions):
+                withheld.append({'candidate_id': cid, 'title': _withheld_title(item.get('title')), 'reason': missing[:300]})
+                continue
+            compact.append((cid, item))
+        primary_index = self.store.put_resource(run_id, 'source-material', source_index)
         for cid, item in compact:
             try:
                 self.store.add_candidates(run_id, [item])
