@@ -93,14 +93,21 @@ async def run_stream(request: Request, name: str):
             raise UIError("not_found", str(exc), 404) from exc
         if not stream.get("job_id"):
             raise UIError("invalid_request", "This stream has no scheduled job yet. Finish its setup in chat.")
-        raw = rt.ctx.dispatch_tool("cronjob_manage", {"action": "run", "job_id": stream["job_id"]})
-        try:
-            result = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
-        except (TypeError, ValueError):
-            result = {}
-        if result.get("success") is False or result.get("error"):
-            raise UIError("error", f"Could not start the run: {str(result.get('error') or raw)[:300]}", 502)
-        return {"ok": True, "message": f"The {stream['name']} discovery run has started. Its proposals will appear in Discovery."}
+        from .tasks_api import _background, _sweep_job_state
+        state = _sweep_job_state(rt, stream["job_id"])
+        if state == "missing":
+            raise UIError("invalid_request", "This stream's scheduled job is missing. Ask Hermes in chat to repair the stream.")
+        job_id = stream["job_id"]
+
+        def fire() -> None:
+            # From a dashboard request the host runs the job inline for minutes, so fire it off the request.
+            try:
+                rt.ctx.dispatch_tool("cronjob_manage", {"action": "run", "job_id": job_id})
+            except Exception:  # noqa: BLE001 - the run's own result posts to the stream's chat
+                pass
+        _background(fire)
+        return {"ok": True, "message": f"The {stream['name']} discovery run has started. Its digest will post to the "
+                                       "stream's chat, and its proposals will appear here."}
     return await handle(request, run, set())
 
 

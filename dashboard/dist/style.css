@@ -2438,6 +2438,21 @@ html.at-dragging {
   flex: none;
   color: var(--at-accent-text);
 }
+.at-btn.at-sources-run {
+  flex: none;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+  gap: 4px;
+  margin-left: auto;
+  align-self: center;
+}
+@media (max-width: 560px) {
+  .at-btn.at-sources-run {
+    margin-left: 0;
+    align-self: flex-start;
+  }
+}
 .at-btn.at-sources-add {
   flex: none;
   margin-left: auto;
