@@ -49,3 +49,24 @@ def test_discovery_setup_checks_state_and_handles_activation_errors():
     text = (ROOT / 'skills/discovery/SKILL.md').read_text()
     assert '**Check what already exists first.**' in text
     assert 'a retry can create a duplicate job' in text and 'did not choose' in text
+
+
+def test_research_model_choice_in_discovery_approval_and_tasks_guidance():
+    disc = (ROOT / 'skills/discovery/SKILL.md').read_text()
+    approval = disc[disc.index('8. **Approval:**'):disc.index('9. **Then')]
+    order = ['1. Approve and create (recommended)', '2. Use a different model for research',
+             '3. Lower the daily cap', '4. Change something']
+    positions = [approval.index(o) for o in order]
+    assert positions == sorted(positions)
+    assert 'open conversation' in approval and 'task_setup' in approval and 'Research model' in approval
+    assert 'research runs on the research model' in disc
+    tasks = (ROOT / 'skills/tasks/SKILL.md').read_text()
+    section = tasks[tasks.index('## Research model'):]
+    section = section[:section.index('\n## ', 5)]
+    for phrase in ('set my research model', 'use a cheaper model for research', 'newest version',
+                   'never an old one', 'flash version', 'DeepSeek Flash', 'OpenAI Luna', 'GLM Flash', 'Qwen',
+                   'research_model', 'research_provider', 'main model'):
+        assert phrase in section, phrase
+    setup = (ROOT / 'skills/setup/SKILL.md').read_text()
+    assert 'Research model' in setup and 'alchemy-task:tasks' in setup
+    assert '\u2014' not in section and '\u2014' not in approval
