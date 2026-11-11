@@ -119,6 +119,16 @@ def _run_for(task_id: str = "", run_id: str = "", session_id: str = "") -> tuple
 
 # ------------------------------------------------------------------ Hermes seams (stubbed in tests)
 
+def model_route(settings: Any) -> dict[str, str]:
+    """The research model setting as launch fields; empty when research runs on the main model."""
+    route = {}
+    for key in ("model", "provider"):
+        value = str(getattr(settings, f"research_{key}", "") or "").strip()
+        if value:
+            route[key] = value
+    return route
+
+
 def _make_request(**kwargs: Any) -> Any:
     from agent.subagent_lifecycle import SubagentLaunchRequest
     return SubagentLaunchRequest(**kwargs)
@@ -332,6 +342,7 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
         created_in = origin_session
     notice_to = origin_session or created_in
     toolsets = worker_toolsets(rt)
+    route = model_route(rt.settings)  # same model on the toolset fallback; never the main model instead
     report = _toolset_report(toolsets)
     if report.get("not_available_to_worker"):
         # Approved reader toolsets that no longer exist would make every launch fail ("Unknown toolsets"):
@@ -346,7 +357,7 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
         try:
             handle = rt.ctx.subagent_lifecycle.launch(_make_request(
                 goal=goal, context=context, role="leaf", allowed_toolsets=toolsets,
-                correlation_id=f"alchemy-task:{doc.task_id}:{run_id}"))
+                correlation_id=f"alchemy-task:{doc.task_id}:{run_id}", **route))
         except Exception as first:  # noqa: BLE001
             text = str(first).lower()
             if "toolset" not in text and "broaden" not in text:
@@ -363,7 +374,7 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
                                                   "run; report local access you could not check as unverified."))
             handle = rt.ctx.subagent_lifecycle.launch(_make_request(
                 goal=goal, context=context, role="leaf", allowed_toolsets=toolsets,
-                correlation_id=f"alchemy-task:{doc.task_id}:{run_id}:fallback"))
+                correlation_id=f"alchemy-task:{doc.task_id}:{run_id}:fallback", **route))
         handle = dict(handle) if not hasattr(handle, "to_dict") else handle.to_dict()
     except Exception as exc:  # noqa: BLE001 - recovery retries later
         _finish_failure(rt, doc.task_id, run_id, f"could not start research: {exc}")

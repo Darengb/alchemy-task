@@ -338,7 +338,9 @@ class DiscoveryRunner:
         if len(context) > 32000:
             raise UserError('bootstrap exceeds lifecycle context; context resource manifest must be paged')
         request = {'goal': 'Research the exact immutable source assignment fully before proposing any task. Submit a full discovery bundle and stop.', 'context': context, 'role': 'leaf', 'correlation_id': attempt['correlation_id']}
-        route = ledger['config'].get('research_route', {})
+        route = dict(ledger['config'].get('research_route', {}))
+        from .research_agent import model_route
+        route.update(model_route(getattr(self.rt, 'settings', None)))
         for key in ('provider', 'model'):
             if route.get(key): request[key] = route[key]
         return request
