@@ -496,10 +496,13 @@ def test_integration_researches_without_receipt_and_digest_refuses_until_researc
 
 # ---------------------------------------------------------------- scheduled prompt
 
-def test_scheduled_prompt_states_the_call_loop_and_reports_an_unfinished_run_as_unfinished():
+def test_scheduled_prompt_states_the_call_loop_and_always_ends_with_a_readable_digest():
     from alchemy_task.jobs import discovery_job_config
     native = discovery_job_config('work')['prompt']
     assert 'until it returns status complete' in native and 'discovery_recover' in native
-    assert 'unfinished' in native and 'never present an unfinished run as a finished digest' in native
+    assert 'finish_now=true' in native and 'Needs attention' in native and 'more than twice' in native
+    assert 'Partial digest' in native and 'Never end with only a status report' in native
+    assert 'unfinished' not in native and '\u2014' not in native
     sender = discovery_job_config('work', delivery_owner='verified_sender')['prompt']
     assert 'until it returns status complete' in sender and 'Return [SILENT]' in sender
+    assert 'finish_now=true' in sender and 'Partial digest' not in sender
