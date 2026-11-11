@@ -189,6 +189,10 @@ def test_real_public_sessiondb_origin_new_session_same_topic(settings, data_dir,
     started = integration.start('work', session_id='parent')
     resumed = integration.start('work', session_id='new')
     assert resumed['run_id'] == started['run_id']
+    # origin_authorized is display only: another chat of the profile still acts on the run.
+    assert integration.start('work', session_id='other')['run_id'] == started['run_id']
+    with pytest.raises(UserError, match='profile'):
+        integration.start('work', session_id='missing')
 
 
 def test_targeted_supplement_accounts_missing_ids_without_substituting_equal_count(settings, data_dir, tmp_path):

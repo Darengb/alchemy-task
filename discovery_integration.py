@@ -209,30 +209,68 @@ class DiscoveryIntegration:
         return receipt
 
     def _authorize_recovery(self, run_id, old_parent, session_id):
+        """A new session adopts a saved run when the actor may act: any chat of this profile, or the
+        stream's own bound job. The run keeps its frozen window, children and charges."""
         run = self.store.get_run(run_id)
         stream = self._stream(run['config'].get('stream_name', run['stream']))
-        if self.origin_authorized(stream, session_id) and run['origin'].get('stream_origin_session', run['origin'].get('session_id')) == stream['origin_session']:
-            return True
+        if self._actor_refusal(session_id, stream):
+            return False
         execution = self._scheduled_identity(stream)
         frozen = run['origin'].get('job_binding')
-        if not execution or not frozen or frozen != stream.get('job_binding'):
-            return False
-        if run['origin'].get('stream_origin_session') != stream['origin_session']:
+        if execution and (not frozen or frozen != stream.get('job_binding')
+                          or run['origin'].get('stream_origin_session') != stream['origin_session']):
             return False
         with self.runner._state(run_id) as state:
             state.setdefault('adoptions', []).append({'from_session': old_parent, 'to_session': session_id,
                                                       'execution': execution, 'job_binding': frozen})
         return True
 
+    def _in_cron(self):
+        method = getattr(self.rt.ctx, 'current_cron_execution', None)
+        from gateway.session_context import get_session_env
+        return bool((callable(method) and method() is not None) or get_session_env('HERMES_CRON_SESSION'))
+
+    def _profile_session(self, session_id):
+        """True/False when this profile's own SessionDB can tell whether the session is its own, else None."""
+        path = self.home / 'state.db'
+        if not session_id or not path.is_file(): return None
+        try:
+            from hermes_state import SessionDB
+            db = SessionDB(db_path=path, read_only=True)
+            try: row = db.get_session(session_id)
+            finally: db.close()
+        except (ImportError, OSError, ValueError, RuntimeError, TypeError, sqlite3.Error):
+            return None
+        return bool(row)
+
+    def _actor_refusal(self, session_id, stream=None, *, read=False):
+        """Authority by who acts, not where: any chat or session of this profile may act.
+
+        Refused: no host session, a research/discovery child, a session this profile's SessionDB
+        does not know (another profile), and a scheduled run other than the stream's own bound job
+        (when acting; an unattended unrelated job never spends research or sends). Delivery
+        DESTINATION is not decided here: it stays the stream's saved origin or approved target.
+        """
+        if not session_id: return 'actual host session required'
+        if self.runner._child_for(session_id, ''): return 'research child cannot act for the parent'
+        if stream is not None and self._scheduled_identity(stream): return None
+        if not read and self._in_cron(): return 'only the stream\'s own bound scheduled job may act from a scheduled run'
+        if self._profile_session(session_id) is False: return 'session is not a chat of this profile'
+        return None
+
+    def _actor_allowed(self, session_id, stream=None, *, read=False):
+        return not self._actor_refusal(session_id, stream, read=read)
+
     def _host_origin(self, session_id):
         """Read the installing profile's public SessionDB by ACTUAL host id."""
         return host_origin(self.home, session_id, self.rt.ctx.profile_name)
 
     def origin_authorized(self, stream, session_id):
+        """Display only: is this session the stream's origin chat? Never an authority gate."""
         return bool(self._origin_relation(stream, session_id))
 
     def _origin_relation(self, stream, session_id):
-        """Origin relation for run supervision/read surfaces, not reply authority."""
+        """Which chat is the origin (display); authority is _actor_refusal."""
         if session_id == stream.get('origin_session'): return 'exact'
         original = self._host_origin(stream.get('origin_session'))
         reply = self._host_origin(session_id)
@@ -497,8 +535,8 @@ class DiscoveryIntegration:
         storage_stream = current['name'] if ' ' not in current['name'] else 'stream-' + content_revision(current['name']).split(':')[-1][:24]
         if mode != 'production': storage_stream += '-' + mode
         if not session_id: raise UserError('actual parent session required')
-        if not self.origin_authorized(current, session_id) and not self._scheduled_identity(current):
-            raise UserError('only origin chat or verified bound scheduled occurrence can start/resume stream')
+        refusal = self._actor_refusal(session_id, current)
+        if refusal: raise UserError(refusal + '; any chat of this profile or the stream\'s own scheduled job can start/resume a stream')
         self._retain_legacy(current['name'])
         for old in self._all_runs():
             if old['config'].get('stream_name', old['stream']) == current['name'] and old.get('review'):
@@ -572,8 +610,8 @@ class DiscoveryIntegration:
             raise UserError('historical operations require explicit shadow/research_only mode; no automatic old task mutations')
         old = self.store.get_run(run_id)
         stream = self._stream(old['config'].get('stream_name', old['stream']))
-        if user_approved is not True or not self.origin_authorized(stream, session_id):
-            raise UserError('explicit actual origin approval required for historical operation')
+        if user_approved is not True or self._actor_refusal(session_id):
+            raise UserError('explicit user approval from a chat of this profile required for historical operation')
         if not old.get('review') or not old.get('index_revision'):
             raise UserError('historical operation requires finalized frozen original input')
         parents = [c for c in old['candidates'] if not c.get('parent_candidate_id')]
@@ -908,11 +946,13 @@ class DiscoveryIntegration:
         stream = self._stream(digest['stream'])
         scheduled = self._scheduled_identity(stream)
         if stream.get('delivery_owner', 'native_origin') == 'native_origin':
-            if not self.origin_authorized(stream, session_id) and not scheduled:
-                raise UserError('only origin or verified scheduled occurrence may prepare host delivery')
+            refusal = self._actor_refusal(session_id, stream)
+            if refusal: raise UserError(refusal + '; delivery still goes to the saved destination')
             return self.delivery_status(run_id)
-        if not self.origin_authorized(stream, session_id) and not (scheduled and binding and binding.get('scheduled_approved') is True):
-            raise UserError('only origin or an explicitly approved bound scheduled occurrence may deliver')
+        # Sends go only to the approved binding target. A user chat of this profile may send; a
+        # scheduled run only when it is the bound job and the binding approved scheduled sends.
+        if self._actor_refusal(session_id) and not (scheduled and binding and binding.get('scheduled_approved') is True):
+            raise UserError('only a chat of this profile or an explicitly approved bound scheduled occurrence may deliver')
         if receipt['state'] == 'delivered': return receipt
         if not binding:
             return {**receipt, 'reason': 'No approved origin sender/readback binding. Scheduler delivery is local-only; no alternate send is authorized.'}
@@ -1257,17 +1297,17 @@ class DiscoveryIntegration:
         if not isinstance(legacy_roots, (list, tuple)) or any(not isinstance(x, str) or not x.strip() for x in legacy_roots):
             raise UserError('legacy_roots must be workspace-relative folder names')
         visible = {r['run_id'] for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')}
-                   or self.origin_authorized(self._stream_or_frozen(r['config'].get('stream_name', r['stream']), r['origin'].get('stream_origin_session', r['origin'].get('session_id'))), session_id)}
+                   or self._actor_allowed(session_id, read=True)}
         return self.conversion.audit_links(run_ids=visible, legacy_roots=legacy_roots)
 
     def backend(self, run_id='', *, session_id):
         def project(ledger):
             run = ledger['run_id']
-            if session_id not in {ledger['origin'].get('session_id'), ledger['origin'].get('stream_origin_session')} and not self.origin_authorized(self._stream_or_frozen(ledger['config'].get('stream_name', ledger['stream']), ledger['origin'].get('stream_origin_session', ledger['origin'].get('session_id'))), session_id):
+            if session_id not in {ledger['origin'].get('session_id'), ledger['origin'].get('stream_origin_session')} and not self._actor_allowed(session_id, read=True):
                 self.runner._parent(run, session_id)
             return self.project_run(ledger)
         if run_id: return project(self.store.get_run(run_id))
-        return {'runs': [project(r) for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')} or self.origin_authorized(self._stream_or_frozen(r['config'].get('stream_name', r['stream']), r['origin'].get('stream_origin_session', r['origin'].get('session_id'))), session_id)]}
+        return {'runs': [project(r) for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')} or self._actor_allowed(session_id, read=True)]}
 
     def project_run(self, ledger):
         """Project durable state after the entrypoint has checked its caller."""
@@ -1429,7 +1469,7 @@ def register(ctx, *, integration=None):
         raise UserError('unknown configuration action')
     def digest_call(a, session_id='', **_):
         ledger = service.store.get_run(a['run_id'])
-        if session_id not in {ledger['origin'].get('session_id'), ledger['origin'].get('stream_origin_session')} and not service.origin_authorized(service._stream(ledger['config'].get('stream_name', ledger['stream'])), session_id):
+        if session_id not in {ledger['origin'].get('session_id'), ledger['origin'].get('stream_origin_session')} and not service._actor_allowed(session_id, service._stream(ledger['config'].get('stream_name', ledger['stream']))):
             service.runner._parent(a['run_id'], session_id)
         action = a.get('action', 'prepare')
         if action == 'prepare': return service.finalize(a['run_id'], session_id=session_id)
