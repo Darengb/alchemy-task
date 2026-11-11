@@ -19,7 +19,7 @@ from .core.discovery_dossiers import content_revision
 from .core import taskfile as tf
 from .core.discovery_research import child_schema, CANARY, SECRET_VALUE, MAX_TITLE_CHARS, MAX_REASON_CHARS, MAX_STRING_CHARS
 from .discovery_context import DiscoveryContext, resolve_identity
-from .discovery_sources import (SourceAdapter, collect_attested, inline_primary, has_primary_content, validate_source_config, DEFAULT_TRANSCRIPT_SENDERS,
+from .discovery_sources import (SourceAdapter, collect_attested, inline_primary, has_primary_content, PRIMARY_POINTER_KEYS, validate_source_config, DEFAULT_TRANSCRIPT_SENDERS,
                                 DEFAULT_TRANSCRIPT_KEYWORDS, transcript_keywords, transcript_senders)
 from .discovery_runner import DiscoveryRunner, RunnerPolicy, make_tool_handlers, make_hooks, CHECKLIST, BINDING_KEYS
 from .discovery_conversion import DiscoveryConversion
@@ -818,6 +818,11 @@ class DiscoveryIntegration:
             # now so children read the full primary text from the run.
             inlined, missing = [], ''
             for version in versions:
+                # Only items that point at a file instead of carrying text are inlined here; verified
+                # structured readers supply complete items of their own shape.
+                if has_primary_content(version) or not any(k in version for k in PRIMARY_POINTER_KEYS):
+                    inlined.append(version)
+                    continue
                 try:
                     inlined.append(inline_primary(version, self.store))
                 except UserError as exc:

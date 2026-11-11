@@ -175,7 +175,7 @@ def test_source_to_registered_research_join_proposal_conversion_and_next_run(set
     run = integration.start('work', session_id='parent')['run_id']
     window = integration.store.get_run(run)['config']['windows']['feed']
     integration.collect(run, 'feed', session_id='parent', envelope={**window, 'status': 'partial', 'account_key': 'account', 'items': [
-        {'title': 'Review release', 'source_ids': ['source:feed:account:issue:one'], 'source_revision': 'v1'}]})
+        {'title': 'Review release', 'source_ids': ['source:feed:account:issue:one'], 'source_revision': 'v1', 'body': 'Please review the release notes before Friday.'}]})
     revision = integration.freeze(run, session_id='parent')['index_revision']
     clock = Clock(); pool = Pool(clock); ctx.subagent_lifecycle = pool; pool.runner = integration.runner
     integration.runner.clock = clock
@@ -242,7 +242,7 @@ def test_default_runtime_without_receipt_uses_frozen_stream_budget(settings, dat
     run = integration.start('work', session_id='parent')['run_id']
     ledger = integration.store.get_run(run); window = ledger['config']['windows']['feed']
     integration.collect(run, 'feed', session_id='parent', envelope={**window, 'status': 'partial', 'account_key': 'account', 'items': [
-        {'title': 'Deferred work', 'source_ids': ['source:feed:account:issue:one'], 'source_revision': 'v1'}]})
+        {'title': 'Deferred work', 'source_ids': ['source:feed:account:issue:one'], 'source_revision': 'v1', 'body': 'Deferred work item text.'}]})
     integration.freeze(run, session_id='parent')
     clock = Clock(); pool = Pool(clock); ctx.subagent_lifecycle = pool
     integration.runner.clock = clock; pool.runner = integration.runner

@@ -34,7 +34,7 @@ def test_cache_pointer_is_inlined_and_path_dropped(env):
     discovery_sources.collect_attested(store, 'stream', CFG, envelope(item(primary_cache=str(cache))))
     saved = store.source_state('stream', 'source')['backlog'][0]['candidate']
     assert saved['messages'][0]['text'] == 'Can you send the rider by Friday?'
-    assert saved['primary_content']['messages'] == saved['messages']
+    assert saved['primary_content'] == saved['messages']
     assert saved['primary_inlined_from'] == 'C0TEST.json'
     assert 'primary_cache' not in saved
     assert str(cache) not in json.dumps(saved)
