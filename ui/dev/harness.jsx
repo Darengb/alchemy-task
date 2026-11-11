@@ -26,6 +26,9 @@ if (params.get('video') === 'story') {
     source_links: ['https://lumenleaf.slack.com/archives/C0PRICING/p1794426000112233'],
     research_disposition: 'confident', targets: [],
   })
+  // README: put an existing-task match second so the screenshot shows both kinds of proposal
+  const sem = run.proposals.findIndex((p) => p.kind === 'semantic')
+  if (sem > 1) run.proposals.splice(1, 0, run.proposals.splice(sem, 1)[0])
   run.proposals.forEach((p, i) => { p.number = i + 1; p.ref = `A${i + 1}` })
   run.coverage = [{ source_key: 'Slack #pricing', status: 'complete' }, ...run.coverage]
   run.summary.pending += 1
