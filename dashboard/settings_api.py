@@ -18,14 +18,28 @@ router = APIRouter()
 FREQUENCIES = ("daily", "weekdays", "hourly", "every 2 hours", "every 3 hours", "every 4 hours")
 
 
+def _next_runs(rt: Any) -> dict[str, str]:
+    """Each job's next run time from the public cron list ({} when it cannot be read)."""
+    try:
+        raw = rt.ctx.dispatch_tool("cronjob_manage", {"action": "list", "include_disabled": True})
+        data = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        return {str(j.get("job_id") or j.get("id")): j.get("next_run_at") for j in data.get("jobs", [])
+                if j.get("next_run_at") and j.get("enabled", True) is not False and j.get("state") != "paused"}
+    except Exception:  # noqa: BLE001 - next run is display only
+        return {}
+
+
 def _streams(rt: Any) -> list[dict[str, Any]]:
     from .. import discovery
     out = []
-    for name, s in sorted(discovery._streams(rt).items()):
+    streams = sorted(discovery._streams(rt).items())
+    nexts = _next_runs(rt) if any(s.get("job_id") for _, s in streams) else {}
+    for name, s in streams:
         pub = discovery._public(s)
         pub["frequency"] = s.get("frequency") or "daily"
         pub["time"] = s.get("time") or ""
         pub["sources"] = [{"name": x.get("name"), "type": x.get("type"), "scope": x.get("scope")} for x in s.get("sources") or []]
+        pub["next_run_at"] = nexts.get(str(s.get("job_id"))) if s.get("job_id") else None
         out.append(pub)
     return out
 

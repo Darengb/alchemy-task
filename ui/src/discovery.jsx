@@ -7,6 +7,7 @@ import { useApp } from './store.js'
 import { AreaDot, Button, DatePicker, Disclosure, Icon, IconButton, Menu, Segmented, Spinner, copyText, cx, useOverlay, useToast } from './ui.jsx'
 
 export { pendingCount, discoveryBadge } from './lib/discovery.js'
+import { nextRunLabel } from './lib/discovery.js'
 
 const titleCase = (s) => String(s || '').replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
@@ -115,7 +116,10 @@ function SourcesBar({ streams }) {
       <div className="at-sources-rows">
         {streams.map((s) => (
           <div key={s.name} className="at-sources-row">
-            <span className="at-sources-label">{many ? `${titleCase(s.name)} reads` : 'Reads'}</span>
+            <span className="at-sources-head">
+              <span className="at-sources-label">{many ? `${titleCase(s.name)} reads` : 'Reads'}</span>
+              {nextRunLabel(s.next_run_at) ? <span className="at-sources-next" title="Next scheduled run">Next {nextRunLabel(s.next_run_at)}</span> : null}
+            </span>
             <div className="at-sources-chips">
               {(s.sources || []).length ? (s.sources || []).map((src, i) => (
                 <span key={`${src.name}-${i}`} className="at-source-chip" title={src.scope || src.name}>
