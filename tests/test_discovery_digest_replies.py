@@ -146,7 +146,7 @@ def test_multiple_exact_conflict_is_an_unnumbered_blocked_update_not_a_failure(s
     integration.record_decision(run, wid, decision='conflict', reason='Two exact tasks.', session_id='parent')
     digest = integration.finalize(run, session_id='parent')
     text = digest['text']
-    assert '**0 follow-ups** · **1 needs attention**' in text
+    assert '**0 follow-ups** · **1 existing task outcome** · **0 need attention**' in text
     assert 'degraded' not in text and 'Attention' not in text and 'No new follow-ups found.' not in text
     assert '**Existing task update blocked:** Workstream 1: multiple exact task matches conflict; nothing was changed' in text
     assert not digest['items'] and '### 1.' not in text and task_files(settings) == before

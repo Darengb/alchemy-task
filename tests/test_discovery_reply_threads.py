@@ -387,7 +387,7 @@ def test_blocked_conflict_line_names_the_conflicting_tasks(settings, data_dir, t
         rt.store().create(title=title, area='work', undated=True, research=False, confirm_new=True,
                           notes='slack:T1:C1:171.1:171.2')
     integration.record_decision(run, wid, decision='conflict', reason='Two exact tasks.', session_id='parent')
-    line = next(l for l in integration.finalize(run, session_id='parent')['text'].splitlines() if l.startswith('Existing task update blocked'))
+    line = next(l for l in integration.finalize(run, session_id='parent')['text'].splitlines() if l.startswith('**Existing task update blocked:**'))
     assert 'Launch decision A' in line and 'Launch decision B' in line
 
 
@@ -401,6 +401,6 @@ def test_selection_among_several_existing_tasks_asks_which_task_to_update(settin
     integration.record_decision(run, wid, decision='propose', reason='Two plausible tasks.', session_id='parent')
     digest = integration.finalize(run, session_id='parent')
     ref = digest['items'][0]['ref']
-    assert f'Choice: reply "{ref}, update" and name which existing task to add this to the existing task' in digest['text']
-    existing = next(l for l in digest['text'].splitlines() if l.startswith('Existing task: '))
+    assert f'**Choice:** Reply "{ref}, update" and name which existing task to add this to' in digest['text']
+    existing = next(l for l in digest['text'].splitlines() if l.startswith('**Existing task:** '))
     assert 'Plan the launch page' in existing and 'Plan the launch email' in existing
