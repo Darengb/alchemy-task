@@ -15,7 +15,7 @@ def accepted(tmp_path, settings, data_dir):
     return rt, store, run, wid
 
 
-def test_join_barrier_and_typed_matching_includes_completed(tmp_path, settings, data_dir):
+def test_join_barrier_and_typed_matching_skips_completed(tmp_path, settings, data_dir):
     from alchemy_task.discovery_conversion import DiscoveryConversion
     rt, store, run, wid = accepted(tmp_path, settings, data_dir)
     service = DiscoveryConversion(rt, store)
@@ -26,10 +26,12 @@ def test_join_barrier_and_typed_matching_includes_completed(tmp_path, settings, 
     doc = rt.store().create(title='Already finished distinct title', area='work', undated=True, research=False,
                             notes='slack:T1:C1:171.1:171.2')
     rt.store().update(doc.task_id, {'status': 'done'})
+    # A completed task is never a destination: a follow-up on finished work is new work.
     outcome = service.match(run, wid)
-    assert outcome['kind'] == 'exact'
-    assert outcome['targets'][0]['task_id'] == doc.task_id
-    assert outcome['targets'][0]['status'] == 'done'
+    assert outcome['kind'] == 'new' and outcome['targets'] == []
+    rt.store().update(doc.task_id, {'status': 'open', 'reopen': True})
+    outcome = service.match(run, wid)
+    assert outcome['kind'] == 'exact' and outcome['targets'][0]['task_id'] == doc.task_id
 
 
 def joined(tmp_path, settings, data_dir):
@@ -180,14 +182,17 @@ def test_all_semantic_options_retained_and_target_binding_cannot_switch(settings
     tasks.update(two.task_id, {'status': 'done'})
     rt, store, run, wid, service = custom_joined(settings, data_dir, tmp_path,
         [{'path': tasks.rel(d.path), 'match_basis': 'related_only'} for d in [one, two]])
+    tasks.update(two.task_id, {'status': 'open', 'reopen': True})
+    two = tasks.resolve(two.task_id)
     result = service.match(run, wid)
     assert result['kind'] == 'selection'
     assert {x['task_id'] for x in result['targets']} == {one.task_id, two.task_id}
     with pytest.raises(UserError, match='target_task_id'):
         service.prepare(run, wid, choice='update', user_approved=True, reason='Update without guessed target.')
     service.prepare(run, wid, choice='update', user_approved=True, reason='Choose requested scope.', target_task_id=one.task_id, expected_revision=tf.content_hash(one.raw))
+    other = next(x for x in result['targets'] if x['task_id'] == two.task_id)
     with pytest.raises(UserError, match='immutable'):
-        service.prepare(run, wid, choice='update', user_approved=True, reason='Switching target is forbidden.', target_task_id=two.task_id, expected_revision=result['targets'][1]['revision'])
+        service.prepare(run, wid, choice='update', user_approved=True, reason='Switching target is forbidden.', target_task_id=two.task_id, expected_revision=other['revision'])
 
 
 def test_related_only_dossier_identity_and_source_substrings_never_exact(settings, data_dir, tmp_path):

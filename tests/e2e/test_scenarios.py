@@ -465,18 +465,18 @@ def test_g_push_failure_local_task_kept_git_pending_then_retry_once(world, host_
 
 
 # --------------------------------------------------------------------------- h
-def test_h_completed_exact_task_is_enriched_not_duplicated_or_reopened(world, host_factory):
+def test_h_completed_exact_task_is_never_updated_and_the_follow_up_is_proposed_as_new(world, host_factory):
     host = started_host(host_factory)
     tid, existing = seed_normal(world, host, existing_status='done')
     host.source.pages = [[host.source.item('103', 'Fix login timeout', revision='v2')]]
+    before = existing.read_bytes()
     files_before = len(world.task_files())
     day = P.run_day(host)
-    assert day['digest']['items'] == []
-    assert '**Existing task:** Fix login timeout: complete' in day['digest']['text']
-    text = existing.read_text()
-    assert frontmatter(text)['status'] == 'done' and len(dossier_ids(text)) == 1
+    # Completed work is context, not a destination: no enrichment, no reopen, a new proposal instead.
+    assert [i['kind'] for i in day['digest']['items']] == ['new']
+    assert '**Existing task:** Fix login timeout' not in day['digest']['text']
+    assert existing.read_bytes() == before and frontmatter(existing.read_text())['status'] == 'done'
     assert len(world.task_files()) == files_before
-    assert snapshot(world)['remote'][world.rel(existing)] == existing.read_bytes()
 
 
 # --------------------------------------------------------------------------- i
