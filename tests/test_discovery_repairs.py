@@ -80,7 +80,8 @@ def test_decomposed_thread_ids_refined_only_from_source_body(tmp_path):
     stored = json.loads(read_all(store, run, receipt['resource'], 'parent'))['workstreams']
     assert [w['exact_source_ids'][0].get('message_ts') for w in stored] == ['171.2', '171.3']
     assert stored[0]['related_source_ids'] == []
-    # An id the source body does not contain is left for same-child correction.
+    # An id the source body does not contain is never invented: the shared thread id stays and the
+    # plugin anchors each workstream as its own action instead of refusing the bundle.
     store2, run2, cid2 = setup(tmp_path / 'b')
     store2.put_resource(run2, 'source-body-' + cid2, 'ts=171.2 only')
     t2 = prepare(store2, run2, cid2)['token']
@@ -88,8 +89,10 @@ def test_decomposed_thread_ids_refined_only_from_source_body(tmp_path):
     for w in b2['workstreams']:
         w['exact_source_ids'] = [dict(THREAD)]; w['related_source_ids'] = []
         w.update(action_key='k' + w['title'], action_anchor={'locator': 'message:171.9', 'outcome': w['title']}, action_relation='independent')
-    store2.spool_payload(run2, t2, b2)
-    assert 'decisive message identity' in store2.get_attempt(run2, t2)['validation_error']
+    r2 = store2.spool_payload(run2, t2, b2)
+    assert 'validation_error' not in store2.get_attempt(run2, t2)
+    stored2 = json.loads(read_all(store2, run2, r2['resource'], 'parent'))['workstreams']
+    assert all(w['exact_source_ids'] == [THREAD] and w['action_anchor']['locator'].startswith('section:') for w in stored2)
 
 
 def test_repair_child_reads_only_previous_bundle_and_gets_targeted_instructions(tmp_path):

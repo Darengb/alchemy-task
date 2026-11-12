@@ -39,10 +39,10 @@ MAX_BUNDLE_BYTES = 512 * 1024
 
 # Repair hint returned to a research child whose workstreams share a decisive message.
 DECISIVE_REPAIR = ('; two workstreams cite the same decisive message: if they are steps of the SAME action, merge them into one '
-                   'workstream and list the steps as its subtasks; if they are separate actions, cite for each the id of its own '
-                   'decisive message, or, when one message (such as one email) holds several actions, keep them split and give each '
-                   'an action anchor from the action registry (the parent freezes the anchors with discovery_actions, locators '
-                   'like section:quiz or bullet:2)')
+                   'workstream and list the steps as its subtasks; if they are separate actions, keep them split: the plugin gives '
+                   'each an action anchor automatically when one message (such as one email) holds several actions, so remove any '
+                   'action_key/action_anchor you invented and submit again (advanced: the parent can freeze anchors itself with '
+                   'discovery_actions, locators like section:quiz or bullet:2)')
 
 def _json_bytes(value: Any) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode()
@@ -308,7 +308,8 @@ def validate_bundle(bundle: Any, cid: str, expected_sources: list[Any], *, other
             raise UserError('workstream exact_source_ids must be unique')
         if any(not any(source_identity_covers(assigned, reported) for assigned in expected) for reported in canonical):
             raise UserError('workstream source is outside assigned thread identity')
-        if len(workstreams) > 1 and not any(is_message_refinement(x) for x in canonical):
+        # An anchored action (frozen by the parent or automatically from the bundle) is its own identity.
+        if len(workstreams) > 1 and 'action_key' not in supplied and not any(is_message_refinement(x) for x in canonical):
             raise UserError('each decomposed workstream requires a decisive message identity')
         normalized = copy.deepcopy(supplied)
         action_id = None
@@ -333,7 +334,7 @@ def validate_bundle(bundle: Any, cid: str, expected_sources: list[Any], *, other
             raise UserError('duplicate workstream decisive identity' + DECISIVE_REPAIR)
         for previous, previous_action in seen_decisive_sets:
             overlap = any(source_identity_covers(left, right) or source_identity_covers(right, left) for left in previous for right in canonical)
-            if overlap and not (action_id and previous_action and action_id != previous_action and set(previous) == set(canonical)):
+            if overlap and not (action_id and previous_action and action_id != previous_action):
                 raise UserError('overlapping workstream decisive identity sets' + DECISIVE_REPAIR)
         for other_id, represented in others.items():
             if any(source_identity_covers(other, reported) or source_identity_covers(reported, other) for other in represented for reported in canonical):

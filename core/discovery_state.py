@@ -1064,15 +1064,6 @@ class DiscoveryStore:
             loc = anchor.get('locator') if isinstance(anchor, dict) else None
             if isinstance(loc, str) and loc.startswith('message:'):
                 locators[i] = loc.split(':', 1)[1]
-        if not ledger['action_registry'].get(attempt['candidate_id']):
-            dropped = 0
-            for w in streams:
-                if any(k in w for k in ACTION_FIELDS):
-                    dropped += 1
-                    for k in ACTION_FIELDS:
-                        w.pop(k, None)
-            if dropped:
-                repairs.append(f'dropped action_key/action_anchor/action_relation from {dropped} workstream(s): no frozen action registry')
         if len(streams) > 1:
             body = self._source_body_text(run_id, ledger, attempt['candidate_id'])
             plans = {}
@@ -1089,7 +1080,97 @@ class DiscoveryStore:
                 if related_index is not None:
                     w['related_source_ids'].pop(related_index)
                 repairs.append(f'workstream {i}: refined thread-level exact source to message-level {canonical_source_id(refined)}')
+        auto = self._auto_anchor(ledger, attempt['candidate_id'], streams) if len(streams) > 1 else None
+        if auto:
+            repairs.append(auto)
+        elif not ledger['action_registry'].get(attempt['candidate_id']):
+            dropped = 0
+            for w in streams:
+                if any(k in w for k in ACTION_FIELDS):
+                    dropped += 1
+                    for k in ACTION_FIELDS:
+                        w.pop(k, None)
+            if dropped:
+                repairs.append(f'dropped action_key/action_anchor/action_relation from {dropped} workstream(s): no frozen action registry')
         return out, repairs
+
+    def _auto_anchor(self, ledger: dict[str, Any], cid: str, streams: list[dict[str, Any]]) -> str | None:
+        """Freeze one action anchor per workstream when separate actions share a decisive message.
+
+        Several genuine actions in one email (or one chat message) cannot each cite their own
+        message, so the plugin freezes an anchor per workstream from the bundle itself
+        (locator ``section:<title slug>``, outcome = the workstream title) and records it in the
+        action registry. Anchors the parent already froze are kept as they are. Never rejects:
+        anything it cannot interpret is left for normal validation.
+        """
+        registry = [e for e in (ledger['action_registry'].get(cid) or []) if isinstance(e, dict)]
+        try:
+            canonical = [[canonical_source_id(x) for x in w.get('exact_source_ids')] for w in streams]
+        except (UserError, TypeError, ValueError, AttributeError):
+            return None
+        if any(not ids for ids in canonical):
+            return None
+        overlap = any(source_identity_covers(a, b) or source_identity_covers(b, a)
+                      for i in range(len(canonical)) for j in range(i + 1, len(canonical))
+                      for a in canonical[i] for b in canonical[j])
+        if not overlap and all(any(is_message_refinement(x) for x in ids) for ids in canonical):
+            return None
+
+        def norm(text: str) -> str:
+            return ' '.join(text.casefold().split())
+
+        def verified(w: dict[str, Any]) -> bool:
+            a = w.get('action_anchor')
+            return (isinstance(a, dict) and isinstance(w.get('action_key'), str) and w.get('action_relation') == 'independent'
+                    and any(e.get('locator') == a.get('locator') and e.get('outcome') == a.get('outcome') for e in registry))
+
+        kept = [w for w in streams if verified(w)]
+        taken = {norm(w['action_anchor']['outcome']) for w in kept}
+        keys = {w['action_key'] for w in kept}
+        by_outcome = {norm(e['outcome']): e for e in registry if isinstance(e.get('outcome'), str)}
+        locators = {e.get('locator') for e in registry}
+        new, plan = [], []
+        for i, w in enumerate(streams):
+            if verified(w):
+                continue
+            title = ' '.join(str(w.get('title') or w.get('digest_next_action') or f'Action {i + 1}').split())[:480] or f'Action {i + 1}'
+            outcome, n = title, 2
+            while norm(outcome) in taken:
+                outcome, n = f'{title} ({n})', n + 1
+            taken.add(norm(outcome))
+            entry = by_outcome.get(norm(outcome))
+            if entry:
+                anchor = {'locator': entry['locator'], 'outcome': entry['outcome']}
+            else:
+                slug = re.sub(r'[^a-z0-9]+', '-', title.casefold()).strip('-')[:80].strip('-') or f'action-{i + 1}'
+                locator, n = 'section:' + slug, 2
+                while locator in locators:
+                    locator, n = f'section:{slug}-{n}', n + 1
+                locators.add(locator)
+                anchor = {'locator': locator, 'outcome': outcome}
+                new.append(anchor)
+            key, n = 'auto-' + anchor['locator'].split(':', 1)[1].replace('/', '-')[:200], 2
+            while key in keys:
+                key, n = f'{key}-{n}', n + 1
+            keys.add(key)
+            plan.append((w, key, anchor))
+        if not plan:
+            return None
+        if new:
+            item = self._candidate(ledger, cid)
+            try:
+                frozen = freeze_actions(cid, item['source_ids'], new, existing=registry)
+            except UserError:
+                return None
+            fresh = {a['locator'] for a in new}
+            for e in frozen:
+                if e['locator'] in fresh:
+                    e['provenance'] = 'auto from research bundle'
+            ledger['action_registry'][cid] = frozen
+        for w, key, anchor in plan:
+            w['action_key'], w['action_anchor'], w['action_relation'] = key, dict(anchor), 'independent'
+        return (f'auto-anchored {len(plan)} workstream(s) that share a decisive message: '
+                f'froze {len(new)} action anchor(s) from the research bundle')
 
     @staticmethod
     def _message_refinement(w: dict[str, Any], locator: str | None, body: str) -> tuple[int, dict[str, Any], int | None] | None:
