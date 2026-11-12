@@ -213,7 +213,13 @@ def _run_sources(configs):
             mail = out.get(c['mailbox_source']) or {}
             if mail.get('kind') != 'mail' or any(mail.get(f) != c.get(f) for f in _MAILBOX_READ_FIELDS):
                 c.pop('mailbox_source')
+            else:
+                # The mailbox keeps whole threads it admits (forwarded notes included): one email, one candidate.
+                c['mailbox_admission'] = {f: copy.deepcopy(mail[f]) for f in MAILBOX_ADMISSION_FIELDS if f in mail}
     return out
+
+
+MAILBOX_ADMISSION_FIELDS = ('sender_domains', 'excluded_senders', 'transcript_senders', 'owner_email', 'owner_report_pattern', 'admit_all')
 
 
 def _transcript_name(mail, key, taken):

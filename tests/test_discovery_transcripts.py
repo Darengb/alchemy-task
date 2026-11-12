@@ -266,3 +266,29 @@ def test_unclosed_anchor_flood_is_linear():
     assert time.monotonic() - t < 2
     assert _html_to_text('<a data-href="https://bad.test" href="https://good.test/d">Doc</a>') == 'Doc (https://good.test/d)'
     assert _html_to_text('<a data-href="https://bad.test" href="javascript:1">Doc</a>') == 'Doc'
+
+
+def test_notes_thread_the_mailbox_admits_stays_one_mail_candidate(tmp_path):
+    # A forwarded notes email: the mailbox admits the whole thread (a colleague forwarded it), so the
+    # transcript source leaves that thread to the mailbox and one email never becomes two candidates.
+    mail = {**CFG, 'source_key': 'mail', 'sender_domains': ['example.test'], 'excluded_senders': [], 'owner_email': '',
+            'transcript_senders': ['gemini-notes@google.com']}
+    admission = {k: mail[k] for k in ('sender_domains', 'excluded_senders', 'transcript_senders', 'owner_email')}
+    notes = {**NOTES, 'service_senders': ['gemini-notes@google.com'], 'mailbox_source': 'mail', 'mailbox_admission': admission}
+    threads = [{'id': 't1', 'messages': [message('m1', 'gemini-notes@google.com', subject='Notes: recap', text='Next steps: ship it'),
+                                         message('m2', 'owner@example.test', subject='Fwd: Notes: recap', at=AT + 1000)], 'complete': True},
+               {'id': 't2', 'messages': [message('m3', 'gemini-notes@google.com', subject='Notes: other', text='Action items: plan')], 'complete': True}]
+    _, mstate, _ = collect(tmp_path, mail, lambda c, s, e, k: envelope(c, s, e, threads))
+    assert [b['candidate']['title'] for b in mstate['backlog']] == ['Notes: recap']
+    _, tstate, _ = collect(tmp_path, notes, lambda *a: pytest.fail('must reuse the mail snapshot'))
+    assert _ids(tstate) == ['m3']
+
+
+def test_run_view_gives_the_transcript_source_its_mailbox_admission(settings, data_dir, tmp_path):
+    integration, rt, ctx = _three(settings, data_dir, tmp_path)
+    integration.configure_transcripts('work', user_approved=True)
+    run = integration.start('work', session_id='parent')
+    frozen = {c['source_key']: c for c in run['sources']}
+    admission = frozen['mbg-transcripts']['mailbox_admission']
+    assert admission['sender_domains'] == frozen['mbg']['sender_domains']
+    assert admission['transcript_senders'] == frozen['mbg']['transcript_senders']
