@@ -84,7 +84,9 @@ def test_native_preserves_approved_target_through_reconcile_and_schedule(setting
     reconcile_discovery_job(rt, integration._stream('work'))
     discovery.update_stream(rt, {'name': 'work', 'time': '8 AM', 'user_approved': True}, 'parent')
     assert ctx.cron[jid]['deliver'] == 'telegram:approved:topic'
-    assert ctx.cron[jid]['schedule'] == '0 8 * * *' and len(ctx.cron) == 1
+    # The job ticks every 30 minutes behind its wake check; the user's 8 AM lives on the stream.
+    assert ctx.cron[jid]['schedule'] == '*/30 * * * *' and len(ctx.cron) == 1
+    assert ctx.state.get('streams')['work']['schedule'] == '0 8 * * *'
 
 
 def test_explicit_owner_requires_available_exact_readback_before_any_job(settings, data_dir, tmp_path, home):
