@@ -173,11 +173,8 @@ _STOP = frozenset({"with", "from", "that", "this", "into", "about", "your", "the
 
 
 def _hermes_home() -> Path:
-    try:
-        from hermes_constants import get_hermes_home
-        return Path(get_hermes_home())
-    except Exception:  # noqa: BLE001 - outside Hermes (tests, tools)
-        return Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+    from hermes_constants import get_hermes_home
+    return Path(get_hermes_home())
 
 
 def origin_for(rt: Runtime, task_id: str) -> str:

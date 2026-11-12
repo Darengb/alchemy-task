@@ -15,6 +15,7 @@ from pathlib import Path
 from .runtime import Runtime
 from .core.discovery_state import DiscoveryStore, atomic_json, read_json
 from .core.discovery_identity import UserError, _component, candidate_id
+from .core.reader_policy import check_binding
 from .core.discovery_dossiers import content_revision
 from .core import taskfile as tf
 from .core.discovery_research import child_schema, CANARY, SECRET_VALUE, MAX_TITLE_CHARS, MAX_REASON_CHARS, MAX_STRING_CHARS
@@ -185,6 +186,22 @@ def _sync_skip_lists(configs):
         if skip: c['transcript_senders'] = list(dict.fromkeys(skip))
         else: c.pop('transcript_senders', None)
     return configs
+
+
+def _check_reader_bindings(config, approved_source):
+    """Every reader in a source config (read_method, binding, thread/replies/primary bindings) must be a
+    read-only tool, and neither the config nor the approved stream source may add a banned toolset."""
+    check_binding(config.get('read_method'), [*(config.get('toolsets') or []), *(approved_source.get('toolsets') or [])])
+    bindings = [config.get('binding'), config.get('thread_binding'), config.get('replies_binding'),
+                *((config.get('primary_bindings') or {}).values() if isinstance(config.get('primary_bindings'), dict) else [])]
+    for binding in bindings:
+        if binding is None: continue
+        if not isinstance(binding, dict):
+            raise UserError('reader binding needs actual tool and response-field mapping')
+        check_binding(binding.get('tool'), binding.get('toolsets') or [])
+        probe = binding.get('capability')
+        if probe is not None:
+            check_binding(probe.get('tool') if isinstance(probe, dict) else None)
 
 
 def _run_sources(configs):
@@ -527,6 +544,7 @@ class DiscoveryIntegration:
                 raise UserError('reader binding needs actual tool and response-field mapping')
             if binding['tool'] != configured['read_method']:
                 raise UserError('binding tool must equal approved read_method')
+        _check_reader_bindings(configured, approved[0])
         configured['approved'] = True
         configs = self.rt.ctx.state.get('discovery_sources', default={}) or {}
         mine = configs.setdefault(current['name'], {})
@@ -810,6 +828,9 @@ class DiscoveryIntegration:
         binding = binding or config.get('binding')
         if not binding:
             raise UserError('no verified structured reader binding; use explicitly partial attestation')
+        # Saved before this check existed? Still never dispatch a write-like reader.
+        check_binding(binding.get('tool'))
+        if binding.get('capability'): check_binding(binding['capability'].get('tool'))
         args = copy.deepcopy(binding.get('arguments') or {})
         values = {**config, 'start': start, 'end': end, 'cursor': cursor}
         for parameter, field in binding.get('request_fields', {}).items():
@@ -1130,6 +1151,8 @@ class DiscoveryIntegration:
             raise UserError('readback must verify message_id, origin target and full text')
         if binding.get('scheduled_approved') is not True or not isinstance(binding.get('toolsets'), list) or not binding['toolsets'] or any(not isinstance(t, str) or not t for t in binding['toolsets']):
             raise UserError('approve scheduled origin delivery and actual sender/reader toolsets before activation')
+        check_binding(binding['read_tool'], binding['toolsets'])
+        check_binding(binding['send_tool'], binding['toolsets'], sender=True)
         # Verify existing origin content without sending a test message.
         values = {'target': binding['target'], 'message_id': binding.get('verification_message_id')}
         if not values['message_id'] or not isinstance(binding.get('verification_text'), str):
