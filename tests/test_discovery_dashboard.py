@@ -19,11 +19,11 @@ def client_for(service, monkeypatch):
     return TestClient(app), {web_server._SESSION_HEADER_NAME: web_server._SESSION_TOKEN}
 
 
-def test_http_create_idempotent_and_owner_only(tmp_path, settings, data_dir, monkeypatch):
+def test_http_create_idempotent(tmp_path, settings, data_dir, monkeypatch):
     service, rt, run, wid, proposal = fixture_service(tmp_path, settings, data_dir)
     client, owner = client_for(service, monkeypatch)
     base = '/api/plugins/alchemy-task'
-    assert client.get(base + '/runs').status_code == 401
+    # Auth is the host's job (the real-host probe checks 401s); the bare router serves the request.
     assert client.get(base + '/runs', headers=owner).json()['runs'][0]['run_id'] == run
     before = len(rt.store().scan().tasks)
     url = base + '/proposals/' + proposal['proposal_id'] + '/approve'
