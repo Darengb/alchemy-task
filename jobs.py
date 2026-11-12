@@ -149,9 +149,9 @@ BANNED_STREAM_TOOLSETS = frozenset({'terminal', 'file', 'code_execution', 'cronj
 
 
 def stream_reader_toolsets(names) -> list[str]:
-    """Minimal local filter (see TODO above): drop banned toolsets and composite 'hermes-*' bundles."""
-    return [t for t in dict.fromkeys(names or []) if isinstance(t, str) and t
-            and t not in BANNED_STREAM_TOOLSETS and not t.startswith('hermes-')]
+    """Approved toolsets for a stream job minus anything that could write, run code or schedule (core.reader_policy)."""
+    from .core.reader_policy import allowed_reader_toolsets
+    return [t for t in allowed_reader_toolsets([t for t in dict.fromkeys(names or []) if isinstance(t, str) and t])]
 
 
 def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None, *, delivery_owner='native_origin', deliver='origin') -> dict[str, Any]:

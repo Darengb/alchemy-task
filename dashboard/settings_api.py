@@ -139,7 +139,11 @@ def _streams(rt: Any) -> list[dict[str, Any]]:
         pub["frequency"] = s.get("frequency") or "daily"
         pub["time"] = s.get("time") or ""
         pub["sources"] = [{"name": x.get("name"), "type": x.get("type"), "scope": x.get("scope")} for x in s.get("sources") or []]
-        pub["next_run_at"] = nexts.get(str(s.get("job_id"))) if s.get("job_id") else None
+        if s.get("job_id") and str(s.get("job_id")) in nexts:
+            from ..jobs import next_stream_run
+            pub["next_run_at"] = next_stream_run(s) or nexts.get(str(s.get("job_id")))  # the user's slot, not the 30-min tick
+        else:
+            pub["next_run_at"] = None
         pub["running"] = name in running
         pub["progress"] = running.get(name)
         out.append(pub)
@@ -222,6 +226,8 @@ async def run_stream(request: Request, name: str):
             # From a dashboard request the host runs the job inline for minutes, so fire it off the request.
             _FIRED[stream_name] = time.time()
             try:
+                from ..jobs import request_run_now
+                request_run_now(rt, stream_name)  # the stream job's wake check runs the agent only when asked
                 rt.ctx.dispatch_tool("cronjob_manage", {"action": "run", "job_id": job_id})
             except Exception:  # noqa: BLE001 - the run's own result posts to the stream's chat
                 pass
