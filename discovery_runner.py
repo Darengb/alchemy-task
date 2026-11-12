@@ -151,15 +151,17 @@ DIGEST_FIELD_INSTRUCTIONS = (
     'List existing_task_candidates most likely destination first and give each a confidence (high, medium or low). '
     'Set recommended_task_path to one candidate path only when that task is clearly the right destination; omit it otherwise.')
 
-# One proposal per conversation: related asks are subtasks, not separate workstreams.
+# One workstream per action: steps of the same action are subtasks; separate actions are separate workstreams.
 GROUPING_INSTRUCTIONS = (
-    'Default to ONE workstream per conversation and list its related asks in subtasks (up to 8 short steps). '
-    'Split into several workstreams only when asks would really be separate tasks: a different owner, a different outcome '
-    'or a very different deadline. Never emit a resolved or excluded ask as a workstream; mention it in current_understanding instead.')
+    'Return one workstream per ACTION, not per conversation: keep one when the conversation is one action, and several only '
+    'for genuinely separate actions. Each workstream must stand alone for filtering, exact matching and execution, with its own '
+    'decisive message. Subtasks (up to 8 short steps) are only for steps of the SAME action, such as verifying a fix, checking related '
+    'codes or confirming the offer for one problem. Asks that belong to different existing tasks are different actions: split them. '
+    'Never emit a resolved or excluded ask as a workstream; mention it in current_understanding instead.')
 PREVIOUS_RESEARCH_INSTRUCTIONS = (
     ' This conversation was researched before: previous-research lists the earlier accepted workstreams (read-only). '
-    'Update those workstreams: keep their titles and the same split, and add new asks as subtasks of the matching workstream '
-    'rather than as new workstreams.')
+    'Update those workstreams: keep their titles and the same split, add new steps as subtasks of the matching workstream, '
+    'and add a new workstream only for a genuinely new action.')
 
 class DiscoveryRunner:
     def __init__(self, ctx, rt, *, store=None, clock=time, policy=None,

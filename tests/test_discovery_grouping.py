@@ -30,8 +30,12 @@ def test_subtasks_are_optional_and_bounded():
         with pytest.raises(dr.UserError):
             dr.validate_bundle(b, b['candidate_id'], ['slack:T1:C1:171.1'])
     text = discovery_runner.GROUPING_INSTRUCTIONS
-    assert 'ONE workstream per conversation' in text and 'subtasks' in text and 'resolved or excluded' in text
-    assert 'keep their titles' in discovery_runner.PREVIOUS_RESEARCH_INSTRUCTIONS
+    assert 'one workstream per ACTION, not per conversation' in text and 'per conversation and list' not in text
+    assert 'SAME action' in text and 'different existing tasks' in text and 'resolved or excluded' in text
+    assert 'decisive message' in text and 'stand alone' in text
+    assert len(text) < 900
+    again = discovery_runner.PREVIOUS_RESEARCH_INSTRUCTIONS
+    assert 'keep their titles' in again and 'genuinely new action' in again
 
 
 def test_approved_create_writes_research_subtasks_as_checkboxes(settings, data_dir, tmp_path):

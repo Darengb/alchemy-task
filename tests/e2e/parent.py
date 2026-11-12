@@ -151,7 +151,7 @@ def run_day(host, *, stream='work', decisions=None, max_rounds=20, retry_stale=F
                 out = decide(m['targets'][0])
             ok(out)
         elif m['kind'] == 'conflict':
-            ok(host.call('discovery_decision', {'run_id': run_id, 'unit_id': wid, 'decision': 'conflict', 'reason': 'Several exact destinations.'}, session=session))
+            ok(host.call('discovery_decision', {'run_id': run_id, 'unit_id': wid, 'decision': 'propose', 'reason': 'Several exact destinations; the user picks one.'}, session=session))
         else:
             ok(host.call('discovery_decision', {'run_id': run_id, 'unit_id': wid, 'decision': 'propose', 'reason': 'Independent untracked user action.'}, session=session))
     digest = ok(host.call('discovery_digest', {'run_id': run_id}, session=session))

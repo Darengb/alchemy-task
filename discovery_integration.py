@@ -23,7 +23,7 @@ from .discovery_context import DiscoveryContext, resolve_identity
 from .discovery_sources import (SourceAdapter, collect_attested, inline_primary, has_primary_content, PRIMARY_POINTER_KEYS, validate_source_config, DEFAULT_TRANSCRIPT_SENDERS,
                                 DEFAULT_TRANSCRIPT_KEYWORDS, transcript_keywords, transcript_senders)
 from .discovery_runner import DiscoveryRunner, RunnerPolicy, make_tool_handlers, make_hooks, CHECKLIST, BINDING_KEYS
-from .discovery_conversion import DiscoveryConversion
+from .discovery_conversion import DiscoveryConversion, order_semantic_targets
 from .discovery_digest import DiscoveryDigest, coverage_degraded
 
 
@@ -1388,8 +1388,9 @@ class DiscoveryIntegration:
                 return failed
             if outcome['kind'] == 'exact' and decision not in {'auto', 'noop'}:
                 raise UserError('unique exact target requires useful-delta enrichment or true noop decision')
-            if outcome['kind'] == 'conflict' and decision != 'conflict':
-                raise UserError('multiple exact targets conflict; cannot mutate or propose a guessed target')
+            if outcome['kind'] == 'conflict' and decision not in {'propose', 'conflict'}:
+                raise UserError('several existing tasks match exactly; record decision propose so the user picks one by number '
+                                '(or creates a separate task); never write automatically')
             if decision == 'conflict' and outcome['kind'] != 'conflict':
                 raise UserError('no verified multiple-exact conflict')
             # A shadow (or research-only) run records exact decisions but never writes a task.
@@ -1403,8 +1404,12 @@ class DiscoveryIntegration:
                         raise
                     return self._failed_match_locked(run_id, unit_id, exc, path)
                 if decision == 'auto': self.conversion.deliver_git(run_id, unit_id)
-            record = {'run_id': run_id, 'unit_id': unit_id, 'request': request, 'kind': outcome['kind'],
-                      'targets': outcome['targets'], 'title': outcome['research']['title'],
+            kind, targets = outcome['kind'], outcome['targets']
+            if kind == 'conflict' and decision == 'propose':
+                # Several exact matches become a numbered choice ordered by research confidence.
+                kind, targets = 'selection', order_semantic_targets(targets, outcome['research'])
+            record = {'run_id': run_id, 'unit_id': unit_id, 'request': request, 'kind': kind,
+                      'targets': targets, 'title': outcome['research']['title'],
                       **{k: outcome['research'].get(k) for k in ('current_understanding', 'substantive_next_action', 'source_links', 'related_context_links', 'new_information', 'sources_unavailable')},
                       # Authored short digest text and the nothing-new flag are optional research fields.
                       **{k: outcome['research'][k] for k in ('digest_current_state', 'digest_next_action', 'digest_addition', 'existing_task_already_current') if k in outcome['research']},
@@ -1412,6 +1417,7 @@ class DiscoveryIntegration:
                       'uncertainty': outcome['research']['decisions_and_open_questions']['open_questions'],
                       'research_revision': content_revision(outcome['research'])}
             if shadow and decision == 'auto': record['shadow'] = True
+            if kind == 'selection' and outcome['kind'] == 'conflict': record['multiple_exact'] = True
             atomic_json(path, record)
             return record
 
@@ -1740,7 +1746,7 @@ SCHEMAS = {
  'discovery_context': _schema('discovery_context', 'Freeze collected source inventory, ALL-status task bodies, installed full skills, full rubric and approved context before research.', {**RUN, 'context': OBJ}, ['run_id']),
  'discovery_match': _schema('discovery_match', 'Post-join typed exact matching and all semantic target options; returns full body resources, no mutation.', {**RUN, 'unit_id': STR}, ['run_id', 'unit_id']),
  'discovery_digest': _schema('discovery_digest', 'Prepare/read immutable review digest after all match decisions. Preparation is not delivery proof.', {**RUN, 'action': {'type': 'string', 'enum': ['prepare', 'get', 'delivery', 'send']}}, ['run_id']),
- 'discovery_decision': _schema('discovery_decision', 'Parent post-join disposition. Unique exact requires useful delta auto or byte-preserving noop; semantic/new remains proposal; multiple exact conflict.', {**RUN, 'unit_id': STR, 'decision': {'type': 'string', 'enum': ['propose', 'auto', 'noop', 'conflict']}, 'reason': STR, 'target_task_id': STR, 'expected_revision': STR, 'useful_delta': BOOL}, ['run_id', 'unit_id', 'decision', 'reason']),
+ 'discovery_decision': _schema('discovery_decision', 'Parent post-join disposition. Unique exact requires useful delta auto or byte-preserving noop; semantic/new remains proposal; several exact matches are a propose (numbered choice for the user), never auto/noop. conflict is accepted only for compatibility.', {**RUN, 'unit_id': STR, 'decision': {'type': 'string', 'enum': ['propose', 'auto', 'noop', 'conflict']}, 'reason': STR, 'target_task_id': STR, 'expected_revision': STR, 'useful_delta': BOOL}, ['run_id', 'unit_id', 'decision', 'reason']),
  'discovery_conversion_recover': _schema('discovery_conversion_recover', 'Inspect/resume exact conversion, or explicitly revise/cancel/bind_manual an unwritten plan with CAS and user approval. Any chat of this profile; approvals.owner_only applies when enabled.', {**RUN, 'unit_id': STR, 'action': {'type': 'string', 'enum': ['resume', 'inspect', 'revise', 'cancel', 'bind_manual']}, 'expected_plan_revision': STR, 'target_task_id': STR, 'expected_revision': STR, 'edits': OBJ, 'reason': STR, 'user_approved': BOOL}, ['run_id', 'unit_id']),
  'discovery_link_audit': _schema('discovery_link_audit', 'Read-only dry-run audit of task links written by discovery conversions visible to this chat: latest occurrence per task/dossier, one marker pair and the expected revision line; optional workspace-relative legacy dossier folders are listed. Never writes or repairs.', {'legacy_roots': {'type': 'array', 'items': STR}}),
  'discovery_runs': _schema('discovery_runs', 'Backend API: list full run records or get exact run including research, proposals, conflicts, recovery and delivery.', {'run_id': STR}),
