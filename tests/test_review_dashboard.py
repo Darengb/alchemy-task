@@ -92,3 +92,16 @@ def test_profile_selector_must_name_the_request_home(hermes_home):
     assert discovery_api._serving_profile(own) is (own is not None)
     assert discovery_api._serving_profile("someone-else") is False
     assert discovery_api._serving_profile("") is False
+
+
+def test_skills_and_readme_describe_read_only_readers():
+    root = DASHBOARD.parent
+    discovery = (root / "skills" / "discovery" / "SKILL.md").read_text()
+    assert "Readers are read-only tools" in discovery and "local MCP server that exposes only read tools" in discovery
+    assert "## Files during a run" not in discovery and "scratch folder" not in discovery
+    assert "never terminal, code or file tools" in (root / "skills" / "setup" / "SKILL.md").read_text()
+    readme = (root / "README.md").read_text()
+    assert "rely on Hermes's dashboard sign-in" in readme
+    assert "has no terminal, code or file tools and cannot create or change scheduled" in readme
+    for text in (discovery, readme):
+        assert "\u2014" not in text

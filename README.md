@@ -53,7 +53,7 @@ Research only reads. The plugin blocks every write, shell and send tool for rese
 
 ### 2. Discovery: a safety net for asks that slip
 
-An optional daily routine reads the conversations you choose, such as email, Slack and meeting transcripts that arrive by email, or any other source your agent can read, and finds follow-ups asked of you or promised by you. Discovery can only read sources already connected to your agent; during setup you choose which of them it reads. It sends a short numbered digest to your chat. Reply with the numbers you want and they become tasks, with research. Nothing becomes a task without your approval, and when a follow-up clearly matches a task you already have, discovery offers to add the new details to that task instead.
+An optional daily routine reads the conversations you choose, such as email, Slack and meeting transcripts that arrive by email, or any other source your agent can read, and finds follow-ups asked of you or promised by you. Discovery can only read sources already connected to your agent through read-only tools; during setup you choose which of them it reads. It sends a short numbered digest to your chat. Reply with the numbers you want and they become tasks, with research. Nothing becomes a task without your approval, and when a follow-up clearly matches a task you already have, discovery offers to add the new details to that task instead.
 
 Each stream has its own sources, areas, schedule and chat, so work and personal stay separate.
 
@@ -132,7 +132,8 @@ Each job's small loader script is copied into `$HERMES_HOME/scripts/` (cron only
 
 Each **discovery stream** is one more job, created only when you set the stream up (say "set up a
 discovery stream" in the chat that should receive it). It runs one agent turn on your model per run and reads
-only the sources and scopes you approved, with the tools you already have. Up to 50 suggestions a day per
+only the sources and scopes you approved, through read-only tools you already have (a connector, an MCP
+server or another plugin's tool). A scheduled run has no terminal or file tools and cannot create jobs. Up to 50 suggestions a day per
 stream get a quick extra check (configurable). That research runs in short tool calls of at most
 five minutes each, inside Hermes' default tool deadline, so you never need to raise any timeout.
 
@@ -323,7 +324,9 @@ Setup fills them in for you.
 **Discovery**
 
 - **What it reads:** each discovery run reads only the sources and scopes you approved for that stream, using
-  the tools and connectors you already have. It also reads:
+  read-only tools you already have (connectors, MCP servers or other plugins' tools). Setup refuses a reader
+  that can write. A scheduled run has no terminal, code or file tools and cannot create or change scheduled
+  jobs. It also reads:
   - your profile's `SOUL.md` and memory files
   - your installed skills
   - files that those reader tools saved in Hermes's cache folder
@@ -378,6 +381,8 @@ Setup fills them in for you.
 **Dashboard and desktop page**
 
 - **Pages:** the Tasks tab (web dashboard) and Tasks page (desktop app) are served by Hermes's own dashboard.
+- **Access:** the plugin's routes rely on Hermes's dashboard sign-in; Hermes checks every request before it
+  reaches them. They use only Hermes's published plugin APIs for settings, plugin data and running jobs.
 - **What they can do:** list and edit tasks, approve or dismiss discovery suggestions, change stream
   schedules, and start jobs. Every change uses the same files, log lines and Git commits as a change made in
   chat.
