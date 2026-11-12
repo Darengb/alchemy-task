@@ -31,7 +31,7 @@ def _same_day_rerun(s, data_dir, origin, *, empty):
         store, run, items, wids = build_run(data_dir, 1, state='Empty rerun.')
         second = s.digest.prepare(run, stream='work', day='2030-01-03', origin={'session_id': origin}, items=[])
     else:
-        store, run, items, wids = build_run(data_dir, 1, state='A distinct rerun finding for the launch.')
+        store, run, items, wids = build_run(data_dir, 1, state='A distinct rerun finding for the launch.', link='https://example.test/work/rerun')
         with store._lock(store._run_lock_name(run)):
             ledger = store.get_run(run)
             ledger['origin'] = {'session_id': origin, 'deliver': 'origin'}

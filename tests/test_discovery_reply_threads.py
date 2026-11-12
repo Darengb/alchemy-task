@@ -16,9 +16,15 @@ from test_discovery_integration import service, configure
 from test_setup import home  # noqa: F401  (fixture)
 
 
+import itertools
+_RUNS = itertools.count()
+
+
 def _finalize(integration, data_dir, *, stream, origin_session, deliver='origin', day=None):
     """One proposal for `stream`, finalized the way the stream's own run does it."""
-    store, run, items, wids = build_run(data_dir, 1, state=f'{stream} stream view of the launch{" on " + day if day else ""}.')
+    # Each run reads its own distinct source: a shared source would correctly be a repeat, not a new proposal.
+    link = f'https://example.test/{stream}/{day or "today"}/{next(_RUNS)}'
+    store, run, items, wids = build_run(data_dir, 1, state=f'{stream} stream view of the launch{" on " + day if day else ""}.', link=link)
     with store._lock(store._run_lock_name(run)):
         ledger = store.get_run(run)
         ledger['origin'] = {'session_id': origin_session, 'deliver': deliver}
