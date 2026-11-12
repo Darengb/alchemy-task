@@ -148,3 +148,11 @@ Closed runs age out after 60 days. Merely pending, never-approved proposals may 
 ## Files during a run
 
 A discovery run does not need to create or edit files. If you write a helper script, use a new unique filename in the scratch folder (never overwrite an existing one), and if a file write is refused, read the file and write it again, so the run ends with no failed file edits (Hermes otherwise appends a warning to the digest).
+
+## Windows, versions and follow-up runs
+
+When you read a source with your own tools, the plugin remembers how far you read. The next run's window starts two hours before that point and ends now; the first run covers the last 24 hours. The marker moves only when you report that you read the whole window (status complete or pagination_exhausted true, and no gaps). A thread is researched again only when it has messages newer than the version already researched; older context or a different envelope shape just updates the saved text.
+
+A follow-up run (the one-shot job a run schedules when items are left waiting) does not read the sources again. When `discovery_start` returns `skip_collection: true`, do not call `discovery_collect`: call `discovery_context` with the run_id right away, then research and finish as usual.
+
+Proposals can carry subtasks. On approve they become unchecked subtasks in the task; on update only the missing ones are added.
