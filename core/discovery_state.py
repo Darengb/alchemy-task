@@ -514,6 +514,87 @@ class DiscoveryStore:
             self._save(run_id, ledger)
             return attempt
 
+    # Attempt states that are settled: no child can still read or submit for them.
+    CORRECTABLE_STATES = frozenset({'rejected_retryable', 'exhausted'})
+
+    @staticmethod
+    def _same_thread(old_ids: list[str], new_ids: list[str]) -> bool:
+        """New ids name the same thread: equal canonical ids or one-level message refinements of them."""
+        covers = source_identity_covers
+        return bool(new_ids) and all(any(covers(o, n) for o in old_ids) for n in new_ids) \
+            and all(any(covers(o, n) for n in new_ids) for o in old_ids)
+
+    def correct_source(self, run_id: str, cid: str, item: dict[str, Any], *, reason: str, corrected_by: str) -> dict[str, Any]:
+        """Replace ONE frozen candidate's primary source body after freeze.
+
+        Minimal, deliberate version: allowed only before any accepted bundle, once per
+        candidate per run, and only when no attempt for it is in flight (none, or every
+        attempt settled as rejected/exhausted). Earlier attempts move to the correction
+        record for audit, so the candidate gets one fresh attempt with the usual budget.
+        The old body stays on disk; the ledger records both hashes.
+        """
+        reason = _str(reason, 'reason', allow_empty=False, limit=MAX_REASON_CHARS)
+        if not isinstance(item, dict):
+            raise UserError('item must be one envelope item object')
+        raw = item.get('source_ids')
+        if not isinstance(raw, list) or not raw or len(raw) > MAX_SOURCE_IDS:
+            raise UserError('item needs the source_ids of the same thread')
+        new_ids = sorted(set(canonical_source_id(x) for x in raw))
+        _privacy_walk(item)
+        with self._lock(self._run_lock_name(run_id)):
+            self._assert_no_accept_intent(run_id, cid)
+            ledger = self._load(run_id, open_only=True)
+            if not ledger['index_revision']:
+                raise UserError('sources are not frozen yet; collect the item again with discovery_collect instead')
+            if ledger.get('review'):
+                raise UserError('run already reviewed; a frozen source can no longer be corrected')
+            candidate = self._candidate(ledger, cid)
+            if candidate.get('parent_candidate_id') or candidate['prefilter_disposition'] != 'research' or candidate.get('research_selection') == 'pilot_skipped':
+                raise UserError('only a research candidate can have its source corrected')
+            if candidate.get('decomposition_state') == 'complete' or self.accepted_bundle(run_id, cid):
+                raise UserError('candidate already has an accepted bundle; its source can no longer be corrected')
+            corrections = ledger.setdefault('source_corrections', [])
+            if any(c['candidate_id'] == cid for c in corrections):
+                raise UserError('this candidate was already corrected once in this run')
+            if not self._same_thread(candidate['source_ids'], new_ids):
+                raise UserError('item names a different thread than the frozen candidate')
+            name = 'source-body-' + cid
+            old = ledger['resources'].get(name)
+            if not old:
+                raise UserError('candidate has no frozen source body')
+            previous = [a for a in ledger['attempts'].values() if a['candidate_id'] == cid]
+            busy = [a for a in previous if a['state'] not in self.CORRECTABLE_STATES or (a['state'] == 'rejected_retryable' and not a.get('rejection'))]
+            if busy:
+                raise UserError('research for this candidate is in flight; wait for it to finish or reject it, then correct the source')
+            # The new revision holds only the corrected item; the old body stays
+            # on disk under an audit name and is never offered to new children.
+            body = [{**copy.deepcopy(item), 'source_ids': new_ids, 'source_correction': {'reason': reason}}]
+            data = _json_bytes(body)
+            digest = _hash(data)
+            path = self.run_dir(run_id) / 'resources' / digest
+            if not path.exists():
+                atomic_write(path, data)
+            number = len(corrections) + 1
+            audit = 'superseded-source-body-' + cid + '-' + str(number)
+            ledger['resources'][audit] = {**old, 'name': audit}
+            ledger['resources'][name] = {'name': name, 'sha256': digest, 'total_bytes': len(data), 'entry_count': len(body)}
+            # Readers that paged the old revision start over on the new one.
+            for receipts in ledger['page_receipts'].values():
+                if name in receipts:
+                    receipts[audit] = receipts.pop(name)
+            superseded = {}
+            for a in previous:
+                superseded[a['token']] = {**a, 'fenced': True, 'superseded_by_correction': number}
+                del ledger['attempts'][a['token']]
+            record = {'n': number, 'candidate_id': cid, 'reason': reason, 'at': now(), 'corrected_by': _str(corrected_by, 'caller', allow_empty=False),
+                      'old_sha256': old['sha256'], 'new_sha256': digest, 'old_resource': audit,
+                      'source_ids': new_ids, 'superseded_attempts': superseded}
+            corrections.append(record)
+            candidate['updated'] = now()
+            self._save(run_id, ledger)
+            return {'candidate_id': cid, 'resource': name, 'old_sha256': old['sha256'], 'new_sha256': digest,
+                    'superseded_attempts': len(superseded), 'fresh_attempt': True}
+
     def get_attempt(self, run_id: str, token: str) -> dict[str, Any]:
         ledger = self._load(run_id)
         if token not in ledger['attempts']:

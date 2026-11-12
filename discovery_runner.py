@@ -213,6 +213,12 @@ class DiscoveryRunner:
                 handle = attempt.get('handle') or {}
                 if (session_id and attempt.get('child_session') == session_id) or (subagent and handle.get('subagent_id') == subagent):
                     return run, attempt
+            # Attempts superseded by a source correction stay known as children (fenced).
+            for correction in ledger.get('source_corrections', []):
+                for attempt in correction.get('superseded_attempts', {}).values():
+                    handle = attempt.get('handle') or {}
+                    if (session_id and attempt.get('child_session') == session_id) or (subagent and handle.get('subagent_id') == subagent):
+                        return run, attempt
             for event in ledger.get('start_events', {}).values():
                 if (session_id and event['child_session'] == session_id or subagent and event['subagent_id'] == subagent) and self._discovery_event(ledger, event):
                     return run, None
@@ -517,6 +523,26 @@ class DiscoveryRunner:
             return {'run_id': run_id, 'status': 'held', 'holds': holds, 'research_model_error': error, 'next_action': action}
         return {'run_id': run_id, 'status': 'held', 'holds': holds,
                 'next_action': 'Research is held (%s). Reconcile the saved unknown or hold in this run with discovery_recover or discovery_release_hold, then call discovery_research_run again with run_id %s.' % (', '.join(holds), run_id)}
+
+    def correct_source(self, run_id, *, candidate_id, item, reason, session_id):
+        """Parent-only: replace one frozen item's saved source with its full thread.
+
+        Only that candidate is re-researched (one fresh attempt); the run continues.
+        Minimal version: refused while research for that candidate is in flight.
+        """
+        from .discovery_sources import has_primary_content, inline_primary, PRIMARY_POINTER_KEYS
+        self._parent(run_id, session_id)
+        if not isinstance(item, dict):
+            raise UserError('item must be one envelope item object')
+        allowed = {'title', 'source_ids', 'source_revision', 'messages', 'subject', 'url', 'body', 'text', 'content', 'primary_content', *PRIMARY_POINTER_KEYS}
+        unknown = set(item) - allowed
+        if unknown:
+            raise UserError(f'unknown item keys: {sorted(unknown)}')
+        if not has_primary_content(item) and any(k in item for k in PRIMARY_POINTER_KEYS):
+            item = inline_primary(item, self.store)
+        if not has_primary_content(item):
+            raise UserError('item has no primary content; include the full message text of the thread')
+        return self.store.correct_source(run_id, candidate_id, item, reason=reason, corrected_by=session_id)
 
     def recover(self, run_id, *, session_id, owner_restarted=False, adopt=False):
         if not session_id or self._child_for(session_id):
@@ -1032,10 +1058,16 @@ def make_tool_handlers(runner):
             except (UserError, TypeError, KeyError, ValueError) as exc:
                 return json.dumps({'ok': False, 'error': str(exc)[:500]})
         return call
+    def recover_or_correct(action='recover', **kwargs):
+        if action == 'correct_source':
+            return runner.correct_source(**kwargs)
+        if action != 'recover':
+            raise UserError('unknown recover action')
+        return runner.recover(**kwargs)
     return {'discovery_research_run': handler(runner.run), 'discovery_research_fetch': handler(runner.fetch, True),
             'discovery_research_submit': handler(runner.submit, True), 'discovery_research_accept': handler(runner.accept),
             'discovery_actions': handler(runner.actions), 'discovery_reconcile': handler(runner.reconcile),
-            'discovery_join': handler(runner.join), 'discovery_recover': handler(runner.recover),
+            'discovery_join': handler(runner.join), 'discovery_recover': handler(recover_or_correct),
             'discovery_release_hold': handler(runner.release_hold)}
 
 
