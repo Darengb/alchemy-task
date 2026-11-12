@@ -120,6 +120,15 @@ def order_semantic_targets(targets, research):
     if recommended: out.sort(key=lambda t: not t.get('recommended'))
     return out
 
+def destination_changed(outcome, plan):
+    """True when the current exact matches no longer allow the saved plan."""
+    choice = plan['request']['choice']
+    if outcome['kind'] == 'conflict':
+        # Several exact matches allow only a user-approved create or update of one of them.
+        if not plan['request'].get('user_approved') or choice not in {'create', 'update'}: return True
+        return choice == 'update' and plan['task_id'] not in {t['task_id'] for t in outcome['targets']}
+    return outcome['kind'] == 'exact' and (choice == 'create' or outcome['targets'][0]['task_id'] != plan['task_id'])
+
 class DiscoveryConversion:
     def __init__(self, rt, store):
         self.rt, self.store = rt, store
@@ -312,8 +321,9 @@ class DiscoveryConversion:
             for item in self.rt.store().scan().tasks:
                 if item.fm.get("task_id") == target_task_id:
                     self._validate_dossiers(tf.parse_file(item.path).body)
-        if outcome['kind'] == 'conflict':
-            raise UserError('multiple exact destinations conflict; no mutation')
+        if outcome['kind'] == 'conflict' and not (user_approved is True and choice in {'create', 'update'}):
+            # Several exact matches: only the user's numbered choice (or create) may write.
+            raise UserError('several existing tasks match exactly; the user must pick one by number or create a separate task')
         if choice in {'auto', 'noop'} and outcome['kind'] != 'exact':
             raise UserError('automatic action requires unique verified exact destination')
         if choice == 'auto' and useful_delta is not True:
@@ -705,7 +715,7 @@ class DiscoveryConversion:
                 if receipt or hash_ != plan['preimage_sha256']:
                     raise tf.ConcurrentEditError('whole batch preflight CAS failed')
                 outcome = self.match(run, wid)
-                if outcome['kind'] == 'conflict' or (outcome['kind'] == 'exact' and (plan['request']['choice'] == 'create' or outcome['targets'][0]['task_id'] != plan['task_id'])):
+                if destination_changed(outcome, plan):
                     raise UserError('destination identity changed during batch preflight')
             self._validate_dossiers(plan['postimage'])
         return {'state': 'verified', 'count': len(bindings)}
@@ -733,7 +743,7 @@ class DiscoveryConversion:
                     raise tf.ConcurrentEditError('converted task changed; do not overwrite user edits')
                 elif (tf.content_hash(actual) if actual is not None else None) == plan['preimage_sha256']:
                     current = self.match(run, wid)
-                    if current['kind'] == 'conflict' or (current['kind'] == 'exact' and (plan['request']['choice'] == 'create' or current['targets'][0]['task_id'] != plan['task_id'])):
+                    if destination_changed(current, plan):
                         raise UserError('exact destinations changed since preparation')
                     tf.atomic_write(path, plan['postimage'].encode(), expect=actual)
                 else:

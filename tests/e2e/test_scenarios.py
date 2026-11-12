@@ -515,7 +515,7 @@ def test_j_noop_only_completed_check_says_no_new_followups(world, host_factory):
     assert 'Reply with the item numbers' not in text
 
 
-def test_k_multiple_exact_destinations_are_blocked_not_failures(world, host_factory):
+def test_k_multiple_exact_destinations_are_a_numbered_choice_not_failures(world, host_factory):
     host = started_host(host_factory)
     for slug in ('fix-login-timeout', 'fix-login-timeout-copy'):
         world.add_task(slug, 'Fix login timeout', notes='Tracked from source:feed:acct:issue:103 on the board.')
@@ -524,8 +524,10 @@ def test_k_multiple_exact_destinations_are_blocked_not_failures(world, host_fact
     day = P.run_day(host)
     text = day['digest']['text']
     assert snapshot(world) == before  # never a guessed mutation
-    assert day['digest']['items'] == []  # unnumbered
+    [item] = day['digest']['items']  # numbered choice
+    assert item['kind'] == 'selection' and len(item['targets']) == 2
+    assert '**Existing tasks:**\n1. Fix login timeout\n2. Fix login timeout\n' in text, text
+    assert f'"{item["ref"]}, update 1" or "{item["ref"]}, update 2"' in text and 'blocked' not in text, text
     head = header(day)
     assert '**0 need attention**' in head, text
-    assert any('Fix login timeout' in line and not line.startswith('**Needs attention:**') for line in text.splitlines()), text
-    assert day['record']['summary']['conflicts'] == 1 and day['record']['summary']['failures'] == 0
+    assert day['record']['summary']['conflicts'] == 0 and day['record']['summary']['failures'] == 0
