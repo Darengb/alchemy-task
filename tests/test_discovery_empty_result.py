@@ -23,7 +23,7 @@ def test_empty_discovery_reports_result_without_hiding_incomplete_work(tmp_path,
         assert 'No new follow-ups found.' not in text
         assert 'No new proposals to review.' in text
     if kind == 'partial':
-        assert '**Coverage:** inbox: could not be read' in text
+        assert '**Needs attention:** inbox could not be read' in text
     if kind == 'failure':
         assert '**Needs attention:** Supplier response' in text
     if kind == 'existing':

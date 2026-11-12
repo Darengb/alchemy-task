@@ -28,7 +28,7 @@ def _coverage_complete(store, run):
     store.put_resource(run, 'collection-feed', {'source_key': 'feed', 'status': 'complete'})
 
 
-def build_run(data_dir, count, state='', nominations=None):
+def build_run(data_dir, count, state='', nominations=None, link=None):
     """A joined run with `count` accepted candidates, each its own decisive message."""
     store, run, items = setup(data_dir, count=count)
     wids = []
@@ -41,6 +41,7 @@ def build_run(data_dir, count, state='', nominations=None):
         w['exact_source_ids'][0]['message_ts'] = f'171.{i + 2}'
         if state: w['current_understanding'] = state
         w['title'] = f'Ask {i}'
+        if link: w['source_links'] = [f'{link}/{i}']  # a distinct source: not a repeat of an earlier run
         receipt = store.spool_payload(run, a['token'], b)
         store.observe_terminal(run, a['token'], state='SUCCEEDED', receipt={'state': 'SUCCEEDED'})
         read_all(store, run, receipt['resource'], 'parent')
@@ -177,7 +178,7 @@ def test_new_unsure_and_potential_update_items_carry_source_labels_and_choice(se
     new = integration.finalize(run, session_id='parent')['text']
     assert '**Task type:** New task' in new and 'Why unsure' not in new and 'Choice:' not in new
     # Unsure: uncertain disposition, no plausible existing task.
-    _, store, run, wid, _ = custom_joined(settings, data_dir, tmp_path / 'u', [], disposition='uncertain',
+    _, store, run, wid, _ = custom_joined(settings, data_dir, tmp_path / 'u', [], disposition='uncertain', source_links=['https://example.test/unsure'],
         decisions_and_open_questions={'decisions': [], 'open_questions': ['Who owns the launch page?']})
     _own(store, run); _coverage_complete(store, run)
     integration.record_decision(run, wid, decision='propose', reason='Owner unclear.', session_id='parent')
@@ -186,7 +187,7 @@ def test_new_unsure_and_potential_update_items_carry_source_labels_and_choice(se
     # Potential existing task update: related-only nomination of a real task.
     doc = rt.store().create(title='Plan the launch page', area='work', undated=True, research=False)
     _, store, run, wid, _ = custom_joined(settings, data_dir, tmp_path / 's',
-        [{'path': rt.store().rel(doc.path), 'match_basis': 'related_only'}])
+        [{'path': rt.store().rel(doc.path), 'match_basis': 'related_only'}], source_links=['https://example.test/update'])
     _own(store, run); _coverage_complete(store, run)
     integration.record_decision(run, wid, decision='propose', reason='Plausible overlap.', session_id='parent')
     digest = integration.finalize(run, session_id='parent')
@@ -200,7 +201,7 @@ def test_new_unsure_and_potential_update_items_carry_source_labels_and_choice(se
 
 def _finalized(integration, data_dir, *, stream, origin_session, title):
     """Finalize one proposal for `stream` the way the stream's own run would."""
-    store, run, items, wids = build_run(data_dir, 1, state=f'{stream} stream view of the launch.')
+    store, run, items, wids = build_run(data_dir, 1, state=f'{stream} stream view of the launch.', link=f'https://example.test/{stream}')
     with store._lock(store._run_lock_name(run)):
         ledger = store.get_run(run)
         ledger['origin'] = {'session_id': origin_session}

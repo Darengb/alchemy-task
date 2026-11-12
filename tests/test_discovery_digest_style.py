@@ -93,14 +93,15 @@ def test_attested_coverage_is_one_plain_line_and_not_degraded(tmp_path):
     digest = DiscoveryDigest(tmp_path)
     clean = digest.prepare('run1', stream='mbg', day='2026-11-11', origin=ORIGIN, items=[], coverage=attested,
                            failures=[{'title': 'TONI25', 'reason': 'lifecycle terminal INTERRUPTED'}])
-    assert '**Coverage:** mbg Slack and mbg Gmail were read with your own tools, so completeness is not verified.' in clean['text']
+    assert '**Coverage:**' not in clean['text'] and 'your own tools' not in clean['text']
     assert '**Needs attention:** TONI25: research was interrupted before it finished' in clean['text']
     assert 'diagnostics' not in clean['text'] and 'partial' not in clean['text']
     quiet = digest.prepare('run2', stream='mbg', day='2026-11-12', origin=ORIGIN, items=[], coverage=attested)
     assert 'No new follow-ups found.' in quiet['text']  # attested reads alone are not degraded
     bad = digest.prepare('run3', stream='mbg', day='2026-11-13', origin=ORIGIN, items=[], coverage=[failed, skipped])
-    assert '**Coverage:** feed: could not be read' in bad['text']
-    assert '**Coverage:** chan: skipped thread: too large' in bad['text']
+    assert '**Needs attention:** feed could not be read' in bad['text']
+    assert '**Needs attention:** chan had a thread that could not be read (too large)' in bad['text']
+    assert '**0 follow-ups** · **2 need attention**' in bad['text']
     assert 'No new proposals to review.' in bad['text']
 
 

@@ -248,7 +248,9 @@ def test_c2_incomplete_first_collection_is_degraded_and_next_run_rereads_the_win
     text = day['digest']['text']
     assert 'No new follow-ups found.' not in text
     assert day['digest']['items'] or 'No new proposals to review.' in text.splitlines()
-    assert any(line.startswith('**Coverage:** ') for line in text.splitlines())
+    # No coverage disclaimer; a source that could not be read at all is one Needs attention line.
+    assert '**Coverage:**' not in text
+    if pages == ['ERROR']: assert '**Needs attention:** Feed could not be read' in text.splitlines(), text
     assert day['record']['degraded'] is True
     # Coverage did not advance: the next run re-reads from the same window start.
     first_start = src.calls[0]['start']
@@ -283,7 +285,7 @@ def test_c4_item_in_failed_first_window_is_surfaced_by_the_next_run(world, host_
     src.timed = [(lost_at, src.item('301', 'Answer auditor request'))]
     src.pages = ['ERROR']
     day1 = P.run_day(host)
-    assert '**Coverage:** ' in day1['digest']['text'] and day1['record']['degraded'] is True
+    assert '**Needs attention:** Feed could not be read' in day1['digest']['text'] and day1['record']['degraded'] is True
     P.set_clock(host, DAY1 + dt.timedelta(days=1))
     src.pages = [[]]
     day2 = P.run_day(host)
@@ -319,7 +321,9 @@ def test_e_cap_defers_overflow_to_next_run_not_lost(world, host_factory):
     assert len(day1['digest']['items']) == 2 and len(host.subagent_lifecycle.launched) == 2
     researched = set(proposal_titles(day1['digest']).values())
     deferred_title = ({t for _, t in ITEMS} - researched).pop()
-    assert deferred_title in day1['digest']['text']  # visible, not silently dropped
+    # Visible as a count, not silently dropped and not listed one by one.
+    assert '**Still researching:** 1 item is queued for the next run.' in day1['digest']['text']
+    assert deferred_title not in day1['digest']['text']
     # Next day: the source still lists all three; only the deferred item is researched now.
     P.set_clock(host, DAY1 + dt.timedelta(days=1))
     day2 = P.run_day(host)
@@ -352,9 +356,9 @@ def test_e3_cap_deferral_is_a_distinct_state_not_a_failure(world, host_factory):
     head = header(day1)
     assert '**0 need attention**' in head, head
     assert day1['record']['summary']['failures'] == 0 and day1['record']['failures'] == []
-    deferred_lines = [line for line in day1['digest']['text'].splitlines() if deferred_title in line]
-    assert deferred_lines and all('eferred' in line for line in deferred_lines), day1['digest']['text']
-    assert not any(line.startswith('**Needs attention:** ' + deferred_title) for line in deferred_lines)
+    text = day1['digest']['text']
+    assert '**Still researching:** 1 item is queued for the next run.' in text.splitlines(), text
+    assert deferred_title not in text and '**Needs attention:**' not in text
 
 
 # --------------------------------------------------------------------------- f
