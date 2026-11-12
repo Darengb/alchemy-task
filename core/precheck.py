@@ -103,3 +103,129 @@ def maintenance(data_dir: str, settings: Settings | None = None) -> str:
     if lines:
         return "Alchemy Task: " + " ".join(lines)
     return ""
+
+
+# ------------------------------------------------------------------ discovery stream wake check
+#
+# Each discovery stream's job ticks every 30 minutes behind this free check. It wakes the agent only when
+# the stream's own slot (the user's frequency and time, in the stream's timezone) has come and not run yet,
+# a "run now" was asked for from a chat or the dashboard, or a follow-up is pending (a run left research
+# queued). The check only reads plugin state; the run itself records what it consumed.
+
+STREAM_TICK = "*/30 * * * *"
+SLOT_STATE = "discovery_slots"
+FOLLOW_UP_STATE = "discovery_follow_ups"
+RUN_REQUEST_STATE = "discovery_run_requests"
+SLOT_LOOKBACK = 12 * 60          # minutes: a slot missed for longer than this waits for the next one
+RUN_REQUEST_TTL = 45 * 60        # seconds a "run now" request stays valid
+FOLLOW_UP_TTL = 20 * 3600        # seconds a pending follow-up stays valid
+ACTIVE_STALE = 6 * 3600          # seconds after which an unfinished run no longer blocks a follow-up
+
+
+def _cron_field(spec: str, value: int, low: int, high: int) -> bool:
+    for part in str(spec).split(","):
+        step = 1
+        if "/" in part:
+            part, step_text = part.split("/", 1)
+            step = int(step_text)
+        if part == "*":
+            start, end = low, high
+        elif "-" in part:
+            start, end = (int(x) for x in part.split("-", 1))
+        else:
+            start = end = int(part)
+        if start <= value <= end and (value - start) % step == 0:
+            return True
+    return False
+
+
+def _cron_matches(schedule: str, local: Any) -> bool:
+    minute, hour, dom, month, dow = str(schedule).split()
+    cron_dow = (local.weekday() + 1) % 7
+    return (_cron_field(minute, local.minute, 0, 59) and _cron_field(hour, local.hour, 0, 23)
+            and _cron_field(dom, local.day, 1, 31) and _cron_field(month, local.month, 1, 12)
+            and (_cron_field(dow, cron_dow, 0, 7) or (cron_dow == 0 and _cron_field(dow, 7, 0, 7))))
+
+
+def _now(now: Any = None) -> Any:
+    import datetime as dt
+    return (now or dt.datetime.now(dt.timezone.utc)).astimezone(dt.timezone.utc).replace(second=0, microsecond=0)
+
+
+def _zone(name: str) -> Any:
+    from zoneinfo import ZoneInfo
+    try:
+        return ZoneInfo(name or "UTC")
+    except Exception:  # noqa: BLE001 - unknown zone: UTC
+        return ZoneInfo("UTC")
+
+
+def latest_slot(schedule: str, timezone: str, now: Any = None, lookback: int = SLOT_LOOKBACK) -> Any:
+    """The most recent instant (UTC) at or before now that the stream's own schedule names, within lookback."""
+    import datetime as dt
+    if len(str(schedule or "").split()) != 5:
+        return None
+    cur, zone = _now(now), _zone(timezone)
+    for _ in range(lookback + 1):
+        if _cron_matches(schedule, cur.astimezone(zone)):
+            return cur
+        cur -= dt.timedelta(minutes=1)
+    return None
+
+
+def next_slot(schedule: str, timezone: str, now: Any = None, horizon_days: int = 8) -> Any:
+    """The next instant (UTC) after now that the stream's own schedule names (for display)."""
+    import datetime as dt
+    if len(str(schedule or "").split()) != 5:
+        return None
+    cur, zone = _now(now) + dt.timedelta(minutes=1), _zone(timezone)
+    for _ in range(horizon_days * 24 * 60):
+        if _cron_matches(schedule, cur.astimezone(zone)):
+            return cur
+        cur += dt.timedelta(minutes=1)
+    return None
+
+
+def _when(value: Any) -> Any:
+    import datetime as dt
+    if isinstance(value, (int, float)):
+        return dt.datetime.fromtimestamp(value, dt.timezone.utc)
+    parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
+
+
+def discovery_wake(get: Any, name: str, now: Any = None) -> dict[str, Any]:
+    """Why the stream's job should run now: ``{"wakeAgent": true, "reason": "slot"|"run_now"|"follow_up"}``,
+    else ``{"wakeAgent": false}``. ``get(key)`` reads one plugin state key; nothing is written."""
+    import datetime as dt
+    try:
+        moment = (now or dt.datetime.now(dt.timezone.utc)).astimezone(dt.timezone.utc)
+        stream = (get("streams") or {}).get(name) or {}
+        if not stream.get("job_id"):
+            return {"wakeAgent": False}
+        slot = latest_slot(stream.get("schedule") or "", stream.get("timezone") or "UTC", moment)
+        done = ((get(SLOT_STATE) or {}).get(name) or {}).get("done")
+        if slot is not None and (not done or slot > _when(done)):
+            return {"wakeAgent": True, "reason": "slot", "stream": name, "slot": slot.isoformat()}
+        request = (get(RUN_REQUEST_STATE) or {}).get(name) or {}
+        if request.get("at") and 0 <= (moment - _when(request["at"])).total_seconds() <= RUN_REQUEST_TTL:
+            return {"wakeAgent": True, "reason": "run_now", "stream": name}
+        record = (get(FOLLOW_UP_STATE) or {}).get(name) or {}
+        pending, active = record.get("pending") or {}, record.get("active") or {}
+        busy = active.get("since") and (moment - _when(active["since"])).total_seconds() < ACTIVE_STALE
+        if pending.get("at") and not busy and (moment - _when(pending["at"])).total_seconds() <= FOLLOW_UP_TTL:
+            return {"wakeAgent": True, "reason": "follow_up", "stream": name}
+    except Exception:  # noqa: BLE001 - a broken check must not wake the model every 30 minutes
+        return {"wakeAgent": False}
+    return {"wakeAgent": False}
+
+
+def discovery_wake_file(data_dir: str, name: str) -> dict[str, Any]:
+    """Stub entry point: read the plugin's state.json (read-only) and decide."""
+    try:
+        data = json.loads((Path(data_dir) / "state.json").read_text(encoding="utf-8-sig"))
+    except Exception:  # noqa: BLE001 - no state yet or unreadable: nothing to do
+        return {"wakeAgent": False}
+    if not isinstance(data, dict):
+        return {"wakeAgent": False}
+    return discovery_wake(data.get, name)

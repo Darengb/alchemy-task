@@ -4,12 +4,12 @@ from __future__ import annotations
 import json
 
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from alchemy_task import runtime
 from alchemy_task.core import taskfile as tf
-from alchemy_task.dashboard import settings_api, tasks_api, ui_common
+from alchemy_task.dashboard import settings_api, tasks_api
 
 from helpers import git
 from test_setup import SetupCtx, home  # noqa: F401  (fixture)
@@ -29,7 +29,6 @@ def client(ctx, monkeypatch):
     make = lambda: runtime.Runtime(ctx)  # noqa: E731
     monkeypatch.setattr(tasks_api, "runtime", make)
     monkeypatch.setattr(settings_api, "runtime", make)
-    monkeypatch.setattr(ui_common, "admit", lambda request: None)
     app = FastAPI()
     app.include_router(tasks_api.router)
     app.include_router(settings_api.router)
@@ -135,18 +134,6 @@ def test_errors_are_json_with_codes(client):
     assert r.json()["error"]["code"] == "invalid_request"
 
 
-def test_routes_require_dashboard_admission(ctx, monkeypatch):
-    monkeypatch.setattr(tasks_api, "runtime", lambda: runtime.Runtime(ctx))
-
-    def refuse(request):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    monkeypatch.setattr(ui_common, "admit", refuse)
-    app = FastAPI()
-    app.include_router(tasks_api.router)
-    r = TestClient(app).get("/meta")
-    assert r.status_code == 401 and r.json()["error"]["code"] == "unauthorized"
-
-
 def test_settings_changes_a_stream_schedule_in_place(client, ctx):
     from alchemy_task import task_tools
     runtime.bind(ctx)
@@ -239,7 +226,6 @@ def rclient(home, settings, data_dir, monkeypatch):  # noqa: F811
     c.state.set("timezone_confirmed", True)
     make = lambda: runtime.Runtime(c)  # noqa: E731
     monkeypatch.setattr(tasks_api, "runtime", make)
-    monkeypatch.setattr(ui_common, "admit", lambda request: None)
     monkeypatch.setattr(tasks_api, "_background", lambda fn: fn())  # run the sweep trigger inline in tests
     app = FastAPI()
     app.include_router(tasks_api.router)
@@ -300,16 +286,10 @@ def test_research_button_unknown_task_and_closed_task(rclient):
     assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_request"
 
 
-def test_research_button_requires_admission_and_rejects_extra_fields(rclient, monkeypatch):
+def test_research_button_rejects_extra_fields(rclient):
     client, c = rclient
     t = make_task(client)
     assert client.post(f"/tasks/{t['task_id']}/research", json={"bogus": 1}).json()["error"]["code"] == "invalid_request"
-
-    def refuse(request):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    monkeypatch.setattr(ui_common, "admit", refuse)
-    r = client.post(f"/tasks/{t['task_id']}/research")
-    assert r.status_code == 401 and r.json()["error"]["code"] == "unauthorized"
     assert _enrichment(c, t["task_id"])["status"] == "skipped"
 
 
@@ -373,7 +353,9 @@ def test_settings_streams_include_next_run(rclient, monkeypatch):
         "mbg": {"name": "mbg", "areas": ["work"], "sources": [], "job_id": "jobmbg", "schedule": "0 18 * * *", "timezone": "America/New_York"},
         "av": {"name": "av", "areas": ["work"], "sources": [], "job_id": "jobav", "schedule": "0 18 * * *", "timezone": "America/New_York"}})
     streams = {s["name"]: s for s in client.get("/settings").json()["streams"]}
-    assert streams["mbg"]["next_run_at"] == "2026-11-11T18:00:00-05:00"
+    from alchemy_task.jobs import next_stream_run
+    # The user's own slot (6 PM New York), not the job's 30-minute wake check.
+    assert streams["mbg"]["next_run_at"] == next_stream_run(c.state.get("streams")["mbg"]) and streams["mbg"]["next_run_at"].endswith("23:00:00+00:00")
     assert streams["av"]["next_run_at"] is None  # paused: no next run shown
 
 

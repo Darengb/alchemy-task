@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .runtime import Runtime
+from .core.gitops import minimal_git_env
 from .core.research_guard import (  # noqa: F401 - re-exported for callers and tests
     HOME_SECRET_DIRS, SECRET_DIRS, SECRET_NAMES, SECRET_PAIRS, _secret_text, is_secret_path, redact,
     refuse_file_read)
@@ -127,14 +128,20 @@ def _rev(arg: Any, default: str = "") -> str:
     return text
 
 
+def _child_env() -> dict[str, str]:
+    """Same allowlist as Git delivery plus the research hardening; nothing else from ``os.environ``."""
+    env = {k: v for k, v in minimal_git_env().items() if not k.startswith("SSH_")}
+    env.update(_GIT_ENV)
+    return env
+
+
 def _git(repo: Path, argv: list[str], cap: int = OUTPUT_CAP) -> str:
     out, _ = _git_capped(repo, argv, cap)
     return out
 
 
 def _git_capped(repo: Path, argv: list[str], cap: int = OUTPUT_CAP) -> tuple[str, bool]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env.update(_GIT_ENV)
+    env = _child_env()
     try:
         proc = subprocess.run(["git", *_SAFE_CONFIG, "-C", str(repo), *argv], capture_output=True,
                               timeout=TIMEOUT, env=env, stdin=subprocess.DEVNULL, check=False)

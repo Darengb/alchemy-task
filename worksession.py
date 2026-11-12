@@ -9,6 +9,7 @@ mark a task done.
 """
 from __future__ import annotations
 
+import contextvars
 import fcntl
 import json
 import os
@@ -261,8 +262,11 @@ def _ensure_sweeper(rt: Runtime) -> None:
         if os.environ.get("ALCHEMY_TASK_NO_SWEEPER"):
             return
         _stop.clear()
-        _sweeper = threading.Thread(target=_sweep_loop, args=(str(rt.data_dir),), name="alchemy-task-sweeper",
-                                    daemon=True)
+        # A new thread starts with an empty context; run it in a copy of the current one, which carries the
+        # profile Hermes selected, so a gateway serving several profiles sweeps the right one (as handoff.py).
+        loaded = contextvars.copy_context()
+        _sweeper = threading.Thread(target=loaded.run, args=(_sweep_loop, str(rt.data_dir)),
+                                    name="alchemy-task-sweeper", daemon=True)
         _sweeper.start()
 
 

@@ -117,6 +117,7 @@ def create_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
     if not args.get("user_approved"):
         raise DiscoveryError("show the user the stream (sources, areas, schedule, chat, cost) and ask once; call again "
                              "with user_approved=true after they agree")
+    _guard_scheduling(rt)
     tz = sf._timezone_state(rt)
     if tz["likely_unset"]:
         raise DiscoveryError("confirm the user's timezone first (setup step 1)")
@@ -191,8 +192,16 @@ def _public(s: dict[str, Any]) -> dict[str, Any]:
                                   "last_run", "label", "job_id", "delivery_owner", "activation_state", "delivery_state", "setup_blocked_reason")}
 
 
+def _guard_scheduling(rt: Runtime) -> None:
+    from .jobs import scheduling_refusal
+    refusal = scheduling_refusal(rt.ctx)
+    if refusal:
+        raise DiscoveryError(refusal)
+
+
 def update_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[str, Any]:
     """Change a stream in place. The job is updated, not recreated, so it keeps posting to its own chat."""
+    _guard_scheduling(rt)
     current = _get(rt, args.get("name", ""))
     if not args.get("user_approved"):
         raise DiscoveryError("confirm the change with the user, then call again with user_approved=true")
@@ -235,14 +244,15 @@ def update_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
         raise DiscoveryError("a stream needs at least one source; remove the stream instead")
     from .setup_flow import _timezone_state
     tz = _timezone_state(rt)["timezone"] or current.get("timezone") or "UTC"
-    from .jobs import discovery_job_config
+    from .jobs import discovery_job_config, stream_tick_fields
     readers = [t for source in sources for t in source.get('toolsets', [])]
     configs = (rt.ctx.state.get('discovery_sources', default={}) or {}).get(current['name'], {})
     readers += [t for config in configs.values() if any(s['name'] == config.get('name') and s['scope'] == config.get('scope') for s in sources) for t in config.get('toolsets', [])]
     readers += ((rt.ctx.state.get('discovery_delivery', default={}) or {}).get(current['name'], {})).get('toolsets', [])
     if current.get('job_id'):
+        # The job keeps its 30-minute tick and wake check; the new frequency/time lives on the stream.
         raw = rt.ctx.dispatch_tool("cronjob_manage", {"action": "update", "job_id": current["job_id"],
-                                                      "schedule": cron, "timezone": tz,
+                                                      **stream_tick_fields(rt, {**current, "timezone": tz}),
                                                       **discovery_job_config(current['name'], readers, delivery_owner=current.get('delivery_owner', 'native_origin'), deliver=current.get('deliver', 'origin'))})
         try:
             result = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
@@ -261,7 +271,9 @@ def update_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
                   "areas": areas, "sources": sources,
                   "research_cap": cap})
         _save_streams(rt, streams)
-    from .jobs import reverify_sweep
+    from .jobs import reverify_sweep, init_slot
+    if s.get("job_id"):
+        init_slot(rt, s)  # a changed time never runs a slot that already passed today
     reverify_sweep(rt)  # research workers' readers follow the streams
     msg = f"Updated '{s['name']}': {when} ({tz}), still posting to its own chat."
     if added:
@@ -290,8 +302,11 @@ def create_args_sources(raw_sources: list[Any]) -> list[dict[str, str]]:
 
 
 def remove_stream(rt: Runtime, name: str) -> dict[str, Any]:
+    _guard_scheduling(rt)
     stream = _get(rt, name)
     _remove_job(rt, stream.get("job_id"))
+    from .jobs import remove_stream_stub
+    remove_stream_stub(stream["name"])
     with _lock:
         streams = _streams(rt)
         streams.pop(stream["name"], None)
@@ -310,6 +325,7 @@ def _remove_job(rt: Runtime, job_id: str | None) -> None:
 
 
 def teardown_streams(rt: Runtime) -> list[str]:
+    _guard_scheduling(rt)
     names = list(_streams(rt))
     for name in names:
         remove_stream(rt, name)

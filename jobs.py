@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
+
+from .core.discovery_identity import UserError
 
 PREFIX = "alchemy-task"
 
@@ -139,12 +142,24 @@ def approved_reader_toolsets(state: Any, *, include_mcp: bool = False) -> list[s
     return list(dict.fromkeys(out))
 
 
+# Toolsets a discovery stream's scheduled job may never enable: shell, code, file writes, scheduling and
+# whole-agent bundles. A scheduled run reads third-party mail and chat, so it gets readers only.
+# TODO(reader_policy): replace with core.reader_policy.stream_reader_toolsets() when the 'sec' branch merges.
+BANNED_STREAM_TOOLSETS = frozenset({'terminal', 'file', 'code_execution', 'cronjob', 'computer_use', 'delegation'})
+
+
+def stream_reader_toolsets(names) -> list[str]:
+    """Approved toolsets for a stream job minus anything that could write, run code or schedule (core.reader_policy)."""
+    from .core.reader_policy import allowed_reader_toolsets
+    return [t for t in allowed_reader_toolsets([t for t in dict.fromkeys(names or []) if isinstance(t, str) and t])]
+
+
 def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None, *, delivery_owner='native_origin', deliver='origin') -> dict[str, Any]:
     """One supported source-first scheduled workflow, no separate executor."""
     return {
         'deliver': 'local' if delivery_owner == 'verified_sender' else deliver,
-        'enabled_toolsets': list(dict.fromkeys(['alchemy-task', 'alchemy-task-discovery', 'alchemy-task-discovery-child',
-                                              'skills', 'web', 'file', 'session_search', *(reader_toolsets or [])])),
+        'enabled_toolsets': stream_reader_toolsets(['alchemy-task', 'alchemy-task-discovery', 'alchemy-task-discovery-child',
+                                                    'skills', 'web', 'session_search', *(reader_toolsets or [])]),
         'prompt': (f'Run the Alchemy Task discovery stream "{stream}". Load alchemy-task:discovery. '
                    'Call discovery_start and resume its SAME saved run/window before scanning anything new. '
                    'Collect every approved source with discovery_collect, putting full message text and full email bodies into the envelope, never paths; '
@@ -169,10 +184,9 @@ def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None, 
                    'call more than twice, skip that item and continue. A match or decision failure for one item is recorded and the run continues. '
                    'Time box research to about 45 minutes, then call discovery_research_run with finish_now=true, join and prepare the digest; '
                    'deferred items are researched first next run. When research is left queued, a follow-up run '
-                   'of this stream starts on its own a few minutes later; never start or schedule one yourself. Stop early only when nothing at all can proceed. Never create another run; '
+                   'of this stream starts on its own within 30 minutes; never start or schedule one yourself. Stop early only when nothing at all can proceed. Never create another run; '
                    'the next run continues the same saved run. ' + (
                    '' if delivery_owner == 'verified_sender' else
-                   'Do not leave a failed file edit: write any helper script to a new unique filename. '
                    'If preparing the digest is refused or fails, the final reply is a partial digest you write in the same layout, marked '
                    'Partial digest: heading, one section per accepted finding with current state and next action, a Needs attention list '
                    'of each skipped item and why, then the run_id. Never end with only a status report.'))}
@@ -227,34 +241,45 @@ def stream_job_config(rt, stream):
                                 delivery_owner=stream.get('delivery_owner', 'native_origin'), deliver=stream.get('deliver', 'origin'))
 
 
-def follow_up_job_name(stream_name):
-    return f"{PREFIX}: discovery {stream_name} follow-up"
-
-
-def follow_up_create_args(rt, stream, *, schedule='in 5m'):
-    """A one-shot job that runs the same stream once, a few minutes after the current run ends. It is a
-    separate job, so it never collides with the stream's own job still finishing its reply."""
-    return {'action': 'create', 'name': follow_up_job_name(stream['name']), 'schedule': schedule, 'repeat': 1,
-            'attach_to_session': True, 'skills': ['alchemy-task:discovery'], **stream_job_config(rt, stream)}
-
-
 def reconcile_discovery_job(rt, stream):
+    """Bring a stream's job in line: prompt, reader toolsets, the 30-minute tick and its wake check.
+    Also the one-time migration for jobs made before the wake check (they ran on the user's own cron)."""
     if not stream.get('job_id'): return {'state': 'not_configured'}
+    guard_scheduling(rt.ctx)
     read_discovery_job(rt, stream)
     desired = stream_job_config(rt, stream)
-    raw = rt.ctx.dispatch_tool('cronjob_manage', {'action': 'update', 'job_id': stream['job_id'], **desired})
+    tick = stream_tick_fields(rt, stream)
+    raw = rt.ctx.dispatch_tool('cronjob_manage', {'action': 'update', 'job_id': stream['job_id'], **desired, **tick})
     result = json.loads(raw) if isinstance(raw, str) else raw
     if result.get('error') or result.get('success') is False:
         raise ValueError('discovery job reconciliation failed: ' + str(result))
     observed = read_discovery_job(rt, stream)
-    if job_readback_problems(observed, desired):
-        raise ValueError('discovery reader toolsets readback mismatch: ' + ', '.join(job_readback_problems(observed, desired)))
+    problems = job_readback_problems(observed, desired, schedule=tick['schedule'])
+    if problems:
+        raise ValueError('discovery job readback mismatch: ' + ', '.join(problems))
+    init_slot(rt, stream)
     reverify_sweep(rt)
     return {'state': 'verified', 'job_id': stream['job_id'], 'enabled_toolsets': observed.get('enabled_toolsets') or desired['enabled_toolsets']}
 
 
+def reconcile_all_discovery_jobs(rt) -> dict[str, Any]:
+    """Run once after installing this version, from a chat or setup (never from a scheduled run)."""
+    from .discovery import _streams
+    guard_scheduling(rt.ctx)
+    out = {}
+    for name, stream in _streams(rt).items():
+        try:
+            out[name] = reconcile_discovery_job(rt, stream)
+        except Exception as exc:  # noqa: BLE001 - report per stream
+            out[name] = {'state': 'error', 'error': str(exc)[:200]}
+    return out
+
+
 def reverify_sweep(rt) -> dict[str, Any]:
     """Best effort: bring the research sweep job's toolsets in line after discovery streams change."""
+    refusal = scheduling_refusal(rt.ctx)
+    if refusal:
+        return {'state': 'refused', 'error': refusal}
     try:
         from .setup_flow import reconcile_sweep_job
         return reconcile_sweep_job(rt)
@@ -265,6 +290,7 @@ def reverify_sweep(rt) -> dict[str, Any]:
 def activate_discovery_job(rt, stream, binding=None):
     """Approved native scheduling or verified sender setup; public cron only."""
     from .discovery import _streams, _save_streams
+    guard_scheduling(rt.ctx)
     binding = binding or {}
     configs = (rt.ctx.state.get('discovery_sources', default={}) or {}).get(stream['name'], {})
     toolsets = [t for s in stream['sources'] for t in s.get('toolsets', [])]
@@ -272,10 +298,10 @@ def activate_discovery_job(rt, stream, binding=None):
     toolsets += binding.get('toolsets', [])
     owner = stream.get('delivery_owner', 'native_origin')
     desired = discovery_job_config(stream['name'], toolsets, delivery_owner=owner, deliver=stream.get('deliver', 'origin'))
+    tick = stream_tick_fields(rt, stream)
     if not stream.get('job_id'):
         args = {'action': 'create', 'name': f"{PREFIX}: discovery {stream['name']}",
-                'schedule': stream['schedule'], 'timezone': stream['timezone'],
-                'attach_to_session': True, 'skills': ['alchemy-task:discovery'], **desired}
+                'attach_to_session': True, 'skills': ['alchemy-task:discovery'], **desired, **tick}
         raw = rt.ctx.dispatch_tool('cronjob_manage', args)
         jid = parse_job_id(raw)
         if not jid: raise ValueError('could not create delivery-ready discovery job')
@@ -283,9 +309,9 @@ def activate_discovery_job(rt, stream, binding=None):
         streams = _streams(rt); streams[stream['name']] = stream; _save_streams(rt, streams)
     else:
         read_discovery_job(rt, stream)
-        rt.ctx.dispatch_tool('cronjob_manage', {'action': 'update', 'job_id': stream['job_id'], **desired})
+        rt.ctx.dispatch_tool('cronjob_manage', {'action': 'update', 'job_id': stream['job_id'], **desired, **tick})
     observed = read_discovery_job(rt, stream)
-    problems = job_readback_problems(observed, desired, schedule=stream['schedule'], timezone=stream['timezone'])
+    problems = job_readback_problems(observed, desired, schedule=tick['schedule'], timezone=tick['timezone'])
     if problems:
         raise ValueError('delivery-ready job readback mismatch (' + ', '.join(problems) + '); activation incomplete')
     if observed.get('paused') is True or observed.get('enabled') is False or observed.get('state') == 'paused':
@@ -297,8 +323,140 @@ def activate_discovery_job(rt, stream, binding=None):
                   job_binding={'job_id': stream['job_id'], 'origin_session': stream['origin_session'],
                                'profile': rt.ctx.profile_name, 'verified': True})
     streams = _streams(rt); streams[stream['name']] = stream; _save_streams(rt, streams)
+    init_slot(rt, stream)
     reverify_sweep(rt)
     return stream
+
+
+# ------------------------------------------------------------------ scheduling guard
+
+SCHEDULING_REFUSED = 'Scheduled runs cannot create or change scheduled jobs. Ask in a chat instead.'
+
+
+class SchedulingRefused(UserError):
+    """A scheduled (cron) run tried to create, change, remove or run a scheduled job."""
+
+
+def in_cron(ctx) -> bool:
+    """True inside a cron execution: the public ctx.current_cron_execution(), or the cron session marker."""
+    method = getattr(ctx, 'current_cron_execution', None)
+    try:
+        if callable(method) and method() is not None:
+            return True
+    except Exception:  # noqa: BLE001 - an unknown host state counts as scheduled (refuse)
+        return True
+    try:
+        from gateway.session_context import get_session_env
+        return bool(get_session_env('HERMES_CRON_SESSION'))
+    except Exception:  # noqa: BLE001 - no gateway module: only the ctx check applies
+        return False
+
+
+def agent_scheduling_allowed() -> bool:
+    """Hermes config cron.allow_agent_scheduling (the same switch Hermes uses for its own cron tool)."""
+    try:
+        from hermes_cli.config import load_config_readonly
+        value = ((load_config_readonly() or {}).get('cron') or {}).get('allow_agent_scheduling')
+    except Exception:  # noqa: BLE001 - unreadable config: the default (not allowed)
+        return False
+    return value is True or (isinstance(value, str) and value.strip().lower() in {'true', 'yes', '1', 'on'})
+
+
+def scheduling_refusal(ctx) -> str:
+    """The refusal text when this call may not create or change scheduled jobs, else ''."""
+    return SCHEDULING_REFUSED if in_cron(ctx) and not agent_scheduling_allowed() else ''
+
+
+def guard_scheduling(ctx) -> None:
+    refusal = scheduling_refusal(ctx)
+    if refusal:
+        raise SchedulingRefused(refusal)
+
+
+# ------------------------------------------------------------------ stream tick and wake check
+
+def _scripts_dir() -> Path:
+    from hermes_constants import get_hermes_home
+    return Path(get_hermes_home()) / 'scripts'
+
+
+def _plugin_dir() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def stream_stub_name(name: str) -> str:
+    slug = re.sub(r'[^a-z0-9]+', '_', str(name).lower()).strip('_')[:40] or 'stream'
+    return f"alchemy_task_discovery_{slug}_{hashlib.sha256(str(name).encode()).hexdigest()[:6]}.py"
+
+
+def stream_stub_text(name: str, *, plugin_dir: str, data_dir: str) -> str:
+    head = _LOADER.format(name=f'discovery {name}', plugin=str(plugin_dir), missing='print(json.dumps({"wakeAgent": False}))')
+    return head + f"print(json.dumps(precheck.discovery_wake_file({str(data_dir)!r}, {str(name)!r})))\n"
+
+
+def write_stream_stub(rt, name: str) -> str:
+    scripts = _scripts_dir()
+    scripts.mkdir(parents=True, exist_ok=True)
+    path = scripts / stream_stub_name(name)
+    path.write_text(stream_stub_text(name, plugin_dir=str(_plugin_dir()), data_dir=str(rt.data_dir)))
+    return path.name
+
+
+def remove_stream_stub(name: str) -> None:
+    try:
+        (_scripts_dir() / stream_stub_name(name)).unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001 - a leftover stub is silent once its job is gone
+        pass
+
+
+def stream_tick_fields(rt, stream) -> dict[str, Any]:
+    """The job ticks every 30 minutes behind the stream's wake check; the stream keeps the user's schedule."""
+    from .core.precheck import STREAM_TICK
+    return {'schedule': STREAM_TICK, 'timezone': stream.get('timezone') or 'UTC',
+            'script': write_stream_stub(rt, stream['name'])}
+
+
+def init_slot(rt, stream, *, reset=False) -> None:
+    """Count the latest past slot of the user's schedule as done, so a new, changed or migrated job never
+    runs a slot that already passed (or already ran under the old schedule)."""
+    from .core import precheck
+    slots = rt.ctx.state.get(precheck.SLOT_STATE, default={}) or {}
+    record = slots.get(stream['name']) or {}
+    if record.get('done') and record.get('schedule') == stream.get('schedule') and not reset:
+        return
+    slot = precheck.latest_slot(stream.get('schedule') or '', stream.get('timezone') or 'UTC', lookback=8 * 24 * 60)
+    slots[stream['name']] = {'done': slot.isoformat() if slot else _utcnow_iso(), 'schedule': stream.get('schedule')}
+    rt.ctx.state.set(precheck.SLOT_STATE, slots)
+
+
+def _utcnow_iso() -> str:
+    import datetime as dt
+    return dt.datetime.now(dt.timezone.utc).isoformat()
+
+
+def next_stream_run(stream) -> str:
+    """The next time the stream's own schedule names (ISO, UTC), for display; '' when unknown."""
+    from .core import precheck
+    try:
+        slot = precheck.next_slot(stream.get('schedule') or '', stream.get('timezone') or 'UTC')
+    except Exception:  # noqa: BLE001
+        return ''
+    return slot.isoformat() if slot else ''
+
+
+def request_run_now(rt, name: str) -> None:
+    """Mark a user's "run now" so the stream's wake check lets the manual run through."""
+    from .core import precheck
+    requests = rt.ctx.state.get(precheck.RUN_REQUEST_STATE, default={}) or {}
+    requests[name] = {'at': _utcnow_iso()}
+    rt.ctx.state.set(precheck.RUN_REQUEST_STATE, requests)
+
+
+def run_stream_now(rt, stream) -> Any:
+    """Start the stream's own job now (chat or dashboard only)."""
+    guard_scheduling(rt.ctx)
+    request_run_now(rt, stream['name'])
+    return rt.ctx.dispatch_tool('cronjob_manage', {'action': 'run', 'job_id': stream['job_id']})
 
 
 def parse_job_id(result: Any) -> str:

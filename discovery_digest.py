@@ -254,7 +254,7 @@ def render_digest(run, *, stream, day, numbered, already, failures, coverage, ou
         if queued_reason == 'daily_cap':
             footer.append(f"**Still researching:** {_plural(queued, 'item', 'items')} {verb} waiting for tomorrow (daily limit reached).")
         elif follow_up_started:
-            footer.append(f"**Still researching:** {_plural(queued, 'item', 'items')} {verb} queued for the next run, which is starting now.")
+            footer.append(f"**Still researching:** {_plural(queued, 'item', 'items')} {verb} queued for the next run, which starts within 30 minutes.")
         else:
             footer.append(f"**Still researching:** {_plural(queued, 'item', 'items')} {verb} queued for the next scheduled run.")
     # One compact paragraph so attention notes never push the proposals out of view.

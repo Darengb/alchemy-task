@@ -209,7 +209,8 @@ def _write(path: Path, data: dict[str, Any]) -> None:
 
 def start_session(rt: Runtime, task: dict[str, Any], surface: str) -> dict[str, Any]:
     """Route 2: a one-time scheduled agent job. Its run is a new session named after the task."""
-    from .jobs import parse_job_id
+    from .jobs import parse_job_id, guard_scheduling
+    guard_scheduling(rt.ctx)  # scheduled runs never create jobs
     tz = rt.settings.timezone or "UTC"
     try:
         from zoneinfo import ZoneInfo

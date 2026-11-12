@@ -290,11 +290,8 @@ PRIMARY_MAX_BYTES = 5 * 1024 * 1024
 
 
 def _hermes_home() -> Path:
-    try:
-        from hermes_constants import get_hermes_home
-        return Path(get_hermes_home())
-    except Exception:
-        return Path.home() / '.hermes'
+    from hermes_constants import get_hermes_home
+    return Path(get_hermes_home())
 
 
 def _primary_roots(store) -> list[Path]:

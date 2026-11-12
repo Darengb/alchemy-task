@@ -20,7 +20,7 @@ def test_queued_items_are_one_line_and_only_real_problems_need_attention(tmp_pat
                 {'source_key': 'feed', 'name': 'Feed', 'status': 'failed'}]
     text = digest.prepare('run', stream='mbg', day='2026-11-11', origin=ORIGIN, items=[], failures=failures,
                           deferred=deferred, coverage=coverage, follow_up_started=True)['text']
-    assert '**Still researching:** 3 items are queued for the next run, which is starting now.' in text
+    assert '**Still researching:** 3 items are queued for the next run, which starts within 30 minutes.' in text
     assert 'Cartograph' not in text and 'Twelve units' not in text and 'Veterans Day' not in text
     assert '**Deferred:**' not in text and 'deferred**' not in text and '**Coverage:**' not in text
     assert text.count('**Needs attention:**') == 1 and 'TONI25: research was interrupted before it finished' in text

@@ -88,4 +88,4 @@ def test_waiting_reason_line(tmp_path):
     later = digest.prepare('run2', stream='mbg', day='2026-11-12', origin=ORIGIN, items=[], queued_count=2, queued_reason='time')
     assert '**Still researching:** 2 items are queued for the next scheduled run.' in later['text']
     now = digest.prepare('run3', stream='mbg', day='2026-11-13', origin=ORIGIN, items=[], queued_count=1, follow_up_started=True)
-    assert '**Still researching:** 1 item is queued for the next run, which is starting now.' in now['text']
+    assert '**Still researching:** 1 item is queued for the next run, which starts within 30 minutes.' in now['text']
