@@ -1474,6 +1474,7 @@ class DiscoveryIntegration:
         # A follow-up today cannot research past the daily cap; those items wait for tomorrow's run.
         follow_up = self._start_follow_up(run_id, ledger, stream, queued) if why != 'daily_cap' else False
         reason = {'queued_reason': why} if _accepts(type(self.digest).prepare, 'queued_reason') else {}
+        if stream.get('relist_repeats') and _accepts(type(self.digest).prepare, 'relist'): reason['relist'] = True
         digest = self.digest.prepare(run_id, stream=ledger['config'].get('stream_name', ledger['stream']), day=ledger['business_date'], origin=origin,
                                      items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + unit_failures + supplement_failures], coverage=coverage, outcomes=outcomes,
                                      blocked=conflicts, label=stream.get('label', ''), review_namespace=run_id if ledger.get('lineage', {}).get('operation') else '', deferred=join.get('deferred', []),
