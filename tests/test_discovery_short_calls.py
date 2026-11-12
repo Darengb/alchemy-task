@@ -506,3 +506,24 @@ def test_scheduled_prompt_states_the_call_loop_and_always_ends_with_a_readable_d
     sender = discovery_job_config('work', delivery_owner='verified_sender')['prompt']
     assert 'until it returns status complete' in sender and 'Return [SILENT]' in sender
     assert 'finish_now=true' in sender and 'Partial digest' not in sender
+
+
+
+def test_call_returns_once_a_child_finishes_so_its_slot_and_payload_never_wait_out_the_call(tmp_path):
+    # The first child takes 400 s, the others 1000 s; the 4th candidate waits for a free slot. The slot
+    # freed after the admission window must not idle until the call budget ends: the call returns with
+    # the payload ready, the parent accepts it, and the next call launches the queued candidate.
+    runner, store, pool, run = build(tmp_path, 4)
+    base = pool.status
+
+    def status(handle):
+        index = int(handle['subagent_id'].split('-')[1])
+        pool.duration = 400 if index == 1 else 1000
+        return base(handle)
+    pool.status = status
+    reports = drive(runner, store, run)
+    assert len(pool.launch_times) == 4
+    assert pool.launch_times[3] < 450, pool.launch_times
+    early = [(r, e) for r, e in reports if r['awaiting_parent'] and r['counts']['running']]
+    assert early and all(e < runner.policy.call_seconds for _, e in early)
+    assert reports[-1][0]['status'] == 'complete' and runner.join(run, session_id='parent')['joined']
