@@ -10,7 +10,8 @@ import json
 import re
 from pathlib import Path
 from .core.discovery_state import DiscoveryStore, atomic_json, read_json
-from .core.discovery_identity import UserError
+from .core.discovery_identity import UserError, canonical_source_id
+from urllib.parse import urlsplit, parse_qs
 from .core.digest_text import digest_field, first_sentence
 
 
@@ -20,6 +21,8 @@ def _failure_status(failure):
     lifecycle = re.fullmatch(r'\s*lifecycle terminal ([A-Za-z_]+)\s*', reason)
     if lifecycle:
         return _LIFECYCLE.get(lifecycle.group(1).upper(), 'research stopped before it finished')
+    if reason.startswith('could not be matched to your tasks'):
+        return 'could not be matched to your tasks'
     if reason.startswith("not finished within this run's research time"):
         return 'research did not finish in time; it is queued for the next run'
     if re.search(r'(?:Error:|Exception:|Traceback|fatal:|areas/[^\s]+/tasks/|(?:^|\s)/[^\s]+|[a-f0-9]{8}-[a-f0-9-]{27,})', reason):
@@ -27,7 +30,12 @@ def _failure_status(failure):
     # Internal research-review wording (field names, candidate ids, repair instructions) is not for the user.
     if re.search(r'\b[a-z]+_[a-z_]+\b|\bc_[0-9a-f]{20}\b|\b(?:Repair|payload|bundle|workstream|schema)\b', reason):
         return 'research needs another pass; it is queued for the next run'
-    return first_sentence(reason)[:200]
+    return first_sentence(reason)[:160]
+
+
+def failure_queued(failure):
+    """A failure the next run researches again (time box, another pass): counted, not listed."""
+    return _failure_status(failure).endswith('it is queued for the next run')
 
 
 WRITTEN_STATES = {'local_verified', 'git_pending', 'phone_pending', 'complete'}
@@ -57,6 +65,21 @@ def coverage_degraded(source):
     return source.get('status') != 'complete' and not _attested_read(source)
 
 
+def _source_problem(source):
+    """Plain text for a real source read failure, else None (agent-attested and partial reads are not listed)."""
+    if source.get('status') == 'complete' or _attested_read(source): return None
+    skipped = _skipped(source)
+    if skipped: return ('had a thread that could not be read (' + '; '.join(skipped) + ')')[:160]
+    if source.get('status') == 'failed' or not source.get('backlog_ids') and not source.get('pages'): return 'could not be read'
+    return None
+
+
+def _short_title(title, limit=60):
+    title = ' '.join(str(title or '').split())
+    if len(title) <= limit: return title
+    return title[:limit].rsplit(' ', 1)[0].rstrip(' ,;:') + ' ...'
+
+
 def _source_name(source):
     return str(source.get('name') or source.get('source_key') or source.get('source') or 'source')
 
@@ -74,11 +97,17 @@ def _link_label(url):
     return 'Open source'
 
 
+def _day_label(day):
+    date = dt.date.fromisoformat(day)
+    return f"{date.strftime('%B')} {date.day}"
+
+
 def _plural(n, one, many):
     return f'{n} {one if n == 1 else many}'
 
 
-def render_digest(run, *, stream, day, numbered, already, failures, coverage, outcomes, deferred, blocked):
+def render_digest(run, *, stream, day, numbered, already, failures, coverage, outcomes, deferred, blocked,
+                  queued_count=0, follow_up_started=False, still_open=()):
     """The Telegram digest text. Short fields come from authored digest_* research
     fields (first-sentence fallback); the stored items keep the full research."""
     date = dt.date.fromisoformat(day)
@@ -87,8 +116,13 @@ def render_digest(run, *, stream, day, numbered, already, failures, coverage, ou
     written = [o for o in outcomes if o.get('status') in WRITTEN_STATES]
     # Blocked existing-task updates count as existing-task outcomes, not failures.
     if outcomes or blocked: head.append(f"**{_plural(len(outcomes) + len(blocked), 'existing task outcome', 'existing task outcomes')}**")
-    if deferred: head.append(f'**{len(deferred)} deferred**')
-    attention = len(failures)
+    # Items the next run researches again are one "Still researching" line, not attention.
+    queued = len(deferred) + sum(1 for f in failures if failure_queued(f))
+    queued = queued_count or queued
+    attention_failures = [f for f in failures if not failure_queued(f)]
+    source_problems = [(s, _source_problem(s)) for s in coverage]
+    source_problems = [(s, p) for s, p in source_problems if p]
+    attention = len(attention_failures) + len(source_problems)
     head.append(f"**{attention} {'needs' if attention == 1 else 'need'} attention**")
     lines = [f'## {stream} Task Discovery', '', f"**{date.strftime('%A, %B')} {date.day}**", ' · '.join(head), '']
     for item in numbered:
@@ -125,7 +159,8 @@ def render_digest(run, *, stream, day, numbered, already, failures, coverage, ou
         # Deferred or blocked work is not "nothing new": only a complete check with
         # nothing left says no follow-ups were found.
         degraded = bool(failures or any(coverage_degraded(s) for s in coverage))
-        lines += ['No new follow-ups found.' if not degraded and not outcomes and not deferred and not blocked and not already else 'No new proposals to review.', '']
+        quiet = not degraded and not outcomes and not deferred and not blocked and not already and not queued and not still_open
+        lines += ['No new follow-ups found.' if quiet else 'No new proposals to review.', '']
     footer = []
     if already:
         groups = {}
@@ -144,21 +179,17 @@ def render_digest(run, *, stream, day, numbered, already, failures, coverage, ou
         # Multiple exact matches are an unnumbered blocked existing-task item.
         footer.append(f"**Existing task update blocked:** {conflict['title']}: multiple exact task matches conflict; nothing was changed"
                       + (' (' + '; '.join(t.get('title', 'Existing task') for t in conflict.get('targets', [])) + ')' if conflict.get('targets') else ''))
-    for failure in failures:
+    if still_open:
+        footer.append('**Still open from earlier:** ' + ' · '.join(
+            f"{o['ref']}{' from ' + _day_label(o['day']) if o.get('day') and o['day'] != day else ''} ({_short_title(o['title'])})" for o in still_open))
+    if queued:
+        verb = 'is' if queued == 1 else 'are'
+        tail = ', which is starting now.' if follow_up_started else '.'
+        footer.append(f"**Still researching:** {_plural(queued, 'item', 'items')} {verb} queued for the next run{tail}")
+    for failure in attention_failures:
         footer.append('**Needs attention:** ' + (str(failure['title']) + ': ' if failure.get('title') else '') + _failure_status(failure))
-    for item in deferred:
-        footer.append('**Deferred:** ' + (str(item['title']) + ': ' if item.get('title') else '') + str(item.get('reason') or 'Deferred to the next run')[:400])
-    attested = [_source_name(s) for s in coverage if _attested_read(s)]
-    if attested:
-        verb = 'was' if len(set(attested)) == 1 else 'were'
-        footer.append(f'**Coverage:** {_join_names(attested)} {verb} read with your own tools, so completeness is not verified.')
-    for source in coverage:
-        if _attested_read(source) or source.get('status') == 'complete': continue
-        skipped = _skipped(source)
-        if skipped: detail = ('skipped thread: ' + '; '.join(skipped))[:400]
-        elif source.get('status') == 'failed' or not source.get('backlog_ids') and not source.get('pages'): detail = 'could not be read'
-        else: detail = 'was only partly read'
-        footer.append(f'**Coverage:** {_source_name(source)}: {detail}')
+    for source, problem in source_problems:
+        footer.append(f'**Needs attention:** {_source_name(source)} {problem}')
     for line in footer: lines += [line, '']
     if numbered:
         example = next((i['ref'] for i in numbered if i['kind'] == 'new'), numbered[0]['ref'])
@@ -166,6 +197,70 @@ def render_digest(run, *, stream, day, numbered, already, failures, coverage, ou
     if not written:
         lines.append('No tasks were created or changed.')
     return '\n'.join(lines).rstrip() + '\n'
+
+
+def _link_keys(url):
+    """(conversation key, message key) for a source link; provider-neutral fallback is the bare URL."""
+    parts = urlsplit(str(url).strip())
+    host = parts.netloc.lower()
+    if host == 'mail.google.com':
+        ident = parts.fragment.rstrip('/').rsplit('/', 1)[-1]
+        if ident: return 'mail:' + ident, None
+    if host.endswith('slack.com'):
+        found = re.search(r'/archives/([A-Za-z0-9]+)/p(\d{10})(\d{6})', parts.path)
+        if found:
+            channel, ts = found.group(1), found.group(2) + '.' + found.group(3)
+            root = (parse_qs(parts.query).get('thread_ts') or [ts])[0]
+            return f'slack:{channel}:{root}', f'slack:{channel}:{ts}'
+    plain = (host + parts.path).rstrip('/').lower()
+    return ('url:' + plain, None) if plain else (None, None)
+
+
+def _typed_keys(source):
+    try:
+        ident = canonical_source_id(source)
+    except (UserError, TypeError, ValueError):
+        return None, None
+    bits = ident.split(':')
+    if bits[0] == 'gmail':
+        return 'mail:' + bits[2], ('mail-msg:' + bits[3] if len(bits) == 4 else None)
+    if bits[0] == 'slack':
+        return f'slack:{bits[2]}:{bits[3]}', (f'slack:{bits[2]}:{bits[4]}' if len(bits) == 5 else None)
+    return ident, None
+
+
+def decisive_sources(item):
+    """Stable decisive source keys of a proposal: typed exact ids when present, else the primary link.
+
+    Returns (conversation keys, message keys). Supporting links (files, docs) are not decisive."""
+    typed = item.get('exact_source_ids') or item.get('source_ids') or []
+    pairs = [_typed_keys(x) for x in typed]
+    if not any(c for c, _ in pairs):
+        pairs = [_link_keys(url) for url in (item.get('source_links') or [])[:1]]
+    return {c for c, _ in pairs if c}, {m for _, m in pairs if m}
+
+
+def _earlier_match(data, run, raw, keys, messages, day, split_keys):
+    """Earlier proposal (any stream) this item repeats, or None.
+
+    A shared decisive source matches. When that source holds several separate asks
+    (split in this run or an earlier one), only the same unit matches. Pending
+    proposals suppress only inside their seven days; dismissed, approved or
+    completed ones suppress unless the decisive source shows a newer message."""
+    best = None
+    for pid, record in data['proposals'].items():
+        b = record['binding']
+        if b.get('run_id') == run: continue
+        if record.get('state') == 'pending' and b.get('expires', '') < day: continue
+        old_keys, old_messages = decisive_sources(b)
+        shared = keys & old_keys
+        if not shared: continue
+        if (shared & split_keys or shared & set(data.get('split_sources', ()))) and b.get('unit_id') != raw.get('unit_id'): continue
+        if record.get('state') != 'pending' and messages and old_messages and not messages <= old_messages:
+            continue  # the source has a newer decisive message: a real new follow-up
+        if best is None or (b['day'], b['number']) > (best[1]['day'], best[1]['number']):
+            best = (pid, b, record.get('state'))
+    return best
 
 
 class DiscoveryDigest:
@@ -177,7 +272,8 @@ class DiscoveryDigest:
     def _load(self):
         return read_json(self.path, {'digests': {}, 'proposals': {}, 'numbers': {}, 'seen': {}, 'delivery': {}})
 
-    def prepare(self, run, *, stream, day, origin, items, failures=None, coverage=None, outcomes=None, label='', review_namespace='', deferred=None, blocked=None):
+    def prepare(self, run, *, stream, day, origin, items, failures=None, coverage=None, outcomes=None, label='', review_namespace='',
+                deferred=None, blocked=None, queued_count=0, follow_up_started=False):
         dt.date.fromisoformat(day)
         if not origin.get('session_id'):
             raise UserError('digest requires actual origin session')
@@ -187,7 +283,13 @@ class DiscoveryDigest:
                 return data['digests'][run]
             numbered = []
             key = origin['session_id'] + ':' + day
-            already = []
+            already, still_open, repeats = [], [], []
+            # Several units from one decisive source are separate asks: only their own unit repeats them.
+            counts = {}
+            for raw in items:
+                for k in decisive_sources(raw)[0]: counts.setdefault(k, set()).add(raw.get('unit_id'))
+            split_keys = {k for k, units in counts.items() if len(units) > 1}
+            if split_keys: data['split_sources'] = sorted(set(data.get('split_sources', [])) | split_keys)
             for raw in items:
                 if raw['kind'] not in {'new', 'semantic', 'selection'}:
                     raise UserError('only new or update proposals are numbered')
@@ -202,6 +304,18 @@ class DiscoveryDigest:
                 # Same accepted action/revision is not relisted in another stream.
                 if identity in data['seen']:
                     continue
+                keys, messages = decisive_sources(raw)
+                # A new run over the same source does not renumber an open or resolved proposal.
+                # Review reruns (review_namespace) relist on purpose.
+                earlier = None if review_namespace else _earlier_match(data, run, raw, keys, messages, day, split_keys)
+                if earlier:
+                    pid, b, state = earlier
+                    repeats.append({'unit_id': raw['unit_id'], 'research_revision': raw['research_revision'], 'title': raw['title'],
+                                    'earlier_proposal_id': pid, 'earlier_ref': b['ref'], 'earlier_day': b['day'], 'earlier_state': state})
+                    if state == 'pending' and pid not in {o['proposal_id'] for o in still_open}:
+                        still_open.append({'proposal_id': pid, 'ref': b['ref'], 'day': b['day'], 'title': b['title']})
+                    data['seen'][identity] = pid
+                    continue
                 num = data['numbers'].get(key, 0) + 1
                 data['numbers'][key] = num
                 pid = 'p_' + hashlib.sha256((run + ':' + identity).encode()).hexdigest()[:24]
@@ -213,10 +327,12 @@ class DiscoveryDigest:
                 data['seen'][identity] = pid
             failures, coverage, deferred, blocked = failures or [], coverage or [], deferred or [], blocked or []
             text = render_digest(run, stream=stream, day=day, numbered=numbered, already=already, failures=failures,
-                                 coverage=coverage, outcomes=outcomes or [], deferred=deferred, blocked=blocked)
+                                 coverage=coverage, outcomes=outcomes or [], deferred=deferred, blocked=blocked,
+                                 queued_count=queued_count, follow_up_started=follow_up_started, still_open=still_open)
             result = {'run_id': run, 'stream': stream, 'day': day, 'prepared_at': dt.datetime.now(dt.timezone.utc).isoformat(), 'origin': origin, 'items': numbered,
                       'failures': failures, 'deferred': deferred, 'coverage': coverage, 'outcomes': outcomes or [], 'blocked': blocked,
-                      'already_current': already, 'text': text}
+                      'already_current': already, 'still_open': still_open, 'repeats': repeats,
+                      'queued_count': queued_count, 'follow_up_started': follow_up_started, 'text': text}
             result['sha256'] = hashlib.sha256(result['text'].encode()).hexdigest()
             data['digests'][run] = result
             data['delivery'][run] = {'state': 'prepared', 'digest_sha256': result['sha256'], 'origin': origin}
