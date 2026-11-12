@@ -21,3 +21,11 @@ def test_replaying_an_older_run_never_takes_back_an_item_a_later_run_owns(tmp_pa
     store.update_backlog('work', 'feed', bid, status='accepted', lineage={'run_id': 'new', 'candidate_id': 'c'})
     item = store.source_state('work', 'feed')['backlog'][0]
     assert item['lineage']['run_id'] == 'new'  # integration._settle_backlog skips items owned by another run
+
+
+def test_time_box_cut_offs_are_deferred_without_limit_and_newer_runs_take_over_older_claims():
+    import inspect
+    from alchemy_task import discovery_integration as di
+    src = inspect.getsource(di.DiscoveryIntegration._settle_backlog)
+    assert 'TIME_BOX_REASON' in src and "'deferred' if (not attempts or timed_out)" in src
+    assert "self._run_created(owner) > str(ledger.get('created')" in src

@@ -67,7 +67,7 @@ def test_already_current_matches_are_listed_once_without_a_proposal(tmp_path):
     d = digest.prepare('run1', stream='mbg', day='2026-11-11', origin=ORIGIN, label='M', items=items)
     assert [i['ref'] for i in d['items']] == ['M1', 'M2']  # a new-task flag without a target is ignored
     assert [i['unit_id'] for i in d['items']] == ['u3', 'u4']
-    assert '**Already in your tasks:** Title u1 \u00b7 Title u2 (in "Campaign task")' in d['text']
+    assert 'Already in your tasks' not in d['text']  # kept in the record, not the chat text
     ledger = json.loads((tmp_path / 'digest-ledger.json').read_text())
     assert {p['binding']['unit_id'] for p in ledger['proposals'].values()} == {'u3', 'u4'}
     assert [a['unit_id'] for a in d['already_current']] == ['u1', 'u2']

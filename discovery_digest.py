@@ -176,12 +176,7 @@ def render_digest(run, *, stream, day, numbered, already, failures, coverage, ou
         quiet = not degraded and not outcomes and not deferred and not blocked and not already and not queued and not still_open
         lines += ['No new follow-ups found.' if quiet else 'No new proposals to review.', '']
     footer = []
-    if already:
-        groups = {}
-        for a in already:
-            groups.setdefault(tuple(t.get('title', 'Existing task') for t in a['targets']), []).append(a['title'])
-        footer.append('**Already in your tasks:** ' + '; '.join(
-            ' · '.join(titles) + ' (in ' + ', '.join(f'"{t}"' for t in key) + ')' for key, titles in groups.items()))
+    # Items already recorded in an existing task are kept in the digest record (and the dashboard), not the chat text.
     for outcome in outcomes:
         line = f"**Existing task:** {outcome['title']}: {outcome['status']}"
         for surface in ('git', 'phone'):
