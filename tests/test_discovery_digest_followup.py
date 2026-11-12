@@ -23,9 +23,9 @@ def test_queued_items_are_one_line_and_only_real_problems_need_attention(tmp_pat
     assert '**Still researching:** 3 items are queued for the next run, which is starting now.' in text
     assert 'Cartograph' not in text and 'Twelve units' not in text and 'Veterans Day' not in text
     assert '**Deferred:**' not in text and 'deferred**' not in text and '**Coverage:**' not in text
-    assert '**Needs attention:** TONI25: research was interrupted before it finished' in text
-    assert '**Needs attention:** Supplier: not reviewed in this run' in text
-    assert '**Needs attention:** Feed could not be read' in text
+    assert text.count('**Needs attention:**') == 1 and 'TONI25: research was interrupted before it finished' in text
+    assert 'Supplier: not reviewed in this run' in text
+    assert 'Feed could not be read' in text
     assert '**3 need attention**' in text and '\u2014' not in text
     one = digest.prepare('run2', stream='mbg', day='2026-11-12', origin=ORIGIN, items=[], deferred=deferred[:1])['text']
     assert '**Still researching:** 1 item is queued for the next run.' in one and '**0 need attention**' in one

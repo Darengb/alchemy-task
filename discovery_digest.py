@@ -200,10 +200,11 @@ def render_digest(run, *, stream, day, numbered, already, failures, coverage, ou
         verb = 'is' if queued == 1 else 'are'
         tail = ', which is starting now.' if follow_up_started else '.'
         footer.append(f"**Still researching:** {_plural(queued, 'item', 'items')} {verb} queued for the next run{tail}")
-    for failure in attention_failures:
-        footer.append('**Needs attention:** ' + (str(failure['title']) + ': ' if failure.get('title') else '') + _failure_status(failure))
-    for source, problem in source_problems:
-        footer.append(f'**Needs attention:** {_source_name(source)} {problem}')
+    # One compact paragraph so attention notes never push the proposals out of view.
+    notes = [(str(f['title']) + ': ' if f.get('title') else '') + _failure_status(f) for f in attention_failures]
+    notes += [f'{_source_name(source)} {problem}' for source, problem in source_problems]
+    if notes:
+        footer.append('**Needs attention:** ' + ' · '.join(n.rstrip('.') for n in notes) + '.')
     for line in footer: lines += [line, '']
     if numbered:
         example = next((i['ref'] for i in numbered if i['kind'] == 'new'), numbered[0]['ref'])

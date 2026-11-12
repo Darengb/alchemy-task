@@ -153,7 +153,7 @@ def test_failed_first_run_window_is_reread_by_the_next_run(settings, data_dir, t
     first = integration.start('work', session_id='parent')
     assert integration.collect(first['run_id'], 'feed', session_id='parent')['status'] == 'failed'
     text1 = _close_run(integration, first['run_id'])['text']
-    assert '**Needs attention:** Feed could not be read' in text1 and 'No new follow-ups found.' not in text1
+    assert '**Needs attention:** Feed could not be read.' in text1 and 'No new follow-ups found.' not in text1
     # Day 2: the reader works again. The failed interval must be read again.
     integration.utcnow = lambda: day2
     reader = _window_reader([item])
@@ -335,8 +335,8 @@ def test_one_bad_slack_thread_is_skipped_with_an_error_and_siblings_survive(sett
     assert '**Coverage:**' not in text and 'No new proposals to review.' in text
     assert 'No new follow-ups found.' not in text
     # The digest names the actual skip reason, not a generic read failure.
-    attention = [l for l in text.splitlines() if l.startswith('**Needs attention:** Feed')]
-    assert attention == ['**Needs attention:** Feed had a thread that could not be read (' + _SKIP_REASON[defect] + ')']
+    attention = [l for l in text.splitlines() if l.startswith('**Needs attention:**')]
+    assert len(attention) == 1 and 'Feed had a thread that could not be read (' + _SKIP_REASON[defect] + ')' in attention[0]
 
 
 @_pytest.mark.parametrize('violation', ['account_mismatch', 'nonstructured'])

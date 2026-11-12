@@ -99,8 +99,8 @@ def test_attested_coverage_is_one_plain_line_and_not_degraded(tmp_path):
     quiet = digest.prepare('run2', stream='mbg', day='2026-11-12', origin=ORIGIN, items=[], coverage=attested)
     assert 'No new follow-ups found.' in quiet['text']  # attested reads alone are not degraded
     bad = digest.prepare('run3', stream='mbg', day='2026-11-13', origin=ORIGIN, items=[], coverage=[failed, skipped])
-    assert '**Needs attention:** feed could not be read' in bad['text']
-    assert '**Needs attention:** chan had a thread that could not be read (too large)' in bad['text']
+    assert '**Needs attention:** feed could not be read · chan had a thread that could not be read (too large).' in bad['text']
+    assert bad['text'].count('**Needs attention:**') == 1
     assert '**0 follow-ups** · **2 need attention**' in bad['text']
     assert 'No new proposals to review.' in bad['text']
 
