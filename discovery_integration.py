@@ -174,6 +174,9 @@ def _transcript_name(mail, key, taken):
     suffix = ' ' + hashlib.sha256(key.encode()).hexdigest()[:8]
     return base[:80 - len(suffix)].rstrip() + suffix
 
+TIME_BOX_REASON = "not finished within this run's research time"
+
+
 class DiscoveryIntegration:
     def __init__(self, rt, *, profile_home=None):
         self.rt = rt
@@ -925,6 +928,12 @@ class DiscoveryIntegration:
         self._settle_backlog(run_id)
         return {'run_id': run_id, 'index_revision': self.store.get_run(run_id)['index_revision'], 'context': resources, 'index': index}
 
+    def _run_created(self, run_id):
+        try:
+            return str(self.store.get_run(run_id).get('created') or '')
+        except Exception:  # noqa: BLE001 - a pruned run owns nothing
+            return ''
+
     def _settle_backlog(self, run_id, join=None):
         ledger = self.store.get_run(run_id)
         info = ledger['resources'].get('backlog-selection')
@@ -938,15 +947,17 @@ class DiscoveryIntegration:
             elif candidate.get('research_selection') == 'pilot_skipped': state = 'pilot_skipped'
             elif join and cid in join['accepted']: state = 'accepted'
             elif join:
-                attempted = any(a['candidate_id'] == cid for a in ledger['attempts'].values())
-                state = 'blocked' if attempted else 'deferred'
+                attempts = sorted((a for a in ledger['attempts'].values() if a['candidate_id'] == cid), key=lambda a: a['ordinal'])
+                # Cut off by the research time box is not a failure: it always goes to the next run.
+                timed_out = bool(attempts) and str((attempts[-1].get('rejection') or {}).get('reason') or '').startswith(TIME_BOX_REASON)
+                state = 'deferred' if (not attempts or timed_out) else 'blocked'
             else: state = 'selected'
             # A later run may already own this backlog item (it retried a deferred or blocked item);
-            # replaying an older run must never take it back.
+            # replaying an older run must never take it back. An earlier run's claim never blocks this one.
             current = next((x for x in self.store.source_state(ledger['stream'], entry['source_key'])['backlog']
                             if x['backlog_id'] == entry['backlog_id']), None)
             owner = (current or {}).get('lineage', {}).get('run_id')
-            if current and owner and owner != run_id:
+            if current and owner and owner != run_id and self._run_created(owner) > str(ledger.get('created') or ''):
                 continue
             self.store.update_backlog(ledger['stream'], entry['source_key'], entry['backlog_id'], status=state, lineage=lineage)
 
