@@ -31,6 +31,16 @@ class GitError(RuntimeError):
     pass
 
 
+def minimal_git_env() -> dict[str, str]:
+    """The only environment a git child gets: a short allowlist from ``os.environ`` plus no-prompt settings.
+    Provider keys and other secrets never reach git or anything a repo's config could start."""
+    env = {k: os.environ[k] for k in _PASSTHROUGH_ENV if os.environ.get(k)}
+    env.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin")
+    env.update({"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "Never", "SSH_ASKPASS_REQUIRE": "never",
+                "GIT_OPTIONAL_LOCKS": "0"})
+    return env
+
+
 class GitDelivery:
     def __init__(self, settings: Settings, data_dir: Path) -> None:
         self.s = settings
@@ -57,11 +67,7 @@ class GitDelivery:
         os.replace(tmp, path)
 
     def env(self) -> dict[str, str]:
-        env = {k: os.environ[k] for k in _PASSTHROUGH_ENV if os.environ.get(k)}
-        env.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin")
-        env.update({"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "Never", "SSH_ASKPASS_REQUIRE": "never",
-                    "GIT_OPTIONAL_LOCKS": "0"})
-        return env
+        return minimal_git_env()
 
     def git(self, *args: str, check: bool = True, timeout: int = GIT_TIMEOUT) -> subprocess.CompletedProcess:
         cmd = ["git"]

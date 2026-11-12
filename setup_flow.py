@@ -496,6 +496,10 @@ def status(rt: Runtime) -> dict[str, Any]:
         out["discovery"] = discovery.status_summary(rt)
     except Exception:  # noqa: BLE001
         out["discovery"] = {"ready": False, "streams": 0}
+    from .core.reader_policy import needs_read_only_reader
+    readers = needs_read_only_reader(rt)
+    if readers:
+        out.setdefault("discovery", {})["needs_read_only_reader"] = readers
     order = ("timezone", "workspace", "areas", "git", "jobs")  # discovery streams are optional
     pending = [k for k in order if k in out and not out[k].get("ready")]
     out["next"] = pending[0] if pending else "all set"
@@ -531,5 +535,7 @@ def receipt_text(rep: dict[str, Any]) -> str:
     if "discovery" in rep:
         d = rep["discovery"]
         lines.append(f"{icon(d.get('ready'))} Discovery streams: {d.get('streams', 0)}")
+        for r in d.get("needs_read_only_reader") or []:
+            lines.append(f"⬜ Discovery {r['stream']} / {r['source_key']} needs a read-only reader: {r['reason']}")
     lines.append(f"Next: {rep.get('next')}")
     return "\n".join(lines)
