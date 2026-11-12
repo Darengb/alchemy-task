@@ -887,6 +887,13 @@ class DiscoveryIntegration:
                 attempted = any(a['candidate_id'] == cid for a in ledger['attempts'].values())
                 state = 'blocked' if attempted else 'deferred'
             else: state = 'selected'
+            # A later run may already own this backlog item (it retried a deferred or blocked item);
+            # replaying an older run must never take it back.
+            current = next((x for x in self.store.source_state(ledger['stream'], entry['source_key'])['backlog']
+                            if x['backlog_id'] == entry['backlog_id']), None)
+            owner = (current or {}).get('lineage', {}).get('run_id')
+            if current and owner and owner != run_id:
+                continue
             self.store.update_backlog(ledger['stream'], entry['source_key'], entry['backlog_id'], status=state, lineage=lineage)
 
     # Per-unit problems that are not a caller mistake: they land under Needs attention, never stop the run.
