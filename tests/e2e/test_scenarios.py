@@ -322,7 +322,7 @@ def test_e_cap_defers_overflow_to_next_run_not_lost(world, host_factory):
     researched = set(proposal_titles(day1['digest']).values())
     deferred_title = ({t for _, t in ITEMS} - researched).pop()
     # Visible as a count, not silently dropped and not listed one by one.
-    assert '**Still researching:** 1 item is queued for the next run.' in day1['digest']['text']
+    assert '**Still researching:** 1 item is queued for the next run, which is starting now.' in day1['digest']['text']
     assert deferred_title not in day1['digest']['text']
     # Next day: the source still lists all three; only the deferred item is researched now.
     P.set_clock(host, DAY1 + dt.timedelta(days=1))
@@ -357,7 +357,7 @@ def test_e3_cap_deferral_is_a_distinct_state_not_a_failure(world, host_factory):
     assert '**0 need attention**' in head, head
     assert day1['record']['summary']['failures'] == 0 and day1['record']['failures'] == []
     text = day1['digest']['text']
-    assert '**Still researching:** 1 item is queued for the next run.' in text.splitlines(), text
+    assert '**Still researching:** 1 item is queued for the next run, which is starting now.' in text.splitlines(), text
     assert deferred_title not in text and '**Needs attention:**' not in text
 
 
