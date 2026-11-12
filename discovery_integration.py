@@ -1408,8 +1408,10 @@ class DiscoveryIntegration:
         # exact, then schedule the follow-up before the digest so the digest can say it started.
         self._settle_backlog(run_id, join)
         queued = self._queued_count(ledger)
-        follow_up = self._start_follow_up(run_id, ledger, stream, queued)
-        reason = {'queued_reason': self._queued_reason(run_id, join, queued)} if _accepts(type(self.digest).prepare, 'queued_reason') else {}
+        why = self._queued_reason(run_id, join, queued)
+        # A follow-up today cannot research past the daily cap; those items wait for tomorrow's run.
+        follow_up = self._start_follow_up(run_id, ledger, stream, queued) if why != 'daily_cap' else False
+        reason = {'queued_reason': why} if _accepts(type(self.digest).prepare, 'queued_reason') else {}
         digest = self.digest.prepare(run_id, stream=ledger['config'].get('stream_name', ledger['stream']), day=ledger['business_date'], origin=origin,
                                      items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + unit_failures + supplement_failures], coverage=coverage, outcomes=outcomes,
                                      blocked=conflicts, label=stream.get('label', ''), review_namespace=run_id if ledger.get('lineage', {}).get('operation') else '', deferred=join.get('deferred', []),
