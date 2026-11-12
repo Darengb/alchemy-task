@@ -171,6 +171,7 @@ def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None, 
                    'of this stream starts on its own a few minutes later; never start or schedule one yourself. Stop early only when nothing at all can proceed. Never create another run; '
                    'the next run continues the same saved run. ' + (
                    '' if delivery_owner == 'verified_sender' else
+                   'Do not leave a failed file edit: write any helper script to a new unique filename. '
                    'If preparing the digest is refused or fails, the final reply is a partial digest you write in the same layout, marked '
                    'Partial digest: heading, one section per accepted finding with current state and next action, a Needs attention list '
                    'of each skipped item and why, then the run_id. Never end with only a status report.'))}

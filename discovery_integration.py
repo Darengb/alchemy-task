@@ -44,6 +44,38 @@ OWNER_ONLY_UNAVAILABLE = ('approvals.owner_only is not available in this version
                           "this profile's chats (the gateway controls who may talk to the agent). It is a planned follow-up.")
 
 
+
+def resolve_target_reply(proposal, edit):
+    """Map a reply like "M29, update" or "M29, update 2" onto the proposal's frozen target list.
+
+    The digest numbers targets in the order stored with the proposal binding, so a position
+    always names the same task. "update" alone takes the recommended target when there is one;
+    otherwise target_task_id stays unset and the caller must ask which task."""
+    targets = proposal.get('targets') or []
+    choice = edit.get('choice')
+    position = edit.pop('target_position', None)
+    if isinstance(choice, str):
+        found = re.fullmatch(r'\s*update\s+(\d+)\s*', choice, re.I)
+        if found:
+            position, edit['choice'] = int(found[1]), 'update'
+        elif choice.strip().casefold() == 'update':
+            edit['choice'] = 'update'
+    if position is not None:
+        if isinstance(position, bool) or not isinstance(position, (int, str)) or not str(position).strip().isdigit():
+            raise UserError('target position must be the number of a listed existing task')
+        position = int(position)
+        if not 1 <= position <= len(targets):
+            raise UserError(f'target position {position} is not one of the {len(targets)} listed existing tasks')
+        chosen = targets[position - 1]['task_id']
+        if edit.get('target_task_id') and edit['target_task_id'] != chosen:
+            raise UserError('target position and target_task_id name different tasks')
+        edit['target_task_id'] = chosen
+        edit.setdefault('choice', 'update')
+    elif edit.get('choice') == 'update' and not edit.get('target_task_id') and proposal.get('kind') == 'selection':
+        recommended = [t for t in targets if t.get('recommended')]
+        if len(recommended) == 1: edit['target_task_id'] = recommended[0]['task_id']
+    return edit
+
 class FeatureUnavailable(UserError):
     """A refused, not-yet-available setting. Nothing was written."""
 _METADATA_LIMITS = {'title': MAX_TITLE_CHARS, 'prefilter_reason': MAX_REASON_CHARS, 'summary': MAX_STRING_CHARS,
@@ -1419,6 +1451,7 @@ class DiscoveryIntegration:
             edit = copy.deepcopy((args.get('edits') or {}).get(str(ref), {}))
             if 'title' in edit and (not isinstance(edit['title'], str) or not edit['title'].strip() or len(edit['title']) > 200):
                 raise UserError('approval title edit requires 1..200 characters')
+            edit = resolve_target_reply(proposal, edit)
             plan_path, _ = self.conversion._paths(run_id, unit_id)
             plan = read_json(plan_path)
             if plan and any(key not in plan['request'] or plan['request'][key] != value for key, value in edit.items()):
@@ -1429,7 +1462,7 @@ class DiscoveryIntegration:
                 if choice not in {'create', 'update'}:
                     raise UserError('semantic proposal requires explicit update or create choice')
                 if kind == 'selection' and choice == 'update' and not edit.get('target_task_id'):
-                    raise UserError('select one of ALL nominated target_task_id options')
+                    raise UserError('this proposal lists several existing tasks and none is recommended; ask which task by number ("update 1", "update 2") and pass that position or target_task_id')
                 allowed = {'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated', 'scope_notes', 'priority', 'scheduled', 'execution_method', 'notes', 'plan', 'checklist', 'active_goal', 'correction_overlay', 'summary', 'subtasks', 'subtasks_skipped_reason'}
                 if set(edit) - allowed: raise UserError('unsupported approval edits: ' + ', '.join(sorted(set(edit) - allowed)))
                 self.conversion.prepare(run_id, unit_id, choice=choice, reason='User approved exact immutable proposal ' + proposal['proposal_id'],

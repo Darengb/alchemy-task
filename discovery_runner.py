@@ -147,7 +147,9 @@ DIGEST_FIELD_INSTRUCTIONS = (
     '(the one next step) and, for an existing-task match, digest_addition (what is new compared with that task): each 1 to 2 '
     'plain, complete sentences under 300 characters that stand alone for the user, with no hedging or lists. '
     'Set existing_task_already_current true only when a task you nominated already records this work\'s current state and next step, '
-    'so nothing would be added to it.')
+    'so nothing would be added to it. '
+    'List existing_task_candidates most likely destination first and give each a confidence (high, medium or low). '
+    'Set recommended_task_path to one candidate path only when that task is clearly the right destination; omit it otherwise.')
 
 class DiscoveryRunner:
     def __init__(self, ctx, rt, *, store=None, clock=time, policy=None,

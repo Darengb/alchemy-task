@@ -413,10 +413,12 @@ function ProposalCard({ p, run, reload, readOnly }) {
   const { api, actions, today, meta, store } = useApp()
   const toast = useToast()
   const overlay = useOverlay()
-  const targets = p.targets || []
+  // Research order is kept; a recommended target (if any) is listed first and preselected.
+  const targets = [...(p.targets || [])].sort((a, b) => (b.recommended ? 1 : 0) - (a.recommended ? 1 : 0))
   const multi = p.kind === 'selection' || targets.length > 1
   const [mode, setMode] = React.useState(p.kind === 'new' || !targets.length ? 'create' : 'update')
-  const [target, setTarget] = React.useState(targets.length === 1 ? targets[0].task_id : null)
+  const recommended = targets.find((x) => x.recommended)
+  const [target, setTarget] = React.useState(targets.length === 1 ? targets[0].task_id : recommended ? recommended.task_id : null)
   const streamAreas = (meta.streams || {})[run.stream] || []
   const [date, setDate] = React.useState(p.due || p.due_hint || today)
   const [area, setArea] = React.useState(p.area || (streamAreas.length === 1 ? streamAreas[0] : meta.default_area) || '')
@@ -509,7 +511,7 @@ function ProposalCard({ p, run, reload, readOnly }) {
               {multi ? <input type="radio" name={p.proposal_id} checked={target === t.task_id && mode === 'update'}
                               onChange={() => { setTarget(t.task_id); setMode('update') }} /> : <Icon name="arrowR" size={14} />}
               <span className="at-target-main">
-                <span className="at-target-title">{t.title}</span>
+                <span className="at-target-title">{t.title}{t.recommended && multi ? <span className="at-chip" style={{ marginLeft: 6 }}>Recommended</span> : null}</span>
                 <span className="at-target-meta">
                   {t.area ? <><AreaDot area={t.area} />{t.area}</> : null}
                   {D.taskDate(t) ? <span>{D.relativeDay(D.taskDate(t), today)}</span> : null}

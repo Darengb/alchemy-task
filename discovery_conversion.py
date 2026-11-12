@@ -76,6 +76,33 @@ def _put_summary(fm, summary):
     fm.insert(1, 'summary', summary)
 
 
+
+CONFIDENCE_RANK = {'high': 0, 'medium': 1, 'low': 2}
+
+
+def order_semantic_targets(targets, research):
+    """Order nominated targets as research ranked them and mark a clear recommendation.
+
+    Research lists existing_task_candidates most likely first, optionally with a
+    per-candidate confidence. A target is recommended when research named its path in
+    recommended_task_path, or when it is the only candidate with confidence high."""
+    candidates = [x for x in research.get('existing_task_candidates') or [] if isinstance(x, dict)]
+    position = {x['path']: i for i, x in enumerate(candidates)}
+    confidence = {x['path']: x.get('confidence') for x in candidates}
+    ordered = sorted(targets, key=lambda t: (CONFIDENCE_RANK.get(confidence.get(t.get('path')), 1),
+                                             position.get(t.get('path'), len(position))))
+    recommended = research.get('recommended_task_path')
+    if recommended not in {t.get('path') for t in ordered}:
+        high = [t for t in ordered if confidence.get(t.get('path')) == 'high']
+        recommended = high[0]['path'] if len(high) == 1 else None
+    out = []
+    for t in ordered:
+        t = {k: v for k, v in t.items() if k != 'recommended'}
+        if recommended and t.get('path') == recommended: t['recommended'] = True
+        out.append(t)
+    if recommended: out.sort(key=lambda t: not t.get('recommended'))
+    return out
+
 class DiscoveryConversion:
     def __init__(self, rt, store):
         self.rt, self.store = rt, store
@@ -187,6 +214,7 @@ class DiscoveryConversion:
                 exact.append(target)
             elif rel in nominations:
                 semantic.append(target)
+        semantic = order_semantic_targets(semantic, research)
         return {'run_id': run, 'unit_id': wid, 'kind': 'conflict' if len(exact) > 1 else 'exact' if exact else 'selection' if len(semantic) > 1 else 'semantic' if semantic else 'new', 'targets': exact or semantic, 'closed_related': closed, 'research': research}
 
     def _paths(self, run, wid):
