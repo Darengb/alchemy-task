@@ -42,7 +42,9 @@ def _text(value: Any) -> str:
 
 
 def _messages(item: dict) -> list[dict]:
-    return [m for m in item.get('messages') or [] if isinstance(m, dict)]
+    # Mail collectors name the message text 'body'; screening reads it as 'text'.
+    return [m if m.get('text') or not m.get('body') else {**m, 'text': m['body']}
+            for m in item.get('messages') or [] if isinstance(m, dict)]
 
 
 def _subject(item: dict) -> str:
