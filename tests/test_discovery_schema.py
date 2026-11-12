@@ -96,3 +96,12 @@ def test_schema_oracle_if_available():
     for value in [False,None,[],{'workstreams':[]}]:
         assert list(js.Draft202012Validator(schema).iter_errors(value))
         with pytest.raises(m.UserError): m.validate_shape(value)
+
+
+def test_shared_decisive_message_error_tells_the_child_how_to_repair():
+    b = bundle()
+    other = copy.deepcopy(b['workstreams'][0]); other['title'] = 'Second ask in the same message'
+    b['workstreams'].append(other)
+    with pytest.raises(m.UserError, match='duplicate workstream decisive identity') as caught:
+        m.validate_bundle(b, b['candidate_id'], ['slack:T1:C1:171.1'])
+    assert 'merge them into one workstream' in str(caught.value) and 'subtasks' in str(caught.value)

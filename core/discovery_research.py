@@ -37,6 +37,9 @@ MAX_ARRAY_ITEMS = 50
 MAX_STRING_CHARS = 4000
 MAX_BUNDLE_BYTES = 512 * 1024
 
+# Repair hint returned to a research child whose workstreams share a decisive message.
+DECISIVE_REPAIR = ('; two workstreams cite the same decisive message: merge them into one workstream and list the separate steps as its subtasks, or cite for each workstream the id of its own decisive message')
+
 def _json_bytes(value: Any) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode()
 
@@ -323,11 +326,11 @@ def validate_bundle(bundle: Any, cid: str, expected_sources: list[Any], *, other
             action_ids.add(action_id)
         wid = workstream_id(cid, exact, action_id=action_id) if action_id else workstream_id(cid, exact)
         if wid in seen_ids:
-            raise UserError('duplicate workstream decisive identity')
+            raise UserError('duplicate workstream decisive identity' + DECISIVE_REPAIR)
         for previous, previous_action in seen_decisive_sets:
             overlap = any(source_identity_covers(left, right) or source_identity_covers(right, left) for left in previous for right in canonical)
             if overlap and not (action_id and previous_action and action_id != previous_action and set(previous) == set(canonical)):
-                raise UserError('overlapping workstream decisive identity sets')
+                raise UserError('overlapping workstream decisive identity sets' + DECISIVE_REPAIR)
         for other_id, represented in others.items():
             if any(source_identity_covers(other, reported) or source_identity_covers(reported, other) for other in represented for reported in canonical):
                 raise UserError(f'workstream identity is represented by another candidate: {other_id}')
