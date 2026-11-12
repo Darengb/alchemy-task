@@ -213,7 +213,13 @@ def _run_sources(configs):
             mail = out.get(c['mailbox_source']) or {}
             if mail.get('kind') != 'mail' or any(mail.get(f) != c.get(f) for f in _MAILBOX_READ_FIELDS):
                 c.pop('mailbox_source')
+            else:
+                # The mailbox keeps whole threads it admits (forwarded notes included): one email, one candidate.
+                c['mailbox_admission'] = {f: copy.deepcopy(mail[f]) for f in MAILBOX_ADMISSION_FIELDS if f in mail}
     return out
+
+
+MAILBOX_ADMISSION_FIELDS = ('sender_domains', 'excluded_senders', 'transcript_senders', 'owner_email', 'owner_report_pattern', 'admit_all')
 
 
 def _transcript_name(mail, key, taken):
@@ -1370,7 +1376,7 @@ class DiscoveryIntegration:
             if old and old.get('kind') != 'failed':
                 if old['request'] != request: raise UserError('post-join decision is immutable')
                 # A saved auto plan is safe to resume by exact full postimage.
-                if decision == 'auto': self.conversion.deliver_git(run_id, unit_id)
+                if decision == 'auto' and not old.get('shadow'): self.conversion.deliver_git(run_id, unit_id)
                 return old
             self.conversion.joined(run_id, unit_id)  # a wrong run or unit is the caller's mistake and is refused
             try:
@@ -1386,7 +1392,9 @@ class DiscoveryIntegration:
                 raise UserError('multiple exact targets conflict; cannot mutate or propose a guessed target')
             if decision == 'conflict' and outcome['kind'] != 'conflict':
                 raise UserError('no verified multiple-exact conflict')
-            if decision in {'auto', 'noop'}:
+            # A shadow (or research-only) run records exact decisions but never writes a task.
+            shadow = self.store.get_run(run_id)['config'].get('mode') != 'production'
+            if decision in {'auto', 'noop'} and not shadow:
                 try:
                     prepared = self.conversion.prepare(run_id, unit_id, choice=decision, reason=reason,
                                  target_task_id=target_task_id, expected_revision=expected_revision, useful_delta=useful_delta)
@@ -1403,6 +1411,7 @@ class DiscoveryIntegration:
                       'research_disposition': outcome['research']['disposition'],
                       'uncertainty': outcome['research']['decisions_and_open_questions']['open_questions'],
                       'research_revision': content_revision(outcome['research'])}
+            if shadow and decision == 'auto': record['shadow'] = True
             atomic_json(path, record)
             return record
 
@@ -1442,6 +1451,9 @@ class DiscoveryIntegration:
             elif decision['kind'] == 'conflict': conflicts.append({'unit_id': candidate['candidate_id'], 'title': decision['title'], 'reason': 'Multiple exact task destinations conflict', 'targets': decision['targets']})
             elif decision['request']['decision'] == 'noop':
                 continue  # true noops are omitted from the digest (source: not reported as updates)
+            elif decision['request']['decision'] == 'auto' and decision.get('shadow'):
+                outcomes.append({'unit_id': candidate['candidate_id'], 'title': decision['title'], 'task_id': decision['request']['target_task_id'],
+                                 'status': 'not written (shadow run)', 'resume_action': None})
             elif decision['request']['decision'] == 'auto':
                 _, receipt_path = self.conversion._paths(run_id, candidate['candidate_id'])
                 receipt = read_json(receipt_path, {})

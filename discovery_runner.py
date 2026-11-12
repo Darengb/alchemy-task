@@ -688,6 +688,7 @@ class DiscoveryRunner:
         cancelling = {}
         launched = set()
         orphans = set()
+        finished = False
         lifecycle = self.ctx.subagent_lifecycle
 
         def settle_orphans():
@@ -782,7 +783,7 @@ class DiscoveryRunner:
                         status = normalize(lifecycle.status(handle))
                         observed = status.get('state')
                         if observed in TERMINAL:
-                            self._terminal(run_id, token, handle); active.pop(token); continue
+                            self._terminal(run_id, token, handle); active.pop(token); finished = True; continue
                         if observed == 'UNKNOWN':
                             self._cancel(run_id, token, handle, 'execution_unknown'); active.pop(token); continue
                         if observed == 'RUNNING' and (run_id, token) not in self._deadlines:
@@ -837,6 +838,11 @@ class DiscoveryRunner:
                     context = contextvars.copy_context()
                     threading.Thread(target=launch_worker, args=(a['token'], request, context), daemon=True, name='discovery-launch-' + a['token'][:8]).start()
                     maximum = max(maximum, len(active))
+                if finished and self.clock.monotonic() >= admit_until and all(slot.get('handle') for slot in active.values()):
+                    # A child finished and this call admits no more launches: return now so the parent
+                    # accepts the payload and the next call refills the freed slot, instead of both
+                    # waiting out this call's budget.
+                    break
                 if not active and not orphans:
                     if not cancelling and (finishing or not [c for c in self._eligible(run_id) if c not in deferred] or self.clock.monotonic() >= admit_until):
                         break

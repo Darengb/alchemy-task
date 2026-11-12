@@ -94,7 +94,7 @@ def drive(runner, store, run, *, session='parent', max_calls=40, accept=True):
     for _ in range(max_calls):
         start = runner.clock.monotonic()
         report = runner.run(run, session_id=session)
-        assert runner.clock.monotonic() - start <= runner.policy.call_seconds
+        assert runner.clock.monotonic() - start <= runner.policy.call_seconds + 1e-6  # float clock
         reports.append(report)
         if accept:
             accept_all(runner, store, run)

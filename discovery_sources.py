@@ -166,6 +166,24 @@ def _has_keyword(text, keywords):
 SCREENING_HEADERS = ('list-unsubscribe', 'precedence', 'auto-submitted', 'x-autoreply')
 
 
+def _mail_admits(full, ordered, config):
+    """True when a mail source with this config admits the thread (sender rules, owner report, window)."""
+    allowed = {str(x).strip().lower() for x in config.get('sender_domains', [])}
+    excluded = {str(x).strip().lower() for x in config.get('excluded_senders', [])}
+    # Note-taker mail belongs to the mailbox's transcript source, never to both.
+    skipped = [str(x).strip().lower() for x in config.get('transcript_senders', []) if str(x).strip()]
+    relevant = any(m['from'] not in excluded and not sender_matches(m['from'], skipped) and (not allowed or m['from'].rsplit('@', 1)[-1] in allowed) for m in full)
+    # Source narrow one-message owner report, case-insensitive, not owner-only.
+    report = config.get('owner_report_pattern')
+    subject = next((m['subject'] for m in full if m['subject']), '')
+    owner_only_report = len(full) == 1 and full[0]['from'] == (config.get('owner_email') or '').strip().lower() and report and re.search(report, subject, re.I)
+    if not relevant or owner_only_report:
+        return False
+    if config.get('window_start') and int(ordered[-1]['internalDate']) < int(_date(config['window_start']).timestamp()) * 1000:
+        return False
+    return True
+
+
 def normalize_mail_threads(threads, config):
     """Daily full-thread-before-sender-admission projection, no clipping.
 
@@ -197,6 +215,11 @@ def normalize_mail_threads(threads, config):
             if marks: entry['headers'] = marks
             full.append(entry)
         if config.get('kind') == 'transcript':
+            # A thread its mailbox source admits (for example notes a colleague forwarded) is that
+            # mailbox's one candidate, notes included; never a second transcript candidate.
+            admission = config.get('mailbox_admission')
+            if isinstance(admission, dict) and _mail_admits(full, ordered, {**admission, 'window_start': config.get('window_start')}):
+                continue
             senders = transcript_senders(config)
             keywords = transcript_keywords(config)
             for raw, msg in zip(ordered, full):
@@ -214,19 +237,9 @@ def normalize_mail_threads(threads, config):
                 candidate = {'title': msg['subject'] or 'Meeting follow-up', 'source_ids': [identity], 'source_revision': hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest(), 'source_key': config['source_key']}
                 out.append({'candidate': candidate, 'messages': [msg], 'latest_activity': int(msg['date'])})
             continue
-        allowed = {str(x).strip().lower() for x in config.get('sender_domains', [])}
-        excluded = {str(x).strip().lower() for x in config.get('excluded_senders', [])}
-        # Note-taker mail belongs to the mailbox's transcript source, never to both.
-        skipped = [str(x).strip().lower() for x in config.get('transcript_senders', []) if str(x).strip()]
-        relevant = any(m['from'] not in excluded and not sender_matches(m['from'], skipped) and (not allowed or m['from'].rsplit('@', 1)[-1] in allowed) for m in full)
-        # Source narrow one-message owner report, case-insensitive, not owner-only.
-        report = config.get('owner_report_pattern')
+        if not _mail_admits(full, ordered, config):
+            continue
         subject = next((m['subject'] for m in full if m['subject']), '')
-        owner_only_report = len(full) == 1 and full[0]['from'] == config.get('owner_email', '').strip().lower() and report and re.search(report, subject, re.I)
-        if not relevant or owner_only_report:
-            continue
-        if config.get('window_start') and int(ordered[-1]['internalDate']) < int(_date(config['window_start']).timestamp()) * 1000:
-            continue
         identity = canonical_source_id(f"gmail:{config['account_key']}:{tid}")
         revision = hashlib.sha256(json.dumps(ordered, sort_keys=True).encode()).hexdigest()
         candidate = {'title': subject or 'Mail follow-up', 'source_ids': [identity], 'source_revision': revision, 'source_key': config['source_key']}
