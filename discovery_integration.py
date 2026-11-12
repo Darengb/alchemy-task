@@ -207,6 +207,23 @@ def _transcript_name(mail, key, taken):
     return base[:80 - len(suffix)].rstrip() + suffix
 
 TIME_BOX_REASON = "not finished within this run's research time"
+TIME_BOX_DEFERRED_PREFIX = 'Research time ran out'
+# Attested sources re-read this much before their read-up-to marker, for late edits and clock skew.
+ATTESTED_OVERLAP = dt.timedelta(hours=2)
+
+
+def _iso_time(value):
+    parsed = dt.datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
+
+
+def _accepts(function, name):
+    """True when the callable takes the named keyword (another module may add it later)."""
+    import inspect
+    try:
+        return name in inspect.signature(function).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 class DiscoveryIntegration:
@@ -262,6 +279,16 @@ class DiscoveryIntegration:
                 if entry['status'] in {'queued', 'deferred'} or retry:
                     count += 1
         return count
+
+    def _queued_reason(self, run_id, join, queued):
+        """Why items still wait: 'daily_cap' (the stream's research cap was reached), 'time' (the time box), else ''."""
+        if not queued: return ''
+        with self.runner._state(run_id) as state:
+            budget, timed = set(state.get('budget_deferred') or []), set(state.get('time_deferred') or [])
+        if budget - timed: return 'daily_cap'
+        if timed or any(str(d.get('reason') or '').startswith(TIME_BOX_DEFERRED_PREFIX) for d in join.get('deferred') or [] if isinstance(d, dict)):
+            return 'time'
+        return ''
 
     def _start_follow_up(self, run_id, ledger, stream, queued):
         """Schedule one follow-up run of the same stream a few minutes from now, at most
@@ -610,6 +637,16 @@ class DiscoveryIntegration:
                            % ', '.join(out['excluded_existing']))
         return out
 
+    def _follow_up_start(self, run_id, config):
+        """A follow-up run researches what earlier runs left queued; it never reads the sources again."""
+        if not config.get('follow_up_run'): return {}
+        waiting = sum(1 for c in config.get('sources', []) if isinstance(c, dict) and c.get('source_key')
+                      for e in self.store.source_state(self.store.get_run(run_id)['stream'], c['source_key'])['backlog']
+                      if e['status'] in {'queued', 'deferred'} or (e['status'] == 'blocked' and int(e.get('retries') or 0) < 1))
+        return {'follow_up_run': True, 'skip_collection': True,
+                'next_action': ('This is a follow-up run: do not collect. Call discovery_context with run_id %s now; '
+                                'it freezes the %d item(s) still waiting from earlier runs, then research them.' % (run_id, waiting))}
+
     def _all_runs(self):
         return [self.store.get_run(p.parent.name) for p in sorted((self.store.state_root / 'runs').glob('*/ledger.json'))]
 
@@ -645,9 +682,10 @@ class DiscoveryIntegration:
                     self.runner._parent(run['run_id'], session_id)
                 except UserError:
                     self.runner.recover(run['run_id'], session_id=session_id, adopt=True)
-                return {'run_id': run['run_id'], 'resumed': True, 'stream': current['name'],
-                        'sources': run['config']['sources'], 'windows': run['config']['windows'],
-                        'index_revision': run.get('index_revision'), 'recovery_required': True}
+                out = {'run_id': run['run_id'], 'resumed': True, 'stream': current['name'],
+                       'sources': run['config']['sources'], 'windows': run['config']['windows'],
+                       'index_revision': run.get('index_revision'), 'recovery_required': True}
+                return {**out, **(self._follow_up_start(run['run_id'], run['config']) if not run.get('index_revision') else {})}
             configs = (self.rt.ctx.state.get('discovery_sources', default={}) or {}).get(current['name'], {})
 
             if len(configs) != len(current['sources']):
@@ -670,25 +708,39 @@ class DiscoveryIntegration:
                 validate_source_config(config)
                 source_state = self.store.source_state(storage_stream, key)
                 watermark = source_state.get('watermark')
+                coverage = source_state.get('coverage', [])
+                if not watermark and coverage and coverage[-1].get('verification') == 'agent_attested':
+                    # Read with the agent's own tools: start at the read-up-to marker less an
+                    # overlap, so each run reads only what is new (first run: the last day).
+                    marker = source_state.get('attested_watermark')
+                    start = _iso_time(marker) - ATTESTED_OVERLAP if marker else now - dt.timedelta(days=1)
+                    start = min(start, now - ATTESTED_OVERLAP)
+                    windows[key] = {'start': start.isoformat(), 'end': now.isoformat()}
+                    continue
                 if not watermark:
                     # No committed coverage yet: a failed or partial first run's
                     # interval is retained, so start at its earliest attempted
                     # start instead of silently sliding to now-24h.
-                    attempted = [r['start'] for r in source_state.get('coverage', [])
+                    attempted = [r['start'] for r in coverage
                                  if r.get('verification') == 'adapter_verified' and isinstance(r.get('start'), str)]
                     watermark = min(attempted, key=lambda s: dt.datetime.fromisoformat(s.replace('Z', '+00:00'))) if attempted else None
                 windows[key] = {'start': watermark or (now - dt.timedelta(days=1)).isoformat(), 'end': now.isoformat()}
             config = {'stream_name': current['name'], 'mode': mode, 'sources': list(configs.values()), 'windows': windows, 'areas': current['areas'],
                       'research_cap': current['research_cap'], 'timezone': current.get('timezone', self.rt.settings.timezone)}
             if pilot_limit is not None: config['pilot_limit'] = pilot_limit
+            execution = self._scheduled_identity(current)
+            follow_up = bool(execution and _lineage is None and execution.get('job_id') != current.get('job_id')
+                             and execution.get('job_id') in self._follow_up_job_ids(current['name']))
+            if follow_up: config['follow_up_run'] = True
             business_date = now.astimezone(ZoneInfo(config['timezone'])).date().isoformat()
             run = self.store.init_run(stream=storage_stream, business_date=business_date, config=config,
                                       origin={'session_id': session_id, 'deliver': current.get('deliver', 'origin'),
                                               'stream_origin_session': current['origin_session'],
                                               'job_binding': copy.deepcopy(current.get('job_binding')),
-                                              'cron_execution': self._scheduled_identity(current)}, lineage=_lineage)
-            return {'run_id': run, 'resumed': False, 'stream': current['name'], 'sources': config['sources'],
-                    'windows': windows, 'research_remaining_today': current['research_cap']}
+                                              'cron_execution': execution}, lineage=_lineage)
+            out = {'run_id': run, 'resumed': False, 'stream': current['name'], 'sources': config['sources'],
+                   'windows': windows, 'research_remaining_today': current['research_cap']}
+            return {**out, **self._follow_up_start(run, config)}
 
     def replay(self, run_id, *, operation, mode, session_id, user_approved=False, candidate_ids=None):
         """Three explicit operations; never relabel a current query as old input."""
@@ -876,6 +928,15 @@ class DiscoveryIntegration:
             return {'run_id': run_id, 'index_revision': ledger['index_revision']}
         for config in ledger['config']['sources']:
             if 'collection-' + config['source_key'] not in ledger['resources']:
+                if ledger['config'].get('follow_up_run'):
+                    # A follow-up run only researches queued items: record that collection was skipped.
+                    window = ledger['config']['windows'].get(config['source_key'], {})
+                    self.store.put_resource(run_id, 'collection-' + config['source_key'], {
+                        'source_key': config['source_key'], 'status': 'complete', 'verification': 'skipped',
+                        'skipped': 'follow-up run', 'error': 'skipped: follow-up run', 'start': window.get('start'), 'end': window.get('end'),
+                        'covered_intervals': [], 'pagination_exhausted': False, 'continuation': None, 'pass': 1,
+                        'backlog_ids': [x['backlog_id'] for x in self.store.source_state(ledger['stream'], config['source_key'])['backlog']]})
+                    continue
                 raise UserError('collect every approved source or record failed/partial coverage first')
         candidates, selection = [], []
         for config in ledger['config']['sources']:
@@ -1348,10 +1409,11 @@ class DiscoveryIntegration:
         self._settle_backlog(run_id, join)
         queued = self._queued_count(ledger)
         follow_up = self._start_follow_up(run_id, ledger, stream, queued)
+        reason = {'queued_reason': self._queued_reason(run_id, join, queued)} if _accepts(type(self.digest).prepare, 'queued_reason') else {}
         digest = self.digest.prepare(run_id, stream=ledger['config'].get('stream_name', ledger['stream']), day=ledger['business_date'], origin=origin,
                                      items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + unit_failures + supplement_failures], coverage=coverage, outcomes=outcomes,
                                      blocked=conflicts, label=stream.get('label', ''), review_namespace=run_id if ledger.get('lineage', {}).get('operation') else '', deferred=join.get('deferred', []),
-                                     queued_count=queued, follow_up_started=follow_up)
+                                     queued_count=queued, follow_up_started=follow_up, **reason)
         with self.store._lock(self.store._run_lock_name(run_id)):
             pending = self.store.get_run(run_id); pending['pending_operations'] = ['finalization_projection']; self.store._save(run_id, pending)
         self.store.save_review(run_id, {'digest': digest, 'conflicts': conflicts, 'joined': join})

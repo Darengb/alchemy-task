@@ -62,6 +62,88 @@ def _hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+TERMINAL_BACKLOG = frozenset({'accepted', 'excluded', 'resolved'})
+PENDING_BACKLOG = frozenset({'queued', 'deferred', 'selected'})
+# Fields that describe the envelope, not the source content.
+_ENVELOPE_FIELDS = frozenset({'source_revision', 'source_key', 'agent_source_revision'})
+
+
+def _message_epoch(value: Any) -> float | None:
+    """Provider message time as epoch seconds: ISO 8601 or a numeric timestamp string."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    try:
+        parsed = dt.datetime.fromisoformat(text.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.timestamp()
+
+
+def content_version(item: Any) -> dict[str, Any]:
+    """The item's own version: sorted provider message ids plus the latest message time.
+
+    A message without an id is named by a hash of its author, time and text. An item
+    without messages is versioned by its content minus envelope fields, so a changed
+    agent-supplied revision alone never makes a new version.
+    """
+    item = item if isinstance(item, dict) else {}
+    messages = [m for m in item.get('messages') or [] if isinstance(m, dict)] if isinstance(item.get('messages'), list) else []
+    stamped, latest = [], None
+    for message in messages:
+        mid = message.get('id')
+        when = message.get('time', message.get('ts'))
+        if mid is None or str(mid) == '':
+            mid = 'h:' + _hash(_json_bytes([message.get('author'), when, message.get('text')]))[:24]
+        epoch = _message_epoch(when)
+        stamped.append([str(mid), epoch])
+        if epoch is not None and (latest is None or epoch > latest):
+            latest = epoch
+    latest_text = dt.datetime.fromtimestamp(latest, dt.timezone.utc).isoformat() if latest is not None else None
+    ids = sorted({x[0] for x in stamped})
+    if stamped:
+        revision = 'content:' + _hash(_json_bytes([ids, latest_text]))
+    else:
+        revision = 'content:' + _hash(_json_bytes({k: v for k, v in item.items() if k not in _ENVELOPE_FIELDS}))
+    return {'revision': revision, 'message_ids': ids, 'latest': latest_text, 'messages': stamped}
+
+
+def _entry_revisions(entry: dict[str, Any]) -> list[str]:
+    return list(entry.get('revisions') or [entry.get('source_revision')])
+
+
+def _version_time(entry: dict[str, Any]) -> float | None:
+    if 'latest_message' in entry or 'latest' in entry:
+        return _message_epoch(entry.get('latest_message', entry.get('latest')))
+    return _message_epoch(content_version(entry.get('candidate')).get('latest'))
+
+
+def _has_newer_messages(version: dict[str, Any], researched: list[dict[str, Any]]) -> bool:
+    """True when the version has a message id the researched versions lack that is newer
+    than their latest message. Without message ids any changed content counts as new."""
+    if not version['messages']:
+        return True
+    known, baseline = set(), None
+    for entry in researched:
+        ids = entry.get('message_ids')
+        known |= set(ids if isinstance(ids, list) else content_version(entry.get('candidate'))['message_ids'])
+        when = _version_time(entry)
+        if when is not None and (baseline is None or when > baseline):
+            baseline = when
+    fresh = [(mid, when) for mid, when in version['messages'] if mid not in known]
+    if baseline is None:
+        return bool(fresh)
+    return any(when is None or when > baseline for _, when in fresh)
+
+
 def _name(value: str) -> str:
     value = _component(value, 'state key')
     if value in {'.', '..'}:
@@ -1279,17 +1361,49 @@ class DiscoveryStore:
         return read_json(self._source_path(stream, source), {'backlog': [], 'coverage': []})
 
     def enqueue_backlog(self, stream: str, source: str, entries: list[dict[str, Any]]) -> dict[str, Any]:
+        """Queue source items by their own content, not by an agent-supplied revision.
+
+        The version of an item is its sorted message ids plus its latest message time
+        (see content_version). A thread that was already researched is queued again only
+        for messages newer than the researched version; a still-pending version is
+        replaced in place, so one thread never waits twice.
+        """
         with self._lock('source:' + _name(stream) + ':' + _name(source)):
             state = self.source_state(stream, source)
-            seen = {x['backlog_id'] for x in state['backlog']}
             for supplied in entries:
                 sources = sorted(set(canonical_source_id(x) for x in supplied['source_ids']))
                 if not sources or not isinstance(supplied.get('source_revision'), str):
                     raise UserError('backlog requires stable sources and revision')
-                bid = _hash(_json_bytes([sources, supplied['source_revision']]))
-                if bid not in seen:
-                    state['backlog'].append({**copy.deepcopy(supplied), 'source_ids': sources, 'backlog_id': bid, 'status': 'queued'})
-                    seen.add(bid)
+                version = content_version(supplied.get('candidate', supplied))
+                revision = version['revision']
+                thread = [x for x in state['backlog'] if x['source_ids'] == sources]
+                if any(revision in _entry_revisions(x) for x in thread):
+                    continue
+                record = {**copy.deepcopy(supplied), 'source_ids': sources, 'source_revision': revision,
+                          'agent_source_revision': supplied['source_revision'],
+                          'message_ids': version['message_ids'], 'latest_message': version['latest']}
+                terminal = [x for x in thread if x['status'] in TERMINAL_BACKLOG]
+                if terminal and not _has_newer_messages(version, terminal):
+                    # Older context or nothing new: keep the fuller text for audit, no new research.
+                    target = terminal[-1]
+                    target['candidate'] = copy.deepcopy(supplied.get('candidate', target.get('candidate')))
+                    target.setdefault('revisions', [target['source_revision']]).append(revision)
+                    target.setdefault('audit_updates', []).append({'revision': revision, 'agent_source_revision': supplied['source_revision'], 'at': now()})
+                    continue
+                pending = [x for x in thread if x['status'] in PENDING_BACKLOG]
+                if pending:
+                    target = pending[-1]
+                    if _version_time(version) is not None and _version_time(target) is not None and _version_time(version) < _version_time(target):
+                        target.setdefault('revisions', [target['source_revision']]).append(revision)
+                        continue
+                    # Same backlog identity, newer content: a run that selected it still settles it.
+                    revisions = _entry_revisions(target) + [revision]
+                    target.update({k: v for k, v in record.items() if k != 'status'}, revisions=revisions)
+                    continue
+                bid = _hash(_json_bytes([sources, revision]))
+                if any(x['backlog_id'] == bid for x in state['backlog']):
+                    continue
+                state['backlog'].append({**record, 'backlog_id': bid, 'status': 'queued', 'revisions': [revision]})
             atomic_json(self._source_path(stream, source), state)
             return state
 
@@ -1326,6 +1440,14 @@ class DiscoveryStore:
                 if not isinstance(receipt.get('backlog_ids'), list) or not set(receipt['backlog_ids']) <= ids or not isinstance(receipt.get('end'), str):
                     raise UserError('coverage requires durable backlog identity receipt')
                 state['watermark'] = receipt['end']
+            # An agent-attested read is never verified coverage, so it keeps its own
+            # read-up-to marker: the next run starts there (less an overlap) instead of
+            # re-reading a growing window. It moves only when the agent read to the end.
+            read_to_end = (receipt.get('pagination_exhausted') is True or receipt['status'] == 'complete') and not receipt.get('gaps')
+            if receipt['verification'] == 'agent_attested' and receipt['status'] in {'complete', 'partial'} and read_to_end and isinstance(receipt.get('end'), str):
+                old = state.get('attested_watermark')
+                if not old or (_message_epoch(receipt['end']) or 0) > (_message_epoch(old) or 0):
+                    state['attested_watermark'] = receipt['end']
             atomic_json(self._source_path(stream, source), state)
             return state
 
