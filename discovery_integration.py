@@ -34,6 +34,9 @@ def _pick(value, path):
 
 
 WITHHELD_TITLE = 'Follow-up (title withheld; see source)'
+# A run that leaves research queued schedules one follow-up run of the same stream, at most this many a local day.
+FOLLOW_UPS_PER_DAY = 2
+FOLLOW_UP_STATE = 'discovery_follow_ups'
 # approvals.owner_only is a planned follow-up (per-platform enrollment). v1 refuses to turn it
 # on; the gated enrollment/authorization code below stays for that follow-up.
 OWNER_ONLY_AVAILABLE = False
@@ -197,7 +200,8 @@ class DiscoveryIntegration:
                 or binding.get('origin_session') != stream.get('origin_session')
                 or binding.get('profile') != getattr(self.rt.ctx, 'profile_name', None)
                 or receipt.get('profile') != binding.get('profile')
-                or receipt.get('job_id') != binding.get('job_id')
+                or (receipt.get('job_id') != binding.get('job_id')
+                    and receipt.get('job_id') not in self._follow_up_job_ids(stream.get('name')))
                 or not receipt.get('execution_id')):
             return None
         if not receipt.get('scheduled_instant'):
@@ -207,6 +211,56 @@ class DiscoveryIntegration:
                 return None
             receipt = {**receipt, 'scheduled_instant': receipt['started_at']}
         return receipt
+
+    def _follow_up_job_ids(self, name):
+        """One-shot follow-up jobs this plugin created for the stream; they act as the stream's own job."""
+        record = (self.rt.ctx.state.get(FOLLOW_UP_STATE, default={}) or {}).get(name) or {}
+        return [j for j in record.get('job_ids') or [] if isinstance(j, str) and j]
+
+    def _queued_count(self, ledger):
+        """Research items still waiting after this run: queued or deferred, or blocked with their one retry left."""
+        count = 0
+        for config in ledger['config'].get('sources', []):
+            if not isinstance(config, dict) or not config.get('source_key'): continue
+            for entry in self.store.source_state(ledger['stream'], config['source_key'])['backlog']:
+                retry = entry['status'] == 'blocked' and int(entry.get('retries') or 0) < 1
+                if entry['status'] in {'queued', 'deferred'} or retry:
+                    count += 1
+        return count
+
+    def _start_follow_up(self, run_id, ledger, stream, queued):
+        """Schedule one follow-up run of the same stream a few minutes from now, at most
+        FOLLOW_UPS_PER_DAY a local day per stream. Best effort: a failure leaves the digest as is."""
+        binding = stream.get('job_binding') or {}
+        if (not queued or ledger.get('lineage', {}).get('operation') or not stream.get('job_id')
+                or binding.get('verified') is not True or ledger['config'].get('mode') != stream.get('mode', 'production')):
+            return False
+        name = stream['name']
+        today = self.utcnow().astimezone(ZoneInfo(stream.get('timezone') or ledger['config'].get('timezone') or 'UTC')).date().isoformat()
+        with self.store._lock('follow-up:' + name):
+            records = copy.deepcopy(self.rt.ctx.state.get(FOLLOW_UP_STATE, default={}) or {})
+            record = records.get(name) or {}
+            if record.get('date') != today:
+                record = {**record, 'date': today, 'count': 0}
+            if run_id in (record.get('runs') or []) or int(record.get('count') or 0) >= FOLLOW_UPS_PER_DAY:
+                return False
+            # Counted before the create so a retried finalize never schedules a second follow-up.
+            record.update(count=int(record.get('count') or 0) + 1, runs=((record.get('runs') or []) + [run_id])[-20:])
+            records[name] = record
+            self.rt.ctx.state.set(FOLLOW_UP_STATE, records)
+            try:
+                from .jobs import follow_up_create_args, parse_job_id
+                job_id = parse_job_id(self.rt.ctx.dispatch_tool('cronjob_manage', follow_up_create_args(self.rt, stream)))
+            except Exception:  # noqa: BLE001 - the digest still posts; the next scheduled run picks the items up
+                job_id = ''
+            if not job_id:
+                return False
+            records = copy.deepcopy(self.rt.ctx.state.get(FOLLOW_UP_STATE, default={}) or {})
+            record = records.get(name) or record
+            record['job_ids'] = ((record.get('job_ids') or []) + [job_id])[-20:]
+            records[name] = record
+            self.rt.ctx.state.set(FOLLOW_UP_STATE, records)
+        return True
 
     def _authorize_recovery(self, run_id, old_parent, session_id):
         """A new session adopts a saved run when the actor may act: any chat of this profile, or the
@@ -1246,9 +1300,15 @@ class DiscoveryIntegration:
         # The delivery owner is frozen with the digest so a later stream removal keeps the run's real delivery state.
         origin = {**ledger['origin'], 'session_id': ledger['origin'].get('stream_origin_session', ledger['origin']['session_id']),
                   'delivery_owner': stream.get('delivery_owner', 'native_origin')}
+        # Settle the backlog now (the same idempotent projection reconcile_endstate replays) so the queued count is
+        # exact, then schedule the follow-up before the digest so the digest can say it started.
+        self._settle_backlog(run_id, join)
+        queued = self._queued_count(ledger)
+        follow_up = self._start_follow_up(run_id, ledger, stream, queued)
         digest = self.digest.prepare(run_id, stream=ledger['config'].get('stream_name', ledger['stream']), day=ledger['business_date'], origin=origin,
                                      items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + unit_failures + supplement_failures], coverage=coverage, outcomes=outcomes,
-                                     blocked=conflicts, label=stream.get('label', ''), review_namespace=run_id if ledger.get('lineage', {}).get('operation') else '', deferred=join.get('deferred', []))
+                                     blocked=conflicts, label=stream.get('label', ''), review_namespace=run_id if ledger.get('lineage', {}).get('operation') else '', deferred=join.get('deferred', []),
+                                     queued_count=queued, follow_up_started=follow_up)
         with self.store._lock(self.store._run_lock_name(run_id)):
             pending = self.store.get_run(run_id); pending['pending_operations'] = ['finalization_projection']; self.store._save(run_id, pending)
         self.store.save_review(run_id, {'digest': digest, 'conflicts': conflicts, 'joined': join})
@@ -1489,7 +1549,7 @@ SCHEMAS = {
  'discovery_actions': _schema('discovery_actions', 'Freeze verified independent ask locators/outcomes before acceptance.', {**RUN, 'cid': STR, 'anchors': {'type': 'array', 'items': {'type': 'object', 'properties': {'locator': STR, 'outcome': STR}, 'required': ['locator', 'outcome']}}}, ['run_id', 'cid', 'anchors']),
  'discovery_reconcile': _schema('discovery_reconcile', 'Reconcile later cohorts against current accepted action outcomes before global join.', {**RUN, 'cid': STR, 'record': {'type': 'object', 'properties': {'decision': {'type': 'string', 'enum': ['distinct', 'represented', 'ambiguous']}, 'reason': STR, 'accepted_unit_ids': {'type': 'array', 'items': STR}}, 'required': ['decision', 'reason', 'accepted_unit_ids']}}, ['run_id', 'cid', 'record']),
  'discovery_join': _schema('discovery_join', 'Global barrier: every selected parent accepted, exhausted or explicitly degraded; live attempts never join.', {**RUN, 'degraded': {'type': 'object', 'additionalProperties': STR}}, ['run_id']),
- 'discovery_recover': _schema('discovery_recover', 'Recover SAME saved run without blind relaunch/refund. New parent adoption requires out-of-band authorization.', {**RUN, 'owner_restarted': BOOL, 'adopt': BOOL}, ['run_id']),
+ 'discovery_recover': _schema('discovery_recover', 'Recover SAME saved run without blind relaunch/refund. New parent adoption requires out-of-band authorization. action=correct_source (run parent only, after freeze): replace ONE frozen item whose saved text is incomplete with its full thread (candidate_id, item in the discovery_collect envelope item shape {title, source_ids, source_revision, messages: [{id, author, time, text}]}, reason). Same thread only, before that item is accepted, once per item per run, and not while its research is running (reject that bundle first). Only that item is researched again, with a fresh attempt; the run continues.', {**RUN, 'action': {'type': 'string', 'enum': ['recover', 'correct_source']}, 'owner_restarted': BOOL, 'adopt': BOOL, 'candidate_id': STR, 'item': OBJ, 'reason': STR}, ['run_id']),
  'discovery_release_hold': _schema('discovery_release_hold', 'Deliberately release safety hold without refunding unknown attempts.', {**RUN, 'reason': STR}, ['run_id', 'reason']),
  'discovery_replay': _schema('discovery_replay', 'Explicit saved_input replay of finalized frozen inputs, or current fresh_validation / targeted_supplement. Distinct lineage/review; no old task mutation.', {**RUN, 'operation': {'type': 'string', 'enum': ['saved_input', 'fresh_validation', 'targeted_supplement']}, 'mode': {'type': 'string', 'enum': ['shadow', 'research_only']}, 'candidate_ids': {'type': 'array', 'items': STR}, 'user_approved': BOOL}, ['run_id', 'operation', 'mode', 'user_approved']),
  'discovery_config': _schema('discovery_config', 'Configure approved source/delivery, confirm identity, or approvals. transcripts: one opt-in adds a meeting-transcript source per configured mail source (config: exclude [mail source keys], optional service_senders [addresses or @domains], keywords, admit_all, remove: true to delete the transcript sources of excluded mailboxes after the user approves); it reuses each mailbox read. Re-running keeps saved transcript sources and changes only the fields passed. approvals.owner_only is not available in this version (turning it on is refused with needs=not_available; planned follow-up). status shows current approvals. No approver list or credentials.', {'action': {'type': 'string', 'enum': ['source', 'transcripts', 'identity', 'delivery', 'approvals', 'status']}, 'stream': STR, 'config': OBJ, 'account_key': STR, 'identity': OBJ, 'user_approved': BOOL}, ['action']),

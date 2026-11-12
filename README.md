@@ -100,6 +100,9 @@ Tested end to end on a real iPhone with self-hosted Hermes. On Nous Cloud agents
   `mkdir -p ~/.hermes/desktop-plugins/alchemy-task && cp ~/.hermes/plugins/alchemy-task/desktop/plugin.js ~/.hermes/desktop-plugins/alchemy-task/`
   on the server and choose **⌘K → Reload desktop plugins** in the app.
 
+Install without `--ref` for normal use. `--ref <commit>` pins the plugin to that commit, and a pinned plugin
+cannot be updated or force-reinstalled from the app until it is reinstalled with another `--ref`.
+
 Then start a new chat.
 
 ## Setup

@@ -37,7 +37,7 @@ def test_unknown_delivery_retains_number_and_cannot_blind_resend(tmp_path):
     d = digest.prepare('run', stream='work', day='2030-01-01', origin={'session_id': 'chat'},
                        items=[{'unit_id': 'w_x', 'research_revision': 'r', 'title': 'X', 'kind': 'new', 'targets': []}],
                        failures=[{'reason': 'Research exhausted'}], coverage=[{'status': 'partial', 'source_key': 'feed'}])
-    assert 'Research exhausted' in d['text'] and '**Coverage:** feed: could not be read' in d['text']
+    assert 'Research exhausted' in d['text'] and '**Needs attention:** feed could not be read' in d['text']
     digest.begin_delivery('run')
     assert digest.delivery('run')['state'] == 'inflight'
     digest.delivery_unknown('run', 'transport lost')

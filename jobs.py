@@ -167,7 +167,8 @@ def discovery_job_config(stream: str, reader_toolsets: list[str] | None = None, 
                    'goes under Needs attention. A problem with one item, source or tool never stops the run: never retry the same failing '
                    'call more than twice, skip that item and continue. A match or decision failure for one item is recorded and the run continues. '
                    'Time box research to about 45 minutes, then call discovery_research_run with finish_now=true, join and prepare the digest; '
-                   'deferred items are researched first next run. Stop early only when nothing at all can proceed. Never create another run; '
+                   'deferred items are researched first next run. When research is left queued, a follow-up run '
+                   'of this stream starts on its own a few minutes later; never start or schedule one yourself. Stop early only when nothing at all can proceed. Never create another run; '
                    'the next run continues the same saved run. ' + (
                    '' if delivery_owner == 'verified_sender' else
                    'If preparing the digest is refused or fails, the final reply is a partial digest you write in the same layout, marked '
@@ -214,15 +215,31 @@ def read_discovery_job(rt, stream):
     return matches[0]
 
 
-def reconcile_discovery_job(rt, stream):
-    if not stream.get('job_id'): return {'state': 'not_configured'}
-    read_discovery_job(rt, stream)
+def stream_job_config(rt, stream):
+    """The prompt, toolsets and deliver of a stream's own job, from its approved sources and delivery binding."""
     configs = (rt.ctx.state.get('discovery_sources', default={}) or {}).get(stream['name'], {})
     readers = [t for s in stream['sources'] for t in s.get('toolsets', [])]
     readers += [t for c in configs.values() if any(s['name'] == c.get('name') and s['scope'] == c.get('scope') for s in stream['sources']) for t in c.get('toolsets', [])]
     binding = (rt.ctx.state.get('discovery_delivery', default={}) or {}).get(stream['name'], {})
-    desired = discovery_job_config(stream['name'], readers + binding.get('toolsets', []),
-                                   delivery_owner=stream.get('delivery_owner', 'native_origin'), deliver=stream.get('deliver', 'origin'))
+    return discovery_job_config(stream['name'], readers + binding.get('toolsets', []),
+                                delivery_owner=stream.get('delivery_owner', 'native_origin'), deliver=stream.get('deliver', 'origin'))
+
+
+def follow_up_job_name(stream_name):
+    return f"{PREFIX}: discovery {stream_name} follow-up"
+
+
+def follow_up_create_args(rt, stream, *, schedule='in 5m'):
+    """A one-shot job that runs the same stream once, a few minutes after the current run ends. It is a
+    separate job, so it never collides with the stream's own job still finishing its reply."""
+    return {'action': 'create', 'name': follow_up_job_name(stream['name']), 'schedule': schedule, 'repeat': 1,
+            'attach_to_session': True, 'skills': ['alchemy-task:discovery'], **stream_job_config(rt, stream)}
+
+
+def reconcile_discovery_job(rt, stream):
+    if not stream.get('job_id'): return {'state': 'not_configured'}
+    read_discovery_job(rt, stream)
+    desired = stream_job_config(rt, stream)
     raw = rt.ctx.dispatch_tool('cronjob_manage', {'action': 'update', 'job_id': stream['job_id'], **desired})
     result = json.loads(raw) if isinstance(raw, str) else raw
     if result.get('error') or result.get('success') is False:

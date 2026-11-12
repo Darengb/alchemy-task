@@ -22,11 +22,80 @@ ACTIVE_SECONDS = 15 * 60
 _FIRED: dict[str, float] = {}  # stream -> time a dashboard Run now started and has not returned yet
 
 
-def _running_streams(rt: Any) -> dict[str, str]:
-    """{stream name: started_at} for streams with a discovery run in progress."""
+def _iso(ts: float) -> str:
+    import datetime as dt
+    return dt.datetime.fromtimestamp(ts, dt.timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _ts(value: Any) -> float | None:
+    import datetime as dt
+    if isinstance(value, (int, float)) and value > 0:
+        return float(value) / (1000 if value > 1e12 else 1)
+    if isinstance(value, str) and value:
+        try:
+            d = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return (d if d.tzinfo else d.replace(tzinfo=dt.timezone.utc)).timestamp()
+    return None
+
+
+def _run_progress(ledger_path: Any, data: dict[str, Any]) -> dict[str, Any]:
+    """Where an open run stands, for the dashboard's progress card: {stage, done, total, started_at}.
+
+    stage is "sources" (sources not frozen yet), "research" (done of total parent candidates finished)
+    or "digest" (research finished, run not finalized). Never raises; odd files read as "sources".
+    """
+    from pathlib import Path
+    out: dict[str, Any] = {"stage": "sources", "done": 0, "total": 0, "started_at": None}
+    try:
+        run_dir = Path(ledger_path).parent
+        attempts = [a for a in (data.get("attempts") or {}).values() if isinstance(a, dict)] \
+            if isinstance(data.get("attempts"), dict) else []
+        start = _ts(data.get("created")) or _ts(data.get("created_at"))
+        if start is None:
+            starts = [t for t in (_ts(a.get("created")) for a in attempts) if t]
+            start = min(starts) if starts else None
+        if start is None:
+            try:
+                start = Path(ledger_path).stat().st_ctime
+            except OSError:
+                start = None
+        out["started_at"] = _iso(start) if start else None
+        if not data.get("index_revision"):
+            return out
+        try:
+            sup = json.loads((run_dir / "supervisor.json").read_text())
+            sup = sup if isinstance(sup, dict) else {}
+        except (OSError, ValueError):
+            sup = {}
+        deferred = {str(x) for key in ("budget_deferred", "time_deferred") for x in (sup.get(key) or [])
+                    if isinstance(x, (str, int))}
+        done = total = 0
+        for c in data.get("candidates") or []:
+            if not isinstance(c, dict) or c.get("parent_candidate_id") or c.get("prefilter_disposition") != "research" \
+                    or c.get("research_selection") == "pilot_skipped":
+                continue
+            cid = str(c.get("candidate_id") or "")
+            total += 1
+            mine = sorted((a for a in attempts if str(a.get("candidate_id")) == cid),
+                          key=lambda a: a.get("ordinal") if isinstance(a.get("ordinal"), int) else 0)
+            accepted = any(a.get("state") == "accepted_bundle" for a in mine) \
+                or (cid and "/" not in cid and (run_dir / "research" / (cid + ".bundle.json")).exists())
+            failed = bool(mine) and mine[-1].get("state") in {"exhausted", "failed"}
+            if accepted or failed or cid in deferred or c.get("decomposition_state") == "complete":
+                done += 1
+        out.update(done=done, total=total, stage="digest" if done >= total else "research")
+    except Exception:  # noqa: BLE001 - progress is display only
+        pass
+    return out
+
+
+def _running_streams(rt: Any) -> dict[str, dict[str, Any]]:
+    """{stream name: progress} for streams with a discovery run in progress (see _run_progress)."""
     import time
     from pathlib import Path
-    out: dict[str, str] = {}
+    out: dict[str, dict[str, Any]] = {}
     try:
         from ..discovery_integration import get_service
         root = Path(get_service(rt).store.state_root) / "runs"
@@ -38,12 +107,13 @@ def _running_streams(rt: Any) -> dict[str, str]:
                 data = json.loads(ledger.read_text())
             except (OSError, ValueError):
                 continue
-            if data.get("status") == "open" and data.get("stream"):
-                out.setdefault(str(data["stream"]), str(data.get("created_at") or ""))
+            if isinstance(data, dict) and data.get("status") == "open" and data.get("stream") \
+                    and str(data["stream"]) not in out:
+                out[str(data["stream"])] = _run_progress(ledger, data)
     except Exception:  # noqa: BLE001 - the indicator is display only
         pass
     for name, at in list(_FIRED.items()):
-        out.setdefault(name, "")
+        out.setdefault(name, {"stage": "sources", "done": 0, "total": 0, "started_at": _iso(at) if at else None})
     return out
 
 
@@ -71,6 +141,7 @@ def _streams(rt: Any) -> list[dict[str, Any]]:
         pub["sources"] = [{"name": x.get("name"), "type": x.get("type"), "scope": x.get("scope")} for x in s.get("sources") or []]
         pub["next_run_at"] = nexts.get(str(s.get("job_id"))) if s.get("job_id") else None
         pub["running"] = name in running
+        pub["progress"] = running.get(name)
         out.append(pub)
     return out
 

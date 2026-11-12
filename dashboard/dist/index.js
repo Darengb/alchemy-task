@@ -2351,6 +2351,26 @@
     return same ? [] : out;
   }
 
+  // ui/src/lib/runProgress.js
+  function runProgressLabel(progress) {
+    const p = progress || {};
+    const done = Math.max(0, Number(p.done) || 0);
+    const total = Math.max(0, Number(p.total) || 0);
+    if (p.stage === "research" && total > 0) {
+      const current = Math.min(total, done + 1);
+      return { label: `Researching ${current} of ${total}`, fraction: Math.min(1, done / total) };
+    }
+    if (p.stage === "digest") return { label: "Writing the digest\u2026", fraction: 0.95 };
+    return { label: "Reading sources\u2026", fraction: null };
+  }
+  function elapsedLabel(startedAt, now = Date.now()) {
+    if (!startedAt) return "";
+    const t = new Date(startedAt).getTime();
+    if (Number.isNaN(t)) return "";
+    const min = Math.max(0, Math.floor((now - t) / 6e4));
+    return min < 1 ? "Under 1 min" : `${min} min`;
+  }
+
   // ui/src/discovery.jsx
   var titleCase = (s) => String(s || "").replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   function runTime(r) {
@@ -2385,7 +2405,7 @@
     const all = runs || [];
     const configured = Array.isArray(streams) && streams.length > 0;
     if (!all.length && configured) {
-      return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-disco" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disco-inner" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disco-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("h1", { className: "at-period" }, "Discovery"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Refresh", onClick: reload })), /* @__PURE__ */ react_dashboard_default.createElement(SourcesBar, { streams, reload }), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "clock", size: 18 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup-title" }, "Waiting for the first run"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, streams.map((s) => `${titleCase(s.name)}: ${s.when || "scheduled"}`).join(" \xB7 "))))));
+      return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-disco" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disco-inner" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disco-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("h1", { className: "at-period" }, "Discovery"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Refresh", onClick: reload })), /* @__PURE__ */ react_dashboard_default.createElement(SourcesBar, { streams, reload }), /* @__PURE__ */ react_dashboard_default.createElement(RunningCards, { streams }), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "clock", size: 18 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup-title" }, "Waiting for the first run"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, streams.map((s) => `${titleCase(s.name)}: ${s.when || "scheduled"}`).join(" \xB7 "))))));
     }
     if (!all.length) {
       return /* @__PURE__ */ react_dashboard_default.createElement(
@@ -2410,7 +2430,7 @@
         onChange: setFilter,
         options: [{ value: "waiting", label: "Waiting for you" }, { value: "all", label: "All runs" }]
       }
-    ), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Refresh", onClick: reload })), configured ? /* @__PURE__ */ react_dashboard_default.createElement(SourcesBar, { streams, reload }) : null, !shown.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "check", size: 18 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup-title" }, "All caught up"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, "Last run: ", titleCase(latest.stream), ", ", relativeDay(latest.day, today), " ", runTime(latest)))) : null, shown.map((r) => /* @__PURE__ */ react_dashboard_default.createElement(RunCard, { key: r.run_id, run: r, filter, reload }))));
+    ), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Refresh", onClick: reload })), configured ? /* @__PURE__ */ react_dashboard_default.createElement(SourcesBar, { streams, reload }) : null, configured ? /* @__PURE__ */ react_dashboard_default.createElement(RunningCards, { streams }) : null, !shown.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "check", size: 18 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup-title" }, "All caught up"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, "Last run: ", titleCase(latest.stream), ", ", relativeDay(latest.day, today), " ", runTime(latest)))) : null, shown.map((r) => /* @__PURE__ */ react_dashboard_default.createElement(RunCard, { key: r.run_id, run: r, filter, reload }))));
   }
   var SETUP_PROMPT = "Set up task discovery";
   var ADD_SOURCE_PROMPT = "I want to add a new source to task discovery";
@@ -2475,6 +2495,32 @@
       },
       "Run now"
     )))), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", icon: "plus", className: "at-sources-add", onClick: () => setAdding((v) => !v), "aria-expanded": adding }, "Add a source"), adding ? /* @__PURE__ */ react_dashboard_default.createElement(CopyPrompt, { className: "is-compact", text: ADD_SOURCE_PROMPT }) : null);
+  }
+  function RunningCards({ streams }) {
+    const running = (streams || []).filter((s) => s.running && s.progress);
+    const [, tick] = react_dashboard_default.useState(0);
+    react_dashboard_default.useEffect(() => {
+      if (!running.length) return void 0;
+      const id = setInterval(() => tick((n) => n + 1), 3e4);
+      return () => clearInterval(id);
+    }, [running.length]);
+    return running.map((s) => {
+      const { label, fraction } = runProgressLabel(s.progress);
+      const elapsed = elapsedLabel(s.progress.started_at);
+      const pct = fraction == null ? null : Math.round(fraction * 100);
+      return /* @__PURE__ */ react_dashboard_default.createElement("article", { key: s.name, className: "at-run at-run-live", "aria-live": "polite" }, /* @__PURE__ */ react_dashboard_default.createElement("header", { className: "at-run-head" }, /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-title" }, titleCase(s.name), " discovery"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-sub" }, /* @__PURE__ */ react_dashboard_default.createElement("span", null, "Running now"), elapsed ? /* @__PURE__ */ react_dashboard_default.createElement("span", null, elapsed) : null))), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-runbar-wrap" }, /* @__PURE__ */ react_dashboard_default.createElement(
+        "div",
+        {
+          className: cx("at-runbar", pct == null && "is-indeterminate"),
+          role: "progressbar",
+          "aria-label": label,
+          "aria-valuemin": 0,
+          "aria-valuemax": 100,
+          "aria-valuenow": pct == null ? void 0 : pct
+        },
+        /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-runbar-fill", style: pct == null ? void 0 : { width: `${Math.max(3, pct)}%` } })
+      ), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-runbar-label" }, label)));
+    });
   }
   function CopyPrompt({ text, className }) {
     const toast = useToast();
