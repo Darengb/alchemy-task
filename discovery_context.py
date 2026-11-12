@@ -105,12 +105,12 @@ plan plans plugin plugins operate manage managing project projects source source
 def _one_line(fm: dict, body: str) -> str:
     for value in (fm.get('summary'), fm.get('description')):
         if isinstance(value, str) and value.strip():
-            return ' '.join(value.split())[:160]
+            return ' '.join(value.split())[:120]
     for line in (body or '').splitlines():
         line = line.strip()
         if not line or line.startswith(('#', '<!--', '---', '```')):
             continue
-        return ' '.join(line.lstrip('-*> ').split())[:160]
+        return ' '.join(line.lstrip('-*> ').split())[:120]
     return ''
 
 
