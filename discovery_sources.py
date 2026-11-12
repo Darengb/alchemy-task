@@ -551,8 +551,14 @@ def collect_attested(store, stream, config, envelope):
         raise UserError('attested account mismatch')
     if _date(envelope['start']) >= _date(envelope['end']):
         raise UserError('source window must increase')
-    state = _persist_items(store, stream, config, envelope.get('items', []), inline=True)
+    # Calendar notices, auto-replies, bulk mail, bot threads and parent exclusions are saved as excluded, never researched.
+    from .core.screening import screen_items, record_screened
+    items, screened = screen_items(envelope.get('items', []))
+    state = _persist_items(store, stream, config, items, inline=True)
+    screened = record_screened(store, stream, config['source_key'], screened, lambda xs: _persist_items(store, stream, config, xs))
+    state = store.source_state(stream, config['source_key']) if screened else state
     receipt = {k: envelope.get(k) for k in ('status', 'start', 'end', 'pagination_exhausted', 'continuation', 'error')}
+    if screened: receipt['screened'] = screened
     # Plain-language gaps the agent knows it missed (shown to the user); never boilerplate about attestation.
     gaps = envelope.get('gaps')
     if isinstance(gaps, list):
