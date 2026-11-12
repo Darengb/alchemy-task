@@ -34,7 +34,8 @@ def _pick(value, path):
 
 
 WITHHELD_TITLE = 'Follow-up (title withheld; see source)'
-# A run that leaves research queued schedules one follow-up run of the same stream, at most this many a local day.
+# A run that leaves research queued records one pending follow-up run of the same stream, at most this many a
+# local day. The stream's own job (every 30 minutes behind a free wake check) runs it; no job is created.
 FOLLOW_UPS_PER_DAY = 2
 FOLLOW_UP_STATE = 'discovery_follow_ups'
 # approvals.owner_only is a planned follow-up (per-platform enrollment). v1 refuses to turn it
@@ -265,7 +266,8 @@ class DiscoveryIntegration:
         return receipt
 
     def _follow_up_job_ids(self, name):
-        """One-shot follow-up jobs this plugin created for the stream; they act as the stream's own job."""
+        """Legacy one-shot follow-up jobs an earlier version created for the stream. One still waiting to fire
+        after an update acts as the stream's own job once; new follow-ups never create jobs."""
         record = (self.rt.ctx.state.get(FOLLOW_UP_STATE, default={}) or {}).get(name) or {}
         return [j for j in record.get('job_ids') or [] if isinstance(j, str) and j]
 
@@ -291,38 +293,73 @@ class DiscoveryIntegration:
         return ''
 
     def _start_follow_up(self, run_id, ledger, stream, queued):
-        """Schedule one follow-up run of the same stream a few minutes from now, at most
-        FOLLOW_UPS_PER_DAY a local day per stream. Best effort: a failure leaves the digest as is."""
+        """Record one pending follow-up run of the same stream, at most FOLLOW_UPS_PER_DAY a local day per stream.
+        The stream's own job runs it at its next 30-minute tick (its wake check reads this record); nothing is
+        scheduled here, so a scheduled run never creates jobs. True when a follow-up is pending for this run."""
         binding = stream.get('job_binding') or {}
         if (not queued or ledger.get('lineage', {}).get('operation') or not stream.get('job_id')
                 or binding.get('verified') is not True or ledger['config'].get('mode') != stream.get('mode', 'production')):
             return False
         name = stream['name']
-        today = self.utcnow().astimezone(ZoneInfo(stream.get('timezone') or ledger['config'].get('timezone') or 'UTC')).date().isoformat()
+        now = self.utcnow()
+        today = now.astimezone(ZoneInfo(stream.get('timezone') or ledger['config'].get('timezone') or 'UTC')).date().isoformat()
         with self.store._lock('follow-up:' + name):
             records = copy.deepcopy(self.rt.ctx.state.get(FOLLOW_UP_STATE, default={}) or {})
             record = records.get(name) or {}
+            if run_id in (record.get('runs') or []):
+                return (record.get('pending') or {}).get('run_id') == run_id
             if record.get('date') != today:
                 record = {**record, 'date': today, 'count': 0}
-            if run_id in (record.get('runs') or []) or int(record.get('count') or 0) >= FOLLOW_UPS_PER_DAY:
+            if int(record.get('count') or 0) >= FOLLOW_UPS_PER_DAY:
                 return False
-            # Counted before the create so a retried finalize never schedules a second follow-up.
-            record.update(count=int(record.get('count') or 0) + 1, runs=((record.get('runs') or []) + [run_id])[-20:])
-            records[name] = record
-            self.rt.ctx.state.set(FOLLOW_UP_STATE, records)
-            try:
-                from .jobs import follow_up_create_args, parse_job_id
-                job_id = parse_job_id(self.rt.ctx.dispatch_tool('cronjob_manage', follow_up_create_args(self.rt, stream)))
-            except Exception:  # noqa: BLE001 - the digest still posts; the next scheduled run picks the items up
-                job_id = ''
-            if not job_id:
-                return False
-            records = copy.deepcopy(self.rt.ctx.state.get(FOLLOW_UP_STATE, default={}) or {})
-            record = records.get(name) or record
-            record['job_ids'] = ((record.get('job_ids') or []) + [job_id])[-20:]
+            record.update(count=int(record.get('count') or 0) + 1, runs=((record.get('runs') or []) + [run_id])[-20:],
+                          pending={'run_id': run_id, 'at': now.isoformat(), 'date': today})
             records[name] = record
             self.rt.ctx.state.set(FOLLOW_UP_STATE, records)
         return True
+
+    def _mark_scheduled_start(self, stream, execution):
+        """A start by the stream's own job: work out why it woke (the same check its pre-run script made) and
+        record what this run consumes, so the same slot, request or follow-up never runs twice.
+        Returns 'slot', 'run_now', 'follow_up' or '' (woken with nothing recorded: an ordinary run)."""
+        from .core import precheck
+        name = stream['name']
+        state = self.rt.ctx.state
+        if execution.get('job_id') != stream.get('job_id'):
+            return 'follow_up'  # a legacy one-shot follow-up job
+        wake = precheck.discovery_wake(lambda key: state.get(key, default=None), name, self.utcnow())
+        reason = wake.get('reason') or ''
+        if execution.get('source') == 'direct' and reason != 'slot':
+            reason = 'run_now'  # a manual run of the job is a full run
+        with self.store._lock('follow-up:' + name):
+            if reason == 'slot':
+                slots = copy.deepcopy(state.get(precheck.SLOT_STATE, default={}) or {})
+                slots[name] = {**(slots.get(name) or {}), 'done': wake['slot'], 'schedule': stream.get('schedule')}
+                state.set(precheck.SLOT_STATE, slots)
+            if reason in {'slot', 'run_now'}:
+                requests = copy.deepcopy(state.get(precheck.RUN_REQUEST_STATE, default={}) or {})
+                if requests.pop(name, None) is not None:
+                    state.set(precheck.RUN_REQUEST_STATE, requests)
+            if reason:
+                # Any run of the stream researches the queue first, so a pending follow-up is consumed too.
+                records = copy.deepcopy(state.get(FOLLOW_UP_STATE, default={}) or {})
+                if (records.get(name) or {}).pop('pending', None) is not None:
+                    state.set(FOLLOW_UP_STATE, records)
+        return reason
+
+    def _mark_active(self, name, run_id, *, done=False):
+        """A production run of the stream is in progress (blocks a follow-up wake) until finalize."""
+        with self.store._lock('follow-up:' + name):
+            records = copy.deepcopy(self.rt.ctx.state.get(FOLLOW_UP_STATE, default={}) or {})
+            record = records.get(name) or {}
+            if done:
+                if (record.get('active') or {}).get('run_id') != run_id:
+                    return
+                record.pop('active')
+            else:
+                record['active'] = {'run_id': run_id, 'since': self.utcnow().isoformat()}
+            records[name] = record
+            self.rt.ctx.state.set(FOLLOW_UP_STATE, records)
 
     def _authorize_recovery(self, run_id, old_parent, session_id):
         """A new session adopts a saved run when the actor may act: any chat of this profile, or the
@@ -671,11 +708,14 @@ class DiscoveryIntegration:
         # keeps open, unresolved, referenced and pending-delivery runs.
         self.store.prune(days=60)
         with self.store._lock('start:' + current['name']):
+            execution = self._scheduled_identity(current)
+            woke = self._mark_scheduled_start(current, execution) if execution and _lineage is None else ''
             # A finalized digest is distinct from unresolved conversion/delivery.
             # Resume unfinished scan/research on its ORIGINAL window and config.
             pending = [r for r in self._all_runs() if r['config'].get('stream_name', r['stream']) == current['name'] and r['config'].get('mode') == mode and not r.get('review')]
             if pending and not _distinct:
                 run = pending[0]
+                if mode == 'production': self._mark_active(current['name'], run['run_id'])
                 if pilot_limit != run['config'].get('pilot_limit'):
                     raise UserError('pilot selection is frozen; resume with original pilot_limit')
                 try:
@@ -728,16 +768,14 @@ class DiscoveryIntegration:
             config = {'stream_name': current['name'], 'mode': mode, 'sources': list(configs.values()), 'windows': windows, 'areas': current['areas'],
                       'research_cap': current['research_cap'], 'timezone': current.get('timezone', self.rt.settings.timezone)}
             if pilot_limit is not None: config['pilot_limit'] = pilot_limit
-            execution = self._scheduled_identity(current)
-            follow_up = bool(execution and _lineage is None and execution.get('job_id') != current.get('job_id')
-                             and execution.get('job_id') in self._follow_up_job_ids(current['name']))
-            if follow_up: config['follow_up_run'] = True
+            if woke == 'follow_up': config['follow_up_run'] = True
             business_date = now.astimezone(ZoneInfo(config['timezone'])).date().isoformat()
             run = self.store.init_run(stream=storage_stream, business_date=business_date, config=config,
                                       origin={'session_id': session_id, 'deliver': current.get('deliver', 'origin'),
                                               'stream_origin_session': current['origin_session'],
                                               'job_binding': copy.deepcopy(current.get('job_binding')),
                                               'cron_execution': execution}, lineage=_lineage)
+            if mode == 'production' and _lineage is None: self._mark_active(current['name'], run)
             out = {'run_id': run, 'resumed': False, 'stream': current['name'], 'sources': config['sources'],
                    'windows': windows, 'research_remaining_today': current['research_cap']}
             return {**out, **self._follow_up_start(run, config)}
@@ -1405,10 +1443,11 @@ class DiscoveryIntegration:
         origin = {**ledger['origin'], 'session_id': ledger['origin'].get('stream_origin_session', ledger['origin']['session_id']),
                   'delivery_owner': stream.get('delivery_owner', 'native_origin')}
         # Settle the backlog now (the same idempotent projection reconcile_endstate replays) so the queued count is
-        # exact, then schedule the follow-up before the digest so the digest can say it started.
+        # exact, then record the pending follow-up before the digest so the digest can say one is queued.
         self._settle_backlog(run_id, join)
         queued = self._queued_count(ledger)
         why = self._queued_reason(run_id, join, queued)
+        self._mark_active(stream['name'], run_id, done=True)
         # A follow-up today cannot research past the daily cap; those items wait for tomorrow's run.
         follow_up = self._start_follow_up(run_id, ledger, stream, queued) if why != 'daily_cap' else False
         reason = {'queued_reason': why} if _accepts(type(self.digest).prepare, 'queued_reason') else {}

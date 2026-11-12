@@ -20,6 +20,13 @@ from alchemy_task.core.config import Settings  # noqa: E402
 from helpers import FIXTURES, git  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _stream_stub_dir(tmp_path, monkeypatch):
+    """Discovery stream wake-check stubs go to a temporary scripts folder, never the real Hermes home."""
+    from alchemy_task import jobs
+    monkeypatch.setattr(jobs, "_scripts_dir", lambda: tmp_path / "hermes-scripts")
+
+
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
     """A workspace repo with two areas, a bare remote and one pushed commit."""

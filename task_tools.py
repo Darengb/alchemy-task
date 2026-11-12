@@ -379,8 +379,16 @@ def task_setup(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
             return _ok(**sf.git_check(rt, args))
         if action == "jobs_preview":
             return _ok(**sf.jobs_preview(rt))
+        if action in {"jobs_create", "teardown"}:
+            from .jobs import scheduling_refusal
+            refusal = scheduling_refusal(rt.ctx)
+            if refusal:
+                return _fail("scheduled_run", refusal)
         if action == "jobs_create":
-            return _ok(**sf.jobs_create(rt, user_approved=bool(args.get("user_approved")), session_id=session_id))
+            out = sf.jobs_create(rt, user_approved=bool(args.get("user_approved")), session_id=session_id)
+            # Also brings discovery stream jobs made by an earlier version up to date (30-minute wake check).
+            from .jobs import reconcile_all_discovery_jobs
+            return _ok(**out, discovery_jobs=reconcile_all_discovery_jobs(rt))
         if action == "check_files":
             from .core import validator
             report = validator.validate(rt.store(), apply=bool(args.get("fix")))
@@ -422,9 +430,10 @@ DISCOVERY_STREAM_SCHEMA = {
         "schedule and posts numbered task suggestions into the chat it was created in. Actions: list, create "
         "(call from the chat that should receive the digest, after the user approved), update (change one thing: "
         "frequency, time, areas, research_cap, add_sources, remove_sources; the rest stays), remove, "
-        "run_now (start the stream's job immediately)."),
+        "run_now (start the stream's job immediately), reconcile_jobs (bring every stream's scheduled job up to "
+        "date; run once after an update). Scheduled runs cannot use create, update, remove, run_now or reconcile_jobs."),
     "parameters": {"type": "object", "properties": {
-        "action": {"type": "string", "enum": ["list", "create", "update", "remove", "run_now"]},
+        "action": {"type": "string", "enum": ["list", "create", "update", "remove", "run_now", "reconcile_jobs"]},
         "name": {"type": "string", "description": "Stream name, e.g. 'work'."},
         "areas": {"type": "array", "items": {"type": "string"}},
         "sources": {"type": "array", "items": _SOURCE, "description": "create: all sources. update: replaces the "
@@ -506,8 +515,17 @@ def discovery_stream(args: dict[str, Any], session_id: str) -> str:
     from . import discovery as dv
     rt = Runtime()
     action = args.get("action")
+    if action in {"create", "update", "remove", "run_now", "reconcile_jobs"}:
+        from .jobs import scheduling_refusal
+        refusal = scheduling_refusal(rt.ctx)
+        if refusal:
+            return _fail("discovery", refusal)
     if action == "list":
         return _ok(streams=[dv._public(s) for s in dv._streams(rt).values()])
+    if action == "reconcile_jobs":
+        from .jobs import reconcile_all_discovery_jobs
+        return _ok(streams=reconcile_all_discovery_jobs(rt),
+                   message="Each stream's job now checks every 30 minutes and runs at the stream's own time.")
     if action == "create":
         return _ok(**dv.create_stream(rt, args, session_id))
     if action == "update":
@@ -515,8 +533,11 @@ def discovery_stream(args: dict[str, Any], session_id: str) -> str:
     if action == "remove":
         return _ok(**dv.remove_stream(rt, args.get("name", "")))
     if action == "run_now":
+        from .jobs import run_stream_now
         s = dv._get(rt, args.get("name", ""))
-        out = rt.ctx.dispatch_tool("cronjob_manage", {"action": "run", "job_id": s["job_id"]})
+        if not s.get("job_id"):
+            return _fail("discovery", "This stream has no scheduled job yet. Finish its setup first.")
+        out = run_stream_now(rt, s)
         return _ok(started=True, detail=str(out)[:300], message="Started; the digest arrives in its chat shortly.")
     return _fail("fix_call", "unknown action")
 
