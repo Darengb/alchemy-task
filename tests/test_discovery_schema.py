@@ -104,4 +104,4 @@ def test_shared_decisive_message_error_tells_the_child_how_to_repair():
     b['workstreams'].append(other)
     with pytest.raises(m.UserError, match='duplicate workstream decisive identity') as caught:
         m.validate_bundle(b, b['candidate_id'], ['slack:T1:C1:171.1'])
-    assert 'merge them into one workstream' in str(caught.value) and 'subtasks' in str(caught.value)
+    assert 'merge them into one' in str(caught.value) and 'subtasks' in str(caught.value) and 'action anchor' in str(caught.value)

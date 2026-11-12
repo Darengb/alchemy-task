@@ -165,7 +165,9 @@ def freeze_actions(parent_id: str, source_ids: list[Any], anchors: list[dict[str
             raise UserError("action anchor requires locator and outcome")
         locator, outcome = anchor["locator"], anchor["outcome"]
         if not isinstance(locator, str) or not re.fullmatch(r"(?:message|bullet|section|paragraph|line|item):[A-Za-z0-9._/-]{1,240}", locator):
-            raise UserError("unsupported action locator")
+            raise UserError("unsupported action locator: use kind:value, where kind is message, bullet, section, paragraph, "
+                            "line or item and value is 1 to 240 letters, digits, dots, dashes, underscores or slashes, "
+                            "for example bullet:3 or section:all-products-quiz")
         if not isinstance(outcome, str) or not outcome.strip() or len(outcome) > 500:
             raise UserError("invalid action outcome")
         outcome_key = " ".join(outcome.casefold().split())

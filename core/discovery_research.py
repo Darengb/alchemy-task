@@ -38,7 +38,11 @@ MAX_STRING_CHARS = 4000
 MAX_BUNDLE_BYTES = 512 * 1024
 
 # Repair hint returned to a research child whose workstreams share a decisive message.
-DECISIVE_REPAIR = ('; two workstreams cite the same decisive message: merge them into one workstream and list the separate steps as its subtasks, or cite for each workstream the id of its own decisive message')
+DECISIVE_REPAIR = ('; two workstreams cite the same decisive message: if they are steps of the SAME action, merge them into one '
+                   'workstream and list the steps as its subtasks; if they are separate actions, cite for each the id of its own '
+                   'decisive message, or, when one message (such as one email) holds several actions, keep them split and give each '
+                   'an action anchor from the action registry (the parent freezes the anchors with discovery_actions, locators '
+                   'like section:quiz or bullet:2)')
 
 def _json_bytes(value: Any) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode()
