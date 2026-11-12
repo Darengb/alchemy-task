@@ -163,6 +163,9 @@ def _has_keyword(text, keywords):
     return any(re.search(r'(?<![a-z0-9])' + re.escape(k) + r'(?![a-z0-9])', low) for k in keywords)
 
 
+SCREENING_HEADERS = ('list-unsubscribe', 'precedence', 'auto-submitted', 'x-autoreply')
+
+
 def normalize_mail_threads(threads, config):
     """Daily full-thread-before-sender-admission projection, no clipping.
 
@@ -188,7 +191,11 @@ def normalize_mail_threads(threads, config):
             payload = msg.get('payload') or {}
             headers = {h['name'].lower(): h.get('value', '') for h in payload.get('headers', [])}
             sender = parseaddr(headers.get('from', ''))[1].lower()
-            full.append({'id': msg['id'], 'from': sender, 'subject': headers.get('subject', ''), 'date': msg['internalDate'], 'body': extract_body_text(payload)})
+            entry = {'id': msg['id'], 'from': sender, 'subject': headers.get('subject', ''), 'date': msg['internalDate'], 'body': extract_body_text(payload)}
+            # Bulk/auto-reply markers let pre-research screening drop newsletters and auto-replies.
+            marks = {k: headers[k] for k in SCREENING_HEADERS if k in headers}
+            if marks: entry['headers'] = marks
+            full.append(entry)
         if config.get('kind') == 'transcript':
             senders = transcript_senders(config)
             keywords = transcript_keywords(config)
@@ -485,6 +492,7 @@ class SourceAdapter:
         pass_start = len(receipts)
         seen, ids = {p['cursor'] for p in receipts if p.get('cursor') is not None}, list(prior.get('backlog_ids', []))
         status, error, exhausted, primary_partial = 'partial', '', False, []
+        screened = list(prior.get('screened', []))
         while True:
             try:
                 read_started = datetime.now(timezone.utc).isoformat()
@@ -498,7 +506,15 @@ class SourceAdapter:
                     raise UserError('reader source window mismatch')
                 if page.get('truncated') or page.get('error'):
                     raise UserError('reader truncated or failed')
-                state = _persist_items(self.store, stream, self.config, page['items'])
+                # Same pre-research screening as attested envelopes: calendar notices, auto-replies,
+                # bulk mail and bot-only threads are saved as excluded, never researched.
+                from .core.screening import screen_items, record_screened
+                kept, dropped = screen_items(page['items'])
+                state = _persist_items(self.store, stream, self.config, kept)
+                if dropped:
+                    screened += record_screened(self.store, stream, self.config['source_key'], dropped,
+                                                lambda xs: _persist_items(self.store, stream, self.config, xs))
+                    state = self.store.source_state(stream, self.config['source_key'])
                 ids = [x['backlog_id'] for x in state['backlog']]
                 page_hash = hashlib.sha256(json.dumps(page, sort_keys=True).encode()).hexdigest()
                 proof = {'read_started': read_started, 'read_ended': read_ended, 'cursor': cursor, 'sha256': page_hash, 'count': len(page['items'])}
@@ -538,6 +554,7 @@ class SourceAdapter:
                 break
         receipt = {'config_revision': hashlib.sha256(json.dumps(self.config, sort_keys=True).encode()).hexdigest(), 'covered_intervals': [[start, end]] if exhausted else [], 'status': status, 'verification': 'adapter_verified', 'account_key': self.config['account_key'], 'scope': self.config['scope'], 'start': start, 'end': end, 'pagination_exhausted': exhausted, 'continuation': cursor, 'pages': receipts, 'backlog_ids': ids, 'error': error}
         if primary_partial: receipt['primary_partial'] = primary_partial
+        if screened: receipt['screened'] = screened
         self.store.record_coverage(stream, self.config['source_key'], receipt)
         return receipt
 
