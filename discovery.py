@@ -130,6 +130,7 @@ def create_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
     if not sources:
         raise DiscoveryError("a stream needs at least one approved source")
     cron, when = schedule_for(args.get("frequency", "daily"), args.get("time", "6 PM"))
+    mode = _stream_mode(args.get("mode") or "production")
     deliver = str(args.get("deliver") or "origin").strip()
     owner = args.get('delivery_owner', 'native_origin')
     if owner not in {'native_origin', 'verified_sender'}:
@@ -140,7 +141,8 @@ def create_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
               "frequency": args.get("frequency", "daily"), "time": args.get("time", "6 PM"),
               "timezone": tz["timezone"], "deliver": deliver, "delivery_owner": owner, "origin_session": session_id, "job_id": job_id,
               "research_cap": max(0, min(int(args.get("research_cap", DEFAULT_CAP)), 200)),
-              "created_at": time.time(), "last_run": None, "label": "", "mode": "production"}
+              "created_at": time.time(), "last_run": None, "label": "", "mode": mode,
+              "relist_repeats": bool(args.get("relist_repeats"))}
     stream.update(activation_state='SETUP_BLOCKED', delivery_state='pending',
                   setup_blocked_reason='Discover an available origin sender and exact-message reader; approve their mapping with discovery_config action=delivery. No scheduled job exists until verified.')
     with _lock:
@@ -155,6 +157,13 @@ def create_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
                 'message': 'Native host delivery configured; actual host target/delivery remains unverified. No sender API setup required.'}
     return {"stream": _public(stream), "job_id": job_id,
             "message": f"SETUP_BLOCKED: '{name}' saved for {when} ({tz['timezone']}); no active job. Use discovery_config action=delivery after discovering and approving an actual sender/exact-reader and verifying an existing origin message. See alchemy-task:discovery setup walkthrough."}
+
+
+def _stream_mode(mode: Any) -> str:
+    """production (default) or shadow: a shadow stream researches and posts digests but never changes tasks."""
+    if mode not in ("production", "shadow"):
+        raise DiscoveryError("mode must be production or shadow")
+    return mode
 
 
 def _origin_chat(rt: Runtime):
@@ -189,7 +198,8 @@ def _assign_labels(streams: dict[str, dict[str, Any]], chat_of=None) -> None:
 
 def _public(s: dict[str, Any]) -> dict[str, Any]:
     return {k: s.get(k) for k in ("name", "areas", "sources", "when", "timezone", "deliver", "research_cap",
-                                  "last_run", "label", "job_id", "delivery_owner", "activation_state", "delivery_state", "setup_blocked_reason")}
+                                  "last_run", "label", "job_id", "delivery_owner", "activation_state", "delivery_state", "setup_blocked_reason")} | {
+        "mode": s.get("mode", "production"), "relist_repeats": bool(s.get("relist_repeats"))}
 
 
 def _guard_scheduling(rt: Runtime) -> None:
@@ -270,6 +280,10 @@ def update_stream(rt: Runtime, args: dict[str, Any], session_id: str) -> dict[st
         s.update({"schedule": cron, "when": when, "frequency": frequency, "time": at, "timezone": tz,
                   "areas": areas, "sources": sources,
                   "research_cap": cap})
+        if "relist_repeats" in args:
+            s["relist_repeats"] = bool(args["relist_repeats"])
+        if args.get("mode"):
+            s["mode"] = _stream_mode(args["mode"])
         _save_streams(rt, streams)
     from .jobs import reverify_sweep, init_slot
     if s.get("job_id"):

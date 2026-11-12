@@ -448,6 +448,8 @@ DISCOVERY_STREAM_SCHEMA = {
         "deliver": {"type": "string", "description": "Default origin (this chat). For a Telegram topic: "
                                                      "telegram:<chat_id>:<thread_id>."},
         "research_cap": {"type": "integer", "description": "Candidates researched per day (default 50)."},
+        "mode": {"type": "string", "enum": ["production", "shadow"], "description": "Default production. shadow: research and post digests, never change tasks (for test streams)."},
+        "relist_repeats": {"type": "boolean", "description": "Default false. true: list findings even when an earlier digest already proposed them, and never hide other streams' findings (for test streams)."},
         "user_approved": {"type": "boolean"}},
         "required": ["action"]},
 }

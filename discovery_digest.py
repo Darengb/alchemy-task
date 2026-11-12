@@ -328,7 +328,7 @@ def _earlier_match(data, run, raw, keys, messages, day, split_keys):
     best = None
     for pid, record in data['proposals'].items():
         b = record['binding']
-        if b.get('run_id') == run: continue
+        if b.get('run_id') == run or b.get('relist'): continue  # a relisting test stream never hides others' items
         if record.get('state') == 'pending' and b.get('expires', '') < day: continue
         old_keys, old_messages = decisive_sources(b)
         shared = keys & old_keys
@@ -351,7 +351,7 @@ class DiscoveryDigest:
         return read_json(self.path, {'digests': {}, 'proposals': {}, 'numbers': {}, 'seen': {}, 'delivery': {}})
 
     def prepare(self, run, *, stream, day, origin, items, failures=None, coverage=None, outcomes=None, label='', review_namespace='',
-                deferred=None, blocked=None, queued_count=0, follow_up_started=False, queued_reason=''):
+                deferred=None, blocked=None, queued_count=0, follow_up_started=False, queued_reason='', relist=False):
         dt.date.fromisoformat(day)
         if not origin.get('session_id'):
             raise UserError('digest requires actual origin session')
@@ -381,12 +381,12 @@ class DiscoveryDigest:
                 if review_namespace: binding.append(review_namespace)
                 identity = hashlib.sha256(json.dumps(binding).encode()).hexdigest()
                 # Same accepted action/revision is not relisted in another stream.
-                if identity in data['seen']:
+                if identity in data['seen'] and not relist:
                     continue
                 keys, messages = decisive_sources(raw)
                 # A new run over the same source does not renumber an open or resolved proposal.
                 # Review reruns (review_namespace) relist on purpose.
-                earlier = None if review_namespace else _earlier_match(data, run, raw, keys, messages, day, split_keys)
+                earlier = None if review_namespace or relist else _earlier_match(data, run, raw, keys, messages, day, split_keys)
                 if earlier:
                     pid, b, state = earlier
                     repeats.append({'unit_id': raw['unit_id'], 'research_revision': raw['research_revision'], 'title': raw['title'],
@@ -409,6 +409,7 @@ class DiscoveryDigest:
                 item = {**raw, 'proposal_id': pid, 'run_id': run, 'stream': stream, 'day': day, 'number': num,
                         'ref': label + str(num), 'origin': origin,
                         'expires': (dt.date.fromisoformat(day) + dt.timedelta(days=7)).isoformat()}
+                if relist: item['relist'] = True
                 numbered.append(item)
                 data['proposals'][pid] = {'binding': item, 'state': 'pending'}
                 data['seen'][identity] = pid
