@@ -395,3 +395,58 @@ def test_streams_report_a_run_in_progress_while_its_open_run_is_active(tmp_path,
     settings_api._FIRED['visions'] = time.time()
     assert set(settings_api._running_streams(object())) == {'mbg', 'visions'}
     settings_api._FIRED.clear()
+
+
+def _progress_run(tmp_path, **ledger):
+    import json
+    d = tmp_path / 'runs' / 'r1'
+    (d / 'research').mkdir(parents=True, exist_ok=True)
+    base = {'stream': 'mbg', 'status': 'open', 'created': '2026-11-11T15:00:00+00:00', 'index_revision': None,
+            'candidates': [], 'attempts': {}}
+    base.update(ledger)
+    (d / 'ledger.json').write_text(json.dumps(base))
+    return d
+
+
+def test_run_progress_reads_each_stage_from_the_ledger(tmp_path):
+    import json
+    from alchemy_task.dashboard import settings_api
+    # 1. Sources not frozen yet.
+    d = _progress_run(tmp_path)
+    p = settings_api._run_progress(d / 'ledger.json', json.loads((d / 'ledger.json').read_text()))
+    assert p == {'stage': 'sources', 'done': 0, 'total': 0, 'started_at': '2026-11-11T15:00:00+00:00'}
+    # 2. Research: only selected parents count; accepted, exhausted and time-box deferred are finished.
+    cand = lambda cid, **kw: {'candidate_id': cid, 'prefilter_disposition': 'research', **kw}
+    candidates = [cand('a'), cand('b'), cand('c'), cand('d'), cand('e'),
+                  cand('skip', research_selection='pilot_skipped'), cand('x', prefilter_disposition='excluded'),
+                  cand('a-w1', parent_candidate_id='a')]
+    attempts = {'t1': {'candidate_id': 'a', 'ordinal': 1, 'state': 'accepted_bundle'},
+                't2': {'candidate_id': 'b', 'ordinal': 1, 'state': 'rejected_retryable'},
+                't3': {'candidate_id': 'b', 'ordinal': 2, 'state': 'exhausted'},
+                't4': {'candidate_id': 'e', 'ordinal': 1, 'state': 'live'}}
+    d = _progress_run(tmp_path, index_revision='rev1', candidates=candidates, attempts=attempts)
+    (d / 'supervisor.json').write_text(json.dumps({'time_deferred': ['c']}))
+    data = json.loads((d / 'ledger.json').read_text())
+    p = settings_api._run_progress(d / 'ledger.json', data)
+    assert (p['stage'], p['done'], p['total']) == ('research', 3, 5)
+    # A committed bundle on disk also counts as accepted.
+    (d / 'research' / 'd.bundle.json').write_text('{}')
+    assert settings_api._run_progress(d / 'ledger.json', data)['done'] == 4
+    # 3. Everything finished but not finalized: writing the digest.
+    data['attempts']['t4']['state'] = 'accepted_bundle'
+    assert settings_api._run_progress(d / 'ledger.json', data) == {
+        'stage': 'digest', 'done': 5, 'total': 5, 'started_at': '2026-11-11T15:00:00+00:00'}
+
+
+def test_run_progress_never_fails_on_odd_files_and_reaches_the_settings_payload(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from alchemy_task.dashboard import settings_api
+    d = _progress_run(tmp_path, created=None, index_revision='rev1', candidates='nope', attempts=[1])
+    (d / 'supervisor.json').write_text('{not json')
+    p = settings_api._run_progress(d / 'ledger.json', json.loads((d / 'ledger.json').read_text()))
+    assert p['stage'] == 'digest' and p['total'] == 0 and p['started_at']  # falls back to the file's ctime
+    import alchemy_task.discovery_integration as di
+    monkeypatch.setattr(di, 'get_service', lambda rt=None: SimpleNamespace(store=SimpleNamespace(state_root=tmp_path)))
+    settings_api._FIRED.clear()
+    assert settings_api._running_streams(object())['mbg']['stage'] == 'digest'

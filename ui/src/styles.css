@@ -757,6 +757,19 @@ html.at-dragging { -webkit-user-select: none; user-select: none; }
 }
 .at-run-sub .is-late { color: var(--at-late); }
 .at-run-none { padding: 12px 16px; border-radius: 8px; background: var(--at-soft); color: var(--at-muted); font-size: 13px; }
+.at-runbar-wrap { padding: 14px 2px 0; }
+.at-runbar { position: relative; height: 6px; border-radius: 999px; background: var(--at-soft); overflow: hidden; }
+.at-runbar-fill {
+  position: absolute; inset: 0 auto 0 0; width: 0; border-radius: inherit;
+  background: linear-gradient(90deg, var(--at-accent), var(--at-accent-hi)); transition: width .6s ease;
+}
+.at-runbar.is-indeterminate .at-runbar-fill { width: 35%; animation: at-runbar 1.6s ease-in-out infinite; }
+@keyframes at-runbar { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+.at-runbar-label { margin-top: 8px; font-size: 13px; color: var(--at-muted); }
+@media (prefers-reduced-motion: reduce) {
+  /* No sliding segment: a still, softer bar says "working" without motion. */
+  .at-runbar.is-indeterminate .at-runbar-fill { width: 100%; opacity: .35; animation: none; transform: none; }
+}
 .at-proposals { display: flex; flex-direction: column; gap: 12px; padding-top: 10px; }
 .at-run-fold { margin-top: 8px; }
 .at-run-fold.is-quiet > .at-disc-head { color: var(--at-muted); }

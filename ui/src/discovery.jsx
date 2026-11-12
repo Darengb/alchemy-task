@@ -9,6 +9,7 @@ import { AreaDot, Button, DatePicker, Disclosure, Icon, IconButton, Menu, Segmen
 export { pendingCount, discoveryBadge } from './lib/discovery.js'
 import { nextRunLabel } from './lib/discovery.js'
 import { digestField, fullResearch } from './lib/digestText.js'
+import { elapsedLabel, runProgressLabel } from './lib/runProgress.js'
 
 const titleCase = (s) => String(s || '').replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
@@ -47,6 +48,7 @@ export function DiscoveryView({ runs, streams, error, loading, reload }) {
           <div className="at-disco-bar"><h1 className="at-period">Discovery</h1><span className="at-flex" />
             <IconButton icon="refresh" label="Refresh" onClick={reload} /></div>
           <SourcesBar streams={streams} reload={reload} />
+          <RunningCards streams={streams} />
           <div className="at-caughtup">
             <Icon name="clock" size={18} />
             <div>
@@ -78,6 +80,7 @@ export function DiscoveryView({ runs, streams, error, loading, reload }) {
           <IconButton icon="refresh" label="Refresh" onClick={reload} />
         </div>
         {configured ? <SourcesBar streams={streams} reload={reload} /> : null}
+        {configured ? <RunningCards streams={streams} /> : null}
         {!shown.length ? (
           <div className="at-caughtup">
             <Icon name="check" size={18} />
@@ -170,6 +173,41 @@ function SourcesBar({ streams, reload }) {
       {adding ? <CopyPrompt className="is-compact" text={ADD_SOURCE_PROMPT} /> : null}
     </div>
   )
+}
+
+// One card per stream with a run in progress: where it is (reading sources, researching, writing the
+// digest) and how long it has run. The list polls while anything runs, so the card updates and then gives
+// way to the finished run's card.
+function RunningCards({ streams }) {
+  const running = (streams || []).filter((s) => s.running && s.progress)
+  const [, tick] = React.useState(0)
+  React.useEffect(() => {
+    if (!running.length) return undefined
+    const id = setInterval(() => tick((n) => n + 1), 30000)
+    return () => clearInterval(id)
+  }, [running.length])
+  return running.map((s) => {
+    const { label, fraction } = runProgressLabel(s.progress)
+    const elapsed = elapsedLabel(s.progress.started_at)
+    const pct = fraction == null ? null : Math.round(fraction * 100)
+    return (
+      <article key={s.name} className="at-run at-run-live" aria-live="polite">
+        <header className="at-run-head">
+          <div>
+            <div className="at-run-title">{titleCase(s.name)} discovery</div>
+            <div className="at-run-sub"><span>Running now</span>{elapsed ? <span>{elapsed}</span> : null}</div>
+          </div>
+        </header>
+        <div className="at-runbar-wrap">
+          <div className={cx('at-runbar', pct == null && 'is-indeterminate')} role="progressbar" aria-label={label}
+               aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct == null ? undefined : pct}>
+            <span className="at-runbar-fill" style={pct == null ? undefined : { width: `${Math.max(3, pct)}%` }} />
+          </div>
+          <div className="at-runbar-label">{label}</div>
+        </div>
+      </article>
+    )
+  })
 }
 
 export function CopyPrompt({ text, className }) {
