@@ -38,11 +38,13 @@ def test_installed_skill_inventory_and_context_scopes(settings, data_dir, tmp_pa
     (skills / 'one' / 'SKILL.md').write_text('Complete first skill')
     (skills / 'two' / 'SKILL.md').write_text('Complete second skill')
     ctx = DiscoveryContext(Runtime(settings=settings, data_dir=data_dir), store, installed_skills_root=skills)
+    # Only installed skills that match the run's candidates are frozen.
+    store.add_candidates(run, [{'title': 'Plan step two', 'source_ids': ['source:source:account:thread:t1']}])
     resources = ctx.freeze(run, source_config={}, rubric='Full context', skills=['one'])
-    assert 'skill-inventory' in resources
+    assert 'skill-inventory' in resources and 'skill-one' in resources
     inventory = json.loads((store.run_dir(run) / 'resources' / resources['skill-inventory']['sha256']).read_text())
-    assert [x['name'] for x in inventory] == ['one', 'two']
-    assert inventory[1]['resource']['total_bytes'] == len('Complete second skill')
+    assert [x['name'] for x in inventory] == ['two']
+    assert inventory[0]['resource']['total_bytes'] == len('Complete second skill')
 
 
 def test_identity_never_infers_local_part_or_unconfirmed_alias():
