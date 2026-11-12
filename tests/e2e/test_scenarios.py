@@ -250,7 +250,7 @@ def test_c2_incomplete_first_collection_is_degraded_and_next_run_rereads_the_win
     assert day['digest']['items'] or 'No new proposals to review.' in text.splitlines()
     # No coverage disclaimer; a source that could not be read at all is one Needs attention line.
     assert '**Coverage:**' not in text
-    if pages == ['ERROR']: assert '**Needs attention:** Feed could not be read' in text.splitlines(), text
+    if pages == ['ERROR']: assert '**Needs attention:** Feed could not be read.' in text.splitlines(), text
     assert day['record']['degraded'] is True
     # Coverage did not advance: the next run re-reads from the same window start.
     first_start = src.calls[0]['start']

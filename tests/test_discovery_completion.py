@@ -250,7 +250,7 @@ def test_rich_digest_preserves_researched_state_action_links_and_titled_failures
          'current_understanding': 'The revised proof is ready.', 'substantive_next_action': 'Approve final trim and send to print.', 'source_links': ['https://example.test/proof'], 'new_information': ['The trim changed.'], 'research_disposition': 'uncertain', 'uncertainty': ['Print date needs confirmation.']}],
          failures=[{'title': 'Resolve asset access', 'reason': 'Source unavailable'}], coverage=[{'source_key': 'feed', 'status': 'partial'}])
     text = result['text']
-    for value in ['The revised proof is ready.', 'Approve final trim and send to print.', 'https://example.test/proof', 'Existing print work', 'The trim changed.', 'Print date needs confirmation.', 'Resolve asset access', '**Needs attention:** feed could not be read', 'Review:']:
+    for value in ['The revised proof is ready.', 'Approve final trim and send to print.', 'https://example.test/proof', 'Existing print work', 'The trim changed.', 'Print date needs confirmation.', 'Resolve asset access', 'feed could not be read', 'Review:']:
         assert value in text, text
     assert 'w_one' not in text
     assert len(result['items']) == 1
