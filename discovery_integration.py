@@ -791,7 +791,9 @@ class DiscoveryIntegration:
         candidates, selection = [], []
         for config in ledger['config']['sources']:
             for entry in self.store.source_state(ledger['stream'], config['source_key'])['backlog']:
-                if entry['status'] in {'queued', 'deferred', 'pilot_skipped'} or (entry['status'] == 'selected' and entry.get('lineage', {}).get('run_id') == run_id):
+                # A blocked item (research cut off by a time box or an interrupted run) gets one more run.
+                retry = entry['status'] == 'blocked' and int(entry.get('retries') or 0) < 1
+                if entry['status'] in {'queued', 'deferred', 'pilot_skipped'} or retry or (entry['status'] == 'selected' and entry.get('lineage', {}).get('run_id') == run_id):
                     candidates.append(entry['candidate'])
                     selection.append({'source_key': config['source_key'], 'backlog_id': entry['backlog_id'], 'candidate_id': candidate_id(entry['source_ids'])})
         if ledger.get('lineage', {}).get('operation') == 'targeted_supplement':

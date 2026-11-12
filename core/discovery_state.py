@@ -1223,6 +1223,8 @@ class DiscoveryStore:
             item = found[0]
             if item['status'] in {'accepted', 'excluded', 'resolved'} and (item['status'] != status or item.get('lineage') != lineage):
                 raise UserError('terminal backlog lineage is immutable; new source activity needs a new revision')
+            if item['status'] == 'blocked' and status == 'selected':
+                item['retries'] = int(item.get('retries') or 0) + 1
             item.update(status=status, lineage=copy.deepcopy(lineage))
             atomic_json(self._source_path(stream, source), state)
             return item
