@@ -123,7 +123,9 @@ def test_update_keeps_schedule_parts_and_chat(ctx):
     out = tool(task_tools.discovery_stream, session="other-chat", action="update", name="work",
                frequency="weekdays", user_approved=True)
     assert out["ok"] and out["stream"]["when"] == "weekdays at 7:00 PM"
-    assert list(ctx.cron) == [jid] and ctx.cron[jid]["schedule"] == "0 19 * * 1-5"
+    # The job ticks every 30 minutes behind its wake check; the user's schedule lives on the stream.
+    assert list(ctx.cron) == [jid] and ctx.cron[jid]["schedule"] == "*/30 * * * *"
+    assert ctx.state.get('streams')['work']['schedule'] == "0 19 * * 1-5"
     assert ctx.cron[jid]["deliver"] == "origin"  # native owner retained during schedule updates
     out = tool(task_tools.discovery_stream, action="update", name="work", time="8 AM", user_approved=True)
     assert out["stream"]["when"] == "weekdays at 8:00 AM"
@@ -133,7 +135,8 @@ def test_update_one_thing_at_a_time(ctx):
     make_stream()
     jid = ctx.state.get('streams')['work']['job_id']
     out = tool(task_tools.discovery_stream, action="update", name="work", frequency="hourly", user_approved=True)
-    assert out["stream"]["when"] == "hourly" and ctx.cron[jid]["schedule"] == "5 * * * *"
+    assert out["stream"]["when"] == "hourly" and ctx.state.get('streams')['work']['schedule'] == "5 * * * *"
+    assert ctx.cron[jid]["schedule"] == "*/30 * * * *"
     out = tool(task_tools.discovery_stream, action="update", name="work", time="9 AM", user_approved=True)
     assert out["stream"]["when"] == "daily at 9:00 AM"
     gmail = {"name": "Gmail", "type": "email", "scope": "inbox, not newsletters", "method": "gmail MCP"}

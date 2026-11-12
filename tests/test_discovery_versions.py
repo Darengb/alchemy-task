@@ -5,7 +5,7 @@ import datetime as dt
 from alchemy_task.core import discovery_state as m
 from test_discovery_integration import configure, service
 from test_discovery_any_chat import bound  # noqa: F401
-from test_discovery_follow_up_run import _finished_with_deferred, _setup
+from test_discovery_follow_up_run import _finished_with_deferred, _setup, _slot_already_ran
 
 THREAD = ['slack:acct:C1:100.1']
 
@@ -76,11 +76,10 @@ def test_follow_up_run_skips_collection_and_freezes_the_queued_items(settings, d
     integration, ctx, creates, prepared = _setup(settings, data_dir, tmp_path)
     run = _finished_with_deferred(integration, ctx, count=2)
     integration.finalize(run, session_id='parent')
-    assert ctx.state.get('discovery_follow_ups')['work']['job_ids'] == ['follow-1']
-    fire = dict(execution_id='fire-1', profile='test', scheduled_instant='2030-01-01T00:05:00Z', source='builtin')
+    assert ctx.state.get('discovery_follow_ups')['work']['pending']['run_id'] == run
+    _slot_already_ran(ctx)  # the stream's own job woke for the pending follow-up
+    fire = dict(execution_id='fire-1', profile='test', scheduled_instant='2030-01-01T00:30:00Z', source='builtin')
     ctx.current_cron_execution = lambda: {**fire, 'job_id': 'job-one'}
-    assert 'skip_collection' not in integration.start('work', session_id='s1', _distinct=True)  # the stream's own job collects
-    ctx.current_cron_execution = lambda: {**fire, 'job_id': 'follow-1'}
     started = integration.start('work', session_id='s2', _distinct=True)
     assert started['skip_collection'] is True and 'discovery_context' in started['next_action'] and '2 item' in started['next_action']
     assert integration.freeze(started['run_id'], session_id='s2')['index_revision']
@@ -88,6 +87,8 @@ def test_follow_up_run_skips_collection_and_freezes_the_queued_items(settings, d
     assert len(ledger['candidates']) == 2
     receipt = integration._collection_receipts(ledger)['feed']
     assert receipt['skipped'] == 'follow-up run' and receipt['verification'] == 'skipped'
+    ctx.state.set('discovery_slots', {})  # the user's own slot is due: a full run collects
+    assert 'skip_collection' not in integration.start('work', session_id='s1', _distinct=True)
 
 
 def test_queued_reason_names_the_daily_cap_or_the_time_box(settings, data_dir, tmp_path):

@@ -163,6 +163,8 @@ def _zone(name: str) -> Any:
 def latest_slot(schedule: str, timezone: str, now: Any = None, lookback: int = SLOT_LOOKBACK) -> Any:
     """The most recent instant (UTC) at or before now that the stream's own schedule names, within lookback."""
     import datetime as dt
+    if len(str(schedule or "").split()) != 5:
+        return None
     cur, zone = _now(now), _zone(timezone)
     for _ in range(lookback + 1):
         if _cron_matches(schedule, cur.astimezone(zone)):
@@ -174,6 +176,8 @@ def latest_slot(schedule: str, timezone: str, now: Any = None, lookback: int = S
 def next_slot(schedule: str, timezone: str, now: Any = None, horizon_days: int = 8) -> Any:
     """The next instant (UTC) after now that the stream's own schedule names (for display)."""
     import datetime as dt
+    if len(str(schedule or "").split()) != 5:
+        return None
     cur, zone = _now(now) + dt.timedelta(minutes=1), _zone(timezone)
     for _ in range(horizon_days * 24 * 60):
         if _cron_matches(schedule, cur.astimezone(zone)):
