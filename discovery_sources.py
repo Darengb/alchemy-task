@@ -553,6 +553,10 @@ def collect_attested(store, stream, config, envelope):
         raise UserError('source window must increase')
     state = _persist_items(store, stream, config, envelope.get('items', []), inline=True)
     receipt = {k: envelope.get(k) for k in ('status', 'start', 'end', 'pagination_exhausted', 'continuation', 'error')}
+    # Plain-language gaps the agent knows it missed (shown to the user); never boilerplate about attestation.
+    gaps = envelope.get('gaps')
+    if isinstance(gaps, list):
+        receipt['gaps'] = [' '.join(str(g).split())[:160] for g in gaps if str(g).strip()][:5]
     receipt.update(verification='agent_attested', backlog_ids=[x['backlog_id'] for x in state['backlog']], account_key=config['account_key'])
     store.record_coverage(stream, config['source_key'], receipt)
     return receipt

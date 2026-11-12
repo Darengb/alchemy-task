@@ -2070,6 +2070,7 @@
     const [armed, setArmed] = react_dashboard_default.useState(false);
     const ref = react_dashboard_default.useRef(null);
     const press = react_dashboard_default.useRef(null);
+    const pointer = react_dashboard_default.useRef("");
     react_dashboard_default.useEffect(() => setV(value), [value]);
     react_dashboard_default.useLayoutEffect(() => {
       const el = ref.current;
@@ -2089,6 +2090,7 @@
       setArmed(false);
     };
     const down = (e) => {
+      pointer.current = e.pointerType;
       if (editing || e.pointerType === "mouse" && e.button !== 0) return;
       const p = { x: e.clientX, y: e.clientY, armed: false, timer: 0 };
       p.timer = setTimeout(() => {
@@ -2123,9 +2125,7 @@
         return;
       }
       if (editing) return;
-      const el = e.currentTarget;
-      el.readOnly = false;
-      el.focus();
+      e.currentTarget.focus();
       setEditing(true);
     };
     return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-title-wrap" }, /* @__PURE__ */ react_dashboard_default.createElement(
@@ -2136,7 +2136,6 @@
         className: cx("at-title-input", done && "is-done", armed && "is-armed", !editing && "is-idle"),
         value: v,
         "aria-label": "Title",
-        readOnly: !editing,
         title: editing ? void 0 : "Tap to edit. Press and hold to copy for chat.",
         onChange: (e) => setV(e.target.value),
         onFocus: () => {
@@ -2154,6 +2153,9 @@
           if (press.current && press.current.armed) release(e);
         },
         onClick: click,
+        onMouseDown: (e) => {
+          if (!editing && pointer.current === "mouse") e.preventDefault();
+        },
         onContextMenu: (e) => {
           if (!editing) e.preventDefault();
         },

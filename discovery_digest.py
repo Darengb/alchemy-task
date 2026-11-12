@@ -62,15 +62,29 @@ def _skipped(source):
 
 def coverage_degraded(source):
     """Incomplete coverage that is a real gap; an agent-attested read is not one."""
-    return source.get('status') != 'complete' and not _attested_read(source)
+    return _source_problem(source) is not None
+
+
+_PARTIAL_REASONS = (('bounded read pass', 'was only partly read before the page limit; the rest is read next run'),
+                    ('pagination', 'may not have been read to the end'),
+                    ('continuation', 'may not have been read to the end'),
+                    ('truncated', 'was only partly read'))
 
 
 def _source_problem(source):
-    """Plain text for a real source read failure, else None (agent-attested and partial reads are not listed)."""
-    if source.get('status') == 'complete' or _attested_read(source): return None
+    """Plain text for a real coverage gap, else None. Reading with the user's own tools is expected and is
+    never a gap by itself; a reported incomplete read, a skipped thread or a failed read is."""
+    if source.get('status') == 'complete' and not source.get('gaps'): return None
     skipped = _skipped(source)
     if skipped: return ('had a thread that could not be read (' + '; '.join(skipped) + ')')[:160]
+    if source.get('gaps'):
+        return ('was only partly read: ' + '; '.join(source['gaps']))[:200]
+    if _attested_read(source): return None  # read with the user's own tools, nothing reported missing
     if source.get('status') == 'failed' or not source.get('backlog_ids') and not source.get('pages'): return 'could not be read'
+    error = ' '.join(str(source.get('error') or '').split()).lower()
+    if 'partial primary coverage' in error: return None  # the item itself carries the gap into research
+    for marker, text in _PARTIAL_REASONS:
+        if marker in error: return text
     return None
 
 
