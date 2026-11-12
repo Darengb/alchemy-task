@@ -86,3 +86,13 @@ def test_coverage_lines_only_for_real_gaps():
     bounded = {'status': 'partial', 'verification': 'adapter_verified', 'error': 'bounded read pass; continuation retained', 'backlog_ids': ['b'], 'pages': [{}]}
     assert _source_problem(bounded).startswith('was only partly read before the page limit')
     assert _source_problem({'status': 'failed', 'error': 'x'}) == 'could not be read'
+
+
+def test_structured_read_that_failed_partway_needs_attention(tmp_path):
+    digest = DiscoveryDigest(tmp_path)
+    coverage = [{'source_key': 'mail', 'name': 'Work mail', 'status': 'partial', 'verification': 'adapter_verified',
+                 'error': 'Invalid control character at: line 1 column 800001 (char 800000)', 'pages': [{}, {}, {}], 'backlog_ids': []},
+                {'source_key': 'chat', 'name': 'Chat', 'status': 'complete', 'verification': 'adapter_verified', 'error': '',
+                 'pages': [{}], 'backlog_ids': ['b1']}]
+    text = digest.prepare('run', stream='work', day='2026-11-12', origin=ORIGIN, items=[], coverage=coverage)['text']
+    assert '**1 needs attention**' in text and 'Work mail was only partly read' in text and 'Chat' not in text

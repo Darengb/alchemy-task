@@ -85,6 +85,8 @@ def _source_problem(source):
     if 'partial primary coverage' in error: return None  # the item itself carries the gap into research
     for marker, text in _PARTIAL_REASONS:
         if marker in error: return text
+    if error and source.get('status') != 'complete':
+        return 'was only partly read (a read failed); the rest is read next run'  # never hide a failed scan
     return None
 
 
