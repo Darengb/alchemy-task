@@ -356,7 +356,7 @@ def pre_llm_call(session_id: str = "", **_: Any):
     pending = [p for p in data['proposals'].values() if p['binding']['origin']['session_id'] == session_id
                and p['binding']['expires'] >= service.rt.settings.today() and p['state'] in {'pending', 'approved'}]
     if pending:
-        return {"context": "[Alchemy Task] This chat has immutable discovery proposals. Resolve replies by exact proposal number/day/stream with discovery_decide. Selecting one never closes the others. Semantic matches need update/create choice and exact target_task_id; never use title guesses. Ignored items remain replyable seven days."}
+        return {"context": "[Alchemy Task] This chat has immutable discovery proposals. Resolve replies by exact proposal number/day/stream with discovery_decide. Selecting one never closes the others. Semantic matches need an update/create choice; with several listed tasks pass choice 'update' (recommended task) or 'update N' (Nth listed task); never use title guesses. Ignored items remain replyable seven days."}
     return None
 
 
