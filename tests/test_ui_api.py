@@ -353,7 +353,9 @@ def test_settings_streams_include_next_run(rclient, monkeypatch):
         "mbg": {"name": "mbg", "areas": ["work"], "sources": [], "job_id": "jobmbg", "schedule": "0 18 * * *", "timezone": "America/New_York"},
         "av": {"name": "av", "areas": ["work"], "sources": [], "job_id": "jobav", "schedule": "0 18 * * *", "timezone": "America/New_York"}})
     streams = {s["name"]: s for s in client.get("/settings").json()["streams"]}
-    assert streams["mbg"]["next_run_at"] == "2026-11-11T18:00:00-05:00"
+    from alchemy_task.jobs import next_stream_run
+    # The user's own slot (6 PM New York), not the job's 30-minute wake check.
+    assert streams["mbg"]["next_run_at"] == next_stream_run(c.state.get("streams")["mbg"]) and streams["mbg"]["next_run_at"].endswith("23:00:00+00:00")
     assert streams["av"]["next_run_at"] is None  # paused: no next run shown
 
 
