@@ -566,6 +566,16 @@
           "type": "string",
           "maxLength": 300
         },
+        "subtasks": {
+          "description": "Optional. The related asks of this one conversation, as short plain steps (up to 8, each under 140 characters). Use subtasks instead of splitting a conversation into several workstreams when the asks share an owner, an outcome and rough timing.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "maxItems": 8
+        },
         "action_key": {
           "type": "string",
           "minLength": 1,
