@@ -35,7 +35,8 @@ def test_subtasks_are_optional_and_bounded():
     assert 'decisive message' in text and 'stand alone' in text
     assert len(text) < 900
     again = discovery_runner.PREVIOUS_RESEARCH_INSTRUCTIONS
-    assert 'keep their titles' in again and 'genuinely new action' in again
+    assert 'keep its items' in again and 'ADD every other' in again and 'never drop an action' in again
+    assert 'same split' not in again and 'only for a genuinely new action' not in again
 
 
 def test_approved_create_writes_research_subtasks_as_checkboxes(settings, data_dir, tmp_path):

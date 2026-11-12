@@ -177,8 +177,10 @@ def freeze_actions(parent_id: str, source_ids: list[Any], anchors: list[dict[str
         material = [parent_id, sources, locator, outcome_key]
         action_id = "a_" + hashlib.sha256(json.dumps(material, separators=(",", ":")).encode()).hexdigest()[:20]
         entry = {"locator": locator, "outcome": outcome, "action_id": action_id, "source_ids": sources}
-        if locator in registry and registry[locator] != entry:
-            raise UserError("changed action anchor requires semantic reconciliation")
+        if locator in registry:
+            if {k: v for k, v in registry[locator].items() if k != "provenance"} != entry:
+                raise UserError("changed action anchor requires semantic reconciliation")
+            continue
         registry[locator] = entry
     if len({" ".join(x["outcome"].casefold().split()) for x in registry.values()}) != len(registry):
         raise UserError("duplicate frozen outcome")
