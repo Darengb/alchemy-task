@@ -497,3 +497,35 @@ def test_link_audit_honours_a_later_refresh_whose_run_was_pruned(settings, data_
     task.path.write_bytes(snapshot.replace(revision_line, b'**Content revision:** `sha256:00000000`'))
     assert [(r['run_id'], r['reason']) for r in conv.audit_links()['repairs']] == [(run2, 'inline dossier mismatch')]
     assert [r['run_id'] for r in conv.audit_links(run_ids={run2})['repairs']] == [run2]
+
+
+# ---------------------------------------------------------------- shadow runs decide but never write
+def _shadow(integration, store, run):
+    with store._lock(store._run_lock_name(run)):
+        ledger = store.get_run(run); ledger['config']['mode'] = 'shadow'; store._save(run, ledger)
+
+
+@pytest.mark.parametrize('decision', ['noop', 'auto'])
+def test_shadow_run_records_exact_decisions_without_touching_the_task(settings, data_dir, tmp_path, decision):
+    integration, rt, ctx, store, run = _integration(settings, data_dir, tmp_path, count=2)
+    _shadow(integration, store, run)
+    units = [c['candidate_id'] for c in store.get_run(run)['candidates'] if c.get('parent_candidate_id')]
+    task = rt.store().create(title='Existing action', area='work', undated=True, research=False, notes='slack:T1:C1:171.1:171.2')
+    before = task.path.read_bytes()
+    exact = next(u for u in units if integration.conversion.match(run, u)['kind'] == 'exact')
+    target = integration.conversion.match(run, exact)['targets'][0]
+    record = integration.record_decision(run, exact, decision=decision, reason='Verified against the full task.', session_id='parent',
+                                         target_task_id=target['task_id'], expected_revision=target['revision'],
+                                         useful_delta=decision == 'auto')
+    assert record.get('kind') == 'exact' and not record.get('failed')
+    for unit in units:
+        if unit != exact:
+            integration.record_decision(run, unit, decision='propose', reason='Independent untracked ask.', session_id='parent')
+    digest = integration.finalize(run, session_id='parent')
+    assert task.path.read_bytes() == before
+    assert 'not reviewed' not in digest['text'] and len(digest['items']) == 1
+    if decision == 'auto':
+        assert 'Existing action' in digest['text'] or digest['outcomes'][0]['status'] == 'not written (shadow run)'
+        assert digest['outcomes'][0]['status'] == 'not written (shadow run)' and not digest['outcomes'][0]['resume_action']
+    else:
+        assert digest['outcomes'] == []
