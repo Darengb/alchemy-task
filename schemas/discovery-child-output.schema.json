@@ -501,10 +501,24 @@
                   "exact",
                   "related_only"
                 ]
+              },
+              "confidence": {
+                "description": "Optional. How likely this task is the right destination: high, medium or low. List candidates most likely first.",
+                "enum": [
+                  "high",
+                  "medium",
+                  "low"
+                ]
               }
             }
           },
           "maxItems": 50
+        },
+        "recommended_task_path": {
+          "description": "Optional. Set only when one task in existing_task_candidates is clearly the right destination: its exact path. Omit otherwise.",
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9._-]*/)+[A-Za-z0-9][A-Za-z0-9._-]*\\.md$",
+          "maxLength": 4000
         },
         "new_information": {
           "type": "array",

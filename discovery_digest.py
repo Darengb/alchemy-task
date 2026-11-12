@@ -120,6 +120,28 @@ def _plural(n, one, many):
     return f'{n} {one if n == 1 else many}'
 
 
+
+def choice_line(ref, targets):
+    """Reply instructions for an existing-task proposal, numbered like the listed targets."""
+    if len(targets) <= 1:
+        return f'Reply "{ref}, update" to add this to the existing task, or "{ref}, create" for a separate task.'
+    picked = next((i for i, t in enumerate(targets, 1) if t.get('recommended')), None)
+    if picked:
+        others = [i for i in range(1, len(targets) + 1) if i != picked]
+        title = targets[picked - 1].get('title', 'Existing task')
+        if len(others) == 1:
+            rest = f'"{ref}, update {others[0]}" for the other task'
+        else:
+            rest = ' or '.join(f'"{ref}, update {i}"' for i in others) if len(others) == 2 else \
+                ', '.join(f'"{ref}, update {i}"' for i in others[:-1]) + f' or "{ref}, update {others[-1]}"'
+            rest += ' for another listed task'
+        return f'Reply "{ref}, update" to add this to "{title}", {rest}, or "{ref}, create" for a separate task.'
+    numbers = list(range(1, len(targets) + 1))
+    listed = ', '.join(f'"{ref}, update {i}"' for i in numbers[:-1]) + f' or "{ref}, update {numbers[-1]}"'
+    if len(numbers) == 2: listed = f'"{ref}, update 1" or "{ref}, update 2"'
+    return f'Reply {listed} to add this to that task, or "{ref}, create" for a separate task.'
+
+
 def render_digest(run, *, stream, day, numbered, already, failures, coverage, outcomes, deferred, blocked,
                   queued_count=0, follow_up_started=False, still_open=()):
     """The Telegram digest text. Short fields come from authored digest_* research
@@ -145,7 +167,13 @@ def render_digest(run, *, stream, day, numbered, already, failures, coverage, ou
         lines += [f"### {ref}. {item['title']}", '']
         if semantic:
             lines.append('**Task type:** Potential existing task update')
-            lines.append('**Existing task:** ' + '; '.join(t.get('title', 'Existing task') for t in item.get('targets', [])))
+            targets = item.get('targets', [])
+            if len(targets) > 1:
+                lines.append('**Existing tasks:**')
+                lines += [f"{i}. {t.get('title', 'Existing task')}" + (' (recommended)' if t.get('recommended') else '')
+                          for i, t in enumerate(targets, 1)]
+            else:
+                lines.append('**Existing task:** ' + '; '.join(t.get('title', 'Existing task') for t in targets))
         elif item.get('research_disposition') == 'uncertain':
             lines.append('**Task type:** Unsure')
         else:
@@ -162,8 +190,7 @@ def render_digest(run, *, stream, day, numbered, already, failures, coverage, ou
         action = digest_field(item, 'digest_next_action')
         if action: lines += ['**Next action:** ' + action, '']
         if semantic:
-            which = ' and name which existing task to add this to' if item['kind'] == 'selection' else ' to add this to the existing task'
-            lines += [f'**Choice:** Reply "{ref}, update"{which}, or "{ref}, create" for a separate task.', '']
+            lines += ['**Choice:** ' + choice_line(ref, item.get('targets', [])), '']
         for url in list(dict.fromkeys(item.get('source_links') or []))[:2]:
             lines.append(f'[{_link_label(url)} \u2192]({url})')
         if item.get('source_links'): lines.append('')

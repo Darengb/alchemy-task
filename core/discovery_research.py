@@ -16,7 +16,8 @@ RESEARCH_KEYS = {
     "sources_unavailable", "existing_task_candidates", "new_information", "errors",
     "represented_candidate_ids",
 }
-OPTIONAL_RESEARCH_KEYS = {"existing_task_already_current", "digest_current_state", "digest_next_action", "digest_addition"}
+OPTIONAL_RESEARCH_KEYS = {"existing_task_already_current", "digest_current_state", "digest_next_action", "digest_addition", "recommended_task_path"}
+CONFIDENCES = {"high", "medium", "low"}
 DIGEST_FIELD_CHARS = 300
 DISPOSITIONS = {"retain", "exclude_pure_chase", "exclude_resolved", "uncertain"}
 EXECUTIONS = {"hermes_independent", "user_collaboration_or_approval", "other_owner_or_access", "no_action"}
@@ -68,6 +69,12 @@ def validate_research(payload: Any, cid: str, expected_sources: list[str]) -> di
         for key in set(payload) & OPTIONAL_RESEARCH_KEYS:
             if key == "existing_task_already_current":
                 if type(payload[key]) is not bool: raise UserError(f"{key} must be a boolean")
+            elif key == "recommended_task_path":
+                if type(payload[key]) is not str or len(payload[key]) > MAX_STRING_CHARS: raise UserError(f"{key} must be a task path")
+                canonical_tasknote_relative_path(payload[key])
+                nominated = payload.get("existing_task_candidates")
+                if not isinstance(nominated, list) or payload[key] not in [x.get("path") for x in nominated if isinstance(x, dict)]:
+                    raise UserError("recommended_task_path must name one of existing_task_candidates")
             else:
                 _str(payload[key], key, limit=DIGEST_FIELD_CHARS)
         rest = validate_research({k: v for k, v in payload.items() if k not in OPTIONAL_RESEARCH_KEYS}, cid, expected_sources)
@@ -124,8 +131,9 @@ def validate_research(payload: Any, cid: str, expected_sources: list[str]) -> di
         raise UserError("invalid sources_consulted")
     existing = payload["existing_task_candidates"]
     if (not isinstance(existing, list) or len(existing) > MAX_ARRAY_ITEMS
-            or any(not isinstance(x, dict) or set(x) != {"path", "match_basis"}
+            or any(not isinstance(x, dict) or not {"path", "match_basis"} <= set(x) <= {"path", "match_basis", "confidence"}
                    or type(x["path"]) is not str or len(x["path"]) > MAX_STRING_CHARS
+                   or ("confidence" in x and (type(x["confidence"]) is not str or x["confidence"] not in CONFIDENCES))
                    or type(x["match_basis"]) is not str or x["match_basis"] not in {"exact", "related_only"} for x in existing)):
         raise UserError("invalid existing_task_candidates")
     for item in existing:

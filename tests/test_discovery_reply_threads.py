@@ -407,9 +407,9 @@ def test_selection_among_several_existing_tasks_asks_which_task_to_update(settin
     integration.record_decision(run, wid, decision='propose', reason='Two plausible tasks.', session_id='parent')
     digest = integration.finalize(run, session_id='parent')
     ref = digest['items'][0]['ref']
-    assert f'**Choice:** Reply "{ref}, update" and name which existing task to add this to' in digest['text']
-    existing = next(l for l in digest['text'].splitlines() if l.startswith('**Existing task:** '))
-    assert 'Plan the launch page' in existing and 'Plan the launch email' in existing
+    assert f'**Choice:** Reply "{ref}, update 1" or "{ref}, update 2" to add this to that task, or "{ref}, create" for a separate task.' in digest['text']
+    # One task per line, in research order.
+    assert '**Existing tasks:**\n1. Plan the launch page\n2. Plan the launch email\n' in digest['text']
 
 
 def test_completed_tasks_are_never_suggested_as_existing_task_updates(settings, data_dir, tmp_path):
