@@ -77,6 +77,23 @@ def _put_summary(fm, summary):
 
 
 
+def _norm(text):
+    return ' '.join(str(text).split()).casefold()
+
+
+def research_subtasks(research):
+    """The accepted research's optional subtasks, single-line and deduplicated."""
+    items = [' '.join(str(x).split()) for x in research.get('subtasks') or [] if isinstance(x, str)]
+    return list({_norm(x): x for x in items if x}.values())
+
+
+def _checkbox_texts(body):
+    """Normalized text of every checkbox line outside managed dossier blocks."""
+    tail_at = body.find('<!-- discovery-dossier:start ')
+    main = body[:tail_at] if tail_at >= 0 else body
+    return {_norm(m[1]) for m in re.finditer(r'^\s*[-*] \[[ xX]\] (.+)$', main, re.M)}
+
+
 CONFIDENCE_RANK = {'high': 0, 'medium': 1, 'low': 2}
 
 
@@ -411,8 +428,11 @@ class DiscoveryConversion:
                             raise UserError('correction decisions require decisions and open_questions lists')
                         value = {k: _bounded_strings(v, k, chars=4000) for k, v in value.items()}
                     active_research[key] = copy.deepcopy(value)
+            # Related asks the research grouped into this one proposal become unchecked subtasks.
+            proposed = research_subtasks(research)
+            fill_subtasks = subtasks if subtasks or before else (proposed or None)
             body, taken, fill_line = self._fill(fm, body, active_research, new=not before, summary=summary, notes=notes, plan=plan,
-                                     subtasks=subtasks, checklist=checklist, skipped=subtasks_skipped_reason)
+                                     subtasks=fill_subtasks, checklist=checklist, skipped=subtasks_skipped_reason)
             # Approved text the fill did not take is appended as before; nothing is ever dropped.
             plan_text = '\n'.join(plan) if isinstance(plan, list) else plan
             if notes and 'notes' in taken: notes = ''
@@ -426,6 +446,8 @@ class DiscoveryConversion:
                 body = self._append_section(body, 'Subtasks', '\n'.join('- [ ] ' + x for x in checklist))
             elif checklist and before:
                 body = self._append_section(body, 'Plan', '\n'.join('- [ ] ' + x for x in checklist))
+            missing = [x for x in proposed if _norm(x) not in _checkbox_texts(body)]
+            if missing: body = self._append_section(body, 'Subtasks', '\n'.join('- [ ] ' + x for x in missing))
             if fill_line: body = tf.append_log(body, fill_line, self.rt.settings.today())
             revision, block = render_discovery_dossier(active_research, dossier_id=dossier_id, candidate_source_ids=candidate['source_ids'])
             if active_research != research:
