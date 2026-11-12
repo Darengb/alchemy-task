@@ -709,7 +709,13 @@ class DiscoveryIntegration:
                                 'it freezes the %d item(s) still waiting from earlier runs, then research them.' % (run_id, waiting))}
 
     def _all_runs(self):
-        return [self.store.get_run(p.parent.name) for p in sorted((self.store.state_root / 'runs').glob('*/ledger.json'))]
+        runs = []
+        for p in sorted((self.store.state_root / 'runs').glob('*/ledger.json')):
+            try:
+                runs.append(self.store.get_run(p.parent.name))
+            except (UserError, OSError, ValueError):
+                continue  # a run removed or unreadable mid-listing is gone, never a reason to fail
+        return runs
 
     def start(self, stream, *, session_id, mode=None, pilot_limit=None, _distinct=False, _lineage=None):
         current = self._stream(stream)
@@ -736,7 +742,9 @@ class DiscoveryIntegration:
             woke = self._mark_scheduled_start(current, execution) if execution and _lineage is None else ''
             # A finalized digest is distinct from unresolved conversion/delivery.
             # Resume unfinished scan/research on its ORIGINAL window and config.
-            pending = [r for r in self._all_runs() if r['config'].get('stream_name', r['stream']) == current['name'] and r['config'].get('mode') == mode and not r.get('review')]
+            # A missing, pruned or abandoned run is gone: start fresh (the backlog stays) rather than fail.
+            pending = [r for r in self._all_runs() if r['config'].get('stream_name', r['stream']) == current['name'] and r['config'].get('mode') == mode
+                       and not r.get('review') and r.get('status') != 'abandoned']
             if pending and not _distinct:
                 run = pending[0]
                 if mode == 'production': self._mark_active(current['name'], run['run_id'])
