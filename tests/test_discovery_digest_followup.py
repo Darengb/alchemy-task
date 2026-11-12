@@ -75,3 +75,14 @@ def test_separate_asks_from_one_source_are_both_kept(tmp_path):
                           items=[_item('w_map', 'r2', 'Approve the map', MAIL), _item('w_other', 'r1', 'A third ask', MAIL)])
     # The same unit repeats; a different unit from a source known to hold several asks is new.
     assert [i['title'] for i in run2['items']] == ['A third ask']
+
+
+def test_coverage_lines_only_for_real_gaps():
+    from alchemy_task.discovery_digest import _source_problem
+    attested = {'source_key': 'mail', 'status': 'partial', 'verification': 'agent_attested', 'error': '', 'backlog_ids': ['b'], 'pages': []}
+    assert _source_problem(attested) is None
+    assert _source_problem({**attested, 'error': 'Agent-read partial coverage, not a verified structured binding.'}) is None
+    assert _source_problem({**attested, 'gaps': ['the search stopped at 500 results']}) == 'was only partly read: the search stopped at 500 results'
+    bounded = {'status': 'partial', 'verification': 'adapter_verified', 'error': 'bounded read pass; continuation retained', 'backlog_ids': ['b'], 'pages': [{}]}
+    assert _source_problem(bounded).startswith('was only partly read before the page limit')
+    assert _source_problem({'status': 'failed', 'error': 'x'}) == 'could not be read'

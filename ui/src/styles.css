@@ -1095,7 +1095,7 @@ html.at-dragging { -webkit-user-select: none; user-select: none; }
 .at-root:has(.at-composer.is-open) .at-toasts { top: 64px; bottom: auto; }
 
 /* Title: tap to edit, press and hold to copy for chat */
-.at-title-input.is-idle { cursor: text; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+.at-title-input.is-idle { cursor: text; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .at-title-input { transition: background .2s, box-shadow .2s, transform .2s var(--at-ease); }
 .at-title-input.is-armed { background: var(--at-accent-tint); box-shadow: 0 0 0 6px var(--at-accent-tint), 0 0 24px rgba(60, 70, 255, .35); transform: scale(.985); }
 

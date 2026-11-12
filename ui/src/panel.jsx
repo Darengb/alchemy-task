@@ -324,6 +324,7 @@ function TitleField({ value, done, onSave, onHold, onLongPress, copied }) {
   const [armed, setArmed] = React.useState(false)
   const ref = React.useRef(null)
   const press = React.useRef(null)
+  const pointer = React.useRef('')
   React.useEffect(() => setV(value), [value])
   React.useLayoutEffect(() => {
     const el = ref.current
@@ -337,6 +338,7 @@ function TitleField({ value, done, onSave, onHold, onLongPress, copied }) {
     setArmed(false)
   }
   const down = (e) => {
+    pointer.current = e.pointerType
     if (editing || (e.pointerType === 'mouse' && e.button !== 0)) return
     const p = { x: e.clientX, y: e.clientY, armed: false, timer: 0 }
     p.timer = setTimeout(() => { p.armed = true; setArmed(true); onHold() }, 450)
@@ -364,15 +366,13 @@ function TitleField({ value, done, onSave, onHold, onLongPress, copied }) {
   const click = (e) => {
     if (press.current && press.current.swallowClick) { press.current = null; e.preventDefault(); return }
     if (editing) return
-    const el = e.currentTarget
-    el.readOnly = false
-    el.focus()
+    e.currentTarget.focus()
     setEditing(true)
   }
   return (
     <div className="at-title-wrap">
     <textarea ref={ref} rows={1} className={cx('at-title-input', done && 'is-done', armed && 'is-armed', !editing && 'is-idle')}
-              value={v} aria-label="Title" readOnly={!editing}
+              value={v} aria-label="Title"
               title={editing ? undefined : 'Tap to edit. Press and hold to copy for chat.'}
               onChange={(e) => setV(e.target.value)}
               onFocus={() => { if (!editing && !press.current) setEditing(true) }}
@@ -380,6 +380,7 @@ function TitleField({ value, done, onSave, onHold, onLongPress, copied }) {
               onPointerDown={down} onPointerMove={move} onPointerUp={release} onPointerCancel={pointerCancel}
               onTouchEnd={(e) => { if (press.current && press.current.armed) release(e) }}
               onClick={click}
+              onMouseDown={(e) => { if (!editing && pointer.current === 'mouse') e.preventDefault() }}
               onContextMenu={(e) => { if (!editing) e.preventDefault() }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() }
