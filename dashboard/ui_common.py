@@ -2,7 +2,8 @@
 
 The dashboard (and the desktop app through ``ctx.rest``) imports ``plugin_api.py`` by file path, so these
 modules run inside a private copy of the plugin package. They never rely on the model-side runtime binding:
-each request builds a fresh Runtime for the profile the host resolved for that request.
+each request builds a fresh Runtime for the profile the host resolved for that request. The routes rely on
+the dashboard's own auth: Hermes admits a request before it reaches a plugin route.
 """
 from __future__ import annotations
 
@@ -27,16 +28,60 @@ class UIError(Exception):
         self.code, self.message, self.status = code, message, status
 
 
-class _HostContext:
-    """The public PluginContext for this profile, plus ``dispatch_tool`` through the tool registry (the
-    discovery code updates and runs its cron job that way). A dashboard request has no agent attached."""
+class HostContext:
+    """The plugin context a dashboard request needs, built only from Hermes's published plugin APIs.
 
-    def __init__(self) -> None:
-        from hermes_cli.plugins import PluginContext, PluginManifest
-        self._ctx = PluginContext(PluginManifest(name=PLUGIN), manager=None)
+    A dashboard request has no PluginContext of its own, so this facade supplies the four things the
+    plugin's Runtime and discovery code use: ``state`` (``PluginState``), ``get_config``/``set_config``
+    (``plugins.entries.alchemy-task.settings`` through ``hermes_cli.config``), ``dispatch_tool`` (the
+    public ``tools.registry``; the settings page reads and runs its cron jobs that way) and
+    ``profile_name``. Everything resolves the profile home the host bound for this request.
+    """
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._ctx, name)
+    @staticmethod
+    def current_cron_execution() -> None:
+        return None  # a dashboard request is never a cron run
+
+    @property
+    def state(self) -> Any:
+        from hermes_cli.plugins_state import PluginState
+        return PluginState(PLUGIN)
+
+    @property
+    def profile_name(self) -> str:
+        from hermes_constants import get_hermes_home, profile_name_for_home
+        return profile_name_for_home(get_hermes_home()) or "custom"
+
+    @staticmethod
+    def _segments(key: str) -> list[str]:
+        parts = str(key).split(".")
+        if not key or any(not p or p.startswith("_") for p in parts):
+            raise ValueError(f"Invalid setting key: {key!r}")
+        return parts
+
+    def get_config(self, key: str, default: Any = None) -> Any:
+        from hermes_cli.config import load_config_readonly
+        entry = (((load_config_readonly() or {}).get("plugins") or {}).get("entries") or {}).get(PLUGIN)
+        if not isinstance(entry, dict):
+            return default
+        missing = object()
+        for subtree in ("settings", "config"):  # ``config`` is the legacy subtree PluginContext also reads
+            node: Any = entry.get(subtree)
+            for part in self._segments(key):
+                node = node.get(part, missing) if isinstance(node, dict) else missing
+            if node is not missing:
+                return node
+        return default
+
+    def set_config(self, key: str, value: Any) -> None:
+        from hermes_cli import config as hconfig
+        if hconfig.is_managed():
+            raise PermissionError("Plugin settings cannot be changed in a managed install")
+        path = ("plugins", "entries", PLUGIN, "settings", *self._segments(key))
+        partial: Any = value
+        for part in reversed(path):
+            partial = {part: partial}
+        hconfig.save_config(partial, preserve_keys={path}, merge_existing=True)
 
     def dispatch_tool(self, tool_name: str, args: dict, **kwargs: Any) -> Any:
         from tools.registry import discover_builtin_tools, registry
@@ -46,13 +91,7 @@ class _HostContext:
 
 
 def runtime() -> Runtime:
-    return Runtime(_HostContext())
-
-
-def admit(request: Request) -> None:
-    """Same guard the dashboard uses for its own sensitive routes (session, loopback token, native grant)."""
-    from hermes_cli.web_deps import late
-    late("_require_token")(request)
+    return Runtime(HostContext())
 
 
 def error_response(exc: BaseException) -> JSONResponse:
@@ -79,10 +118,9 @@ def error_response(exc: BaseException) -> JSONResponse:
 
 
 async def handle(request: Request, fn: Callable[..., Any], allowed: set[str] | None = None) -> Any:
-    """Admit the caller, parse the JSON body (when ``allowed`` names its fields), run the blocking work off
+    """Parse the JSON body (when ``allowed`` names its fields), run the blocking work off
     the event loop, and map every failure to ``{ok: false, error: {code, message}}``."""
     try:
-        admit(request)
         if allowed is None:
             return await asyncio.to_thread(fn)
         body = await body_of(request, allowed)

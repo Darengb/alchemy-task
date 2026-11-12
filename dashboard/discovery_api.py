@@ -1,4 +1,5 @@
-"""Discovery HTTP routes. Only trusted host admission grants profile-owner access.
+"""Discovery HTTP routes. They rely on the dashboard's own auth: Hermes admits a request
+before it reaches a plugin route.
 
 Do not import this module from model tools or accept caller/profile authority in
 payloads. The host mount binds get_hermes_home for each request, including IPC.
@@ -27,9 +28,8 @@ def _service():
     # Public context/state/config facades resolve the host's task-local profile.
     # A fresh Runtime/Integration avoids the model runtime's import-cached _ctx.
     from hermes_constants import get_hermes_home
-    from hermes_cli.plugins import PluginContext, PluginManifest
-    ctx = PluginContext(PluginManifest(name='alchemy-task'), manager=None)
-    return DiscoveryIntegration(Runtime(ctx), profile_home=get_hermes_home())
+    from .ui_common import HostContext
+    return DiscoveryIntegration(Runtime(HostContext()), profile_home=get_hermes_home())
 
 
 class APIError(UserError):
@@ -59,20 +59,11 @@ def _error(exc):
     return JSONResponse({'ok': False, 'error': {'code': code, 'message': message}}, status_code=status)
 
 
-def _admit(request):
-    # Canonical sensitive-route guard includes browser session, loopback token,
-    # native owner grant, and private IPC admission. Never trust HTTP headers
-    # claiming hosted admission or a boolean sent by the client.
-    from hermes_cli.web_deps import late
-    late('_require_token')(request)
-
-
 def _serving_profile(name):
     # The host SPA adds ?profile=<serving profile> to every plugin request. It
     # carries no authority; accept it only when it names this request's home.
-    from hermes_constants import get_hermes_home
-    from hermes_cli.profiles import profile_matches_home
-    return bool(name) and profile_matches_home(name, get_hermes_home())
+    from hermes_constants import get_hermes_home, profile_name_for_home
+    return bool(name) and profile_name_for_home(get_hermes_home()) == name
 
 
 def _query(request, allowed=()):
@@ -114,7 +105,6 @@ def _production(ledger):
 @router.get('/settings/approvals')
 async def settings(request: Request):
     try:
-        _admit(request)
         _query(request)
         return await asyncio.to_thread(lambda: {'ok': True, 'approvals': _service().approval_settings()})
     except (UserError, HTTPException, ValueError, KeyError, TypeError, OSError) as exc:
@@ -124,7 +114,6 @@ async def settings(request: Request):
 @router.post('/settings/approvals')
 async def update_settings(request: Request):
     try:
-        _admit(request)
         _query(request)
         body = await request.json()
         if not isinstance(body, dict) or set(body) != {'approvals', 'user_approved'} or not isinstance(body['approvals'], dict):
@@ -140,7 +129,6 @@ async def update_settings(request: Request):
 @router.get('/runs')
 async def runs(request: Request):
     try:
-        _admit(request)
         _query(request, {'stream', 'day_from', 'day_to'})
         query = dict(request.query_params)
         for key in ('day_from', 'day_to'):
@@ -160,7 +148,6 @@ async def runs(request: Request):
 @router.get('/runs/{run_id}')
 async def run(request: Request, run_id: str):
     try:
-        _admit(request)
         _query(request)
         def work():
             service = _service()
@@ -184,7 +171,6 @@ async def _body(request, *, approve=False):
 @router.post('/proposals/{proposal_id}/approve')
 async def approve(request: Request, proposal_id: str):
     try:
-        _admit(request)
         _query(request)
         body = await _body(request, approve=True)
         def work():
@@ -214,7 +200,6 @@ async def approve(request: Request, proposal_id: str):
 @router.post('/proposals/{proposal_id}/dismiss')
 async def dismiss(request: Request, proposal_id: str):
     try:
-        _admit(request)
         _query(request)
         await _body(request)
         def work():
@@ -232,7 +217,6 @@ async def dismiss(request: Request, proposal_id: str):
 @router.post('/runs/{run_id}/units/{unit_id}/resume')
 async def resume(request: Request, run_id: str, unit_id: str):
     try:
-        _admit(request)
         _query(request)
         await _body(request)
         def work():
