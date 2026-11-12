@@ -1549,7 +1549,8 @@ class DiscoveryStore:
             # still has backlog selected for it in progress is kept for it.
             selected_by = {x.get('lineage', {}).get('run_id') for p in (self.state_root / 'sources').glob('*.json') for x in read_json(p, {}).get('backlog', []) if x.get('status') == 'selected'}
             for path in sorted((self.state_root / 'runs').iterdir()):
-                if not path.is_dir():
+                # A folder without a ledger (a late writer after the run was archived) is not a run.
+                if not path.is_dir() or not (path / 'ledger.json').is_file():
                     continue
                 with self._lock(self._run_lock_name(path.name)):
                     ledger = self._load(path.name)
