@@ -28,9 +28,9 @@ def test_queued_items_are_one_line_and_only_real_problems_need_attention(tmp_pat
     assert 'Feed could not be read' in text
     assert '**3 need attention**' in text and '\u2014' not in text
     one = digest.prepare('run2', stream='mbg', day='2026-11-12', origin=ORIGIN, items=[], deferred=deferred[:1])['text']
-    assert '**Still researching:** 1 item is queued for the next run.' in one and '**0 need attention**' in one
+    assert '**Still researching:** 1 item is queued for the next scheduled run.' in one and '**0 need attention**' in one
     given = digest.prepare('run3', stream='mbg', day='2026-11-13', origin=ORIGIN, items=[], deferred=deferred, queued_count=4)['text']
-    assert '**Still researching:** 4 items are queued for the next run.' in given
+    assert '**Still researching:** 4 items are queued for the next scheduled run.' in given
 
 
 def test_open_proposal_from_same_source_is_not_numbered_again(tmp_path):

@@ -396,7 +396,8 @@ def test_cap_deferral_is_a_separate_digest_line_and_stays_queued_for_the_next_ru
     assert '**1 follow-up** · **0 need attention**' in digest['text']
     assert not [l for l in lines if l.startswith('**Needs attention:**')]
     # Deferred work is one count line, not listed by title.
-    assert [l for l in lines if l.startswith('**Still researching:**')] == ['**Still researching:** 1 item is queued for the next run.'], digest['text']
+    # The digest says why the item waits: the stream's daily research cap.
+    assert [l for l in lines if l.startswith('**Still researching:**')] == ['**Still researching:** 1 item is waiting for tomorrow (daily limit reached).'], digest['text']
     assert 'Plan vendor renewal' not in digest['text']
     assert '**Coverage:**' not in digest['text']
     backlog = {e['candidate']['title']: e['status'] for e in integration.store.source_state('work', 'feed')['backlog']}
@@ -411,7 +412,7 @@ def test_cap_deferral_is_a_separate_digest_line_and_stays_queued_for_the_next_ru
     run2, report2, digest2 = day()
     assert run2 != run and [integration.store.get_candidate(run2, c)['title'] for c in report2['budget_deferred']] == ['Plan vendor renewal']
     assert 'No new follow-ups found.' not in digest2['text'] and 'degraded' not in digest2['text']
-    assert [l for l in digest2['text'].splitlines() if l.startswith('**Still researching:**')] == ['**Still researching:** 1 item is queued for the next run.'], digest2['text']
+    assert [l for l in digest2['text'].splitlines() if l.startswith('**Still researching:**')] == ['**Still researching:** 1 item is waiting for tomorrow (daily limit reached).'], digest2['text']
     assert {e['candidate']['title']: e['status'] for e in integration.store.source_state('work', 'feed')['backlog']}['Plan vendor renewal'] == 'deferred'
 
 

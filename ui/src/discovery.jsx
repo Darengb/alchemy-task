@@ -482,6 +482,7 @@ function ProposalCard({ p, run, reload, readOnly }) {
   const state = digestField(p, 'digest_current_state')
   const next = digestField(p, 'digest_next_action')
   const full = fullResearch(p)
+  const subtasks = [].concat(p.subtasks || []).filter((x) => typeof x === 'string' && x.trim())
   const links = [].concat(p.source_links || []).filter(Boolean)
   const uncertain = p.research_disposition === 'uncertain'
   return (
@@ -494,6 +495,12 @@ function ProposalCard({ p, run, reload, readOnly }) {
       {state ? <p className="at-prop-text">{state}</p> : null}
       {next ? (
         <div className="at-prop-next"><span className="at-prop-label">Next</span><span>{next}</span></div>
+      ) : null}
+      {subtasks.length ? (
+        <ul className="at-prop-subtasks" style={{ margin: '6px 0 0 40px', paddingLeft: 18, fontSize: 13, lineHeight: 1.5, color: 'var(--at-fg2)' }}>
+          {subtasks.slice(0, 5).map((x, i) => <li key={i}>{x}</li>)}
+          {subtasks.length > 5 ? <li className="at-muted">+{subtasks.length - 5} more</li> : null}
+        </ul>
       ) : null}
       {uncertain ? (
         <div className="at-prop-uncertain"><Icon name="alert" size={14} />

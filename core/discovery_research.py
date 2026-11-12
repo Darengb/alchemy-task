@@ -16,7 +16,8 @@ RESEARCH_KEYS = {
     "sources_unavailable", "existing_task_candidates", "new_information", "errors",
     "represented_candidate_ids",
 }
-OPTIONAL_RESEARCH_KEYS = {"existing_task_already_current", "digest_current_state", "digest_next_action", "digest_addition", "recommended_task_path"}
+OPTIONAL_RESEARCH_KEYS = {"existing_task_already_current", "digest_current_state", "digest_next_action", "digest_addition", "recommended_task_path", "subtasks"}
+MAX_SUBTASKS, SUBTASK_CHARS = 8, 140
 CONFIDENCES = {"high", "medium", "low"}
 DIGEST_FIELD_CHARS = 300
 DISPOSITIONS = {"retain", "exclude_pure_chase", "exclude_resolved", "uncertain"}
@@ -69,6 +70,11 @@ def validate_research(payload: Any, cid: str, expected_sources: list[str]) -> di
         for key in set(payload) & OPTIONAL_RESEARCH_KEYS:
             if key == "existing_task_already_current":
                 if type(payload[key]) is not bool: raise UserError(f"{key} must be a boolean")
+            elif key == "subtasks":
+                value = payload[key]
+                if (not isinstance(value, list) or len(value) > MAX_SUBTASKS
+                        or any(type(x) is not str or not x.strip() or len(x) > SUBTASK_CHARS for x in value)):
+                    raise UserError(f"subtasks must be up to {MAX_SUBTASKS} short steps of at most {SUBTASK_CHARS} characters")
             elif key == "recommended_task_path":
                 if type(payload[key]) is not str or len(payload[key]) > MAX_STRING_CHARS: raise UserError(f"{key} must be a task path")
                 canonical_tasknote_relative_path(payload[key])
@@ -338,3 +344,56 @@ def validate_bundle(bundle: Any, cid: str, expected_sources: list[Any], *, other
         seen_ids.add(wid)
         seen_decisive_sets.append((canonical, action_id))
     return valid_units
+
+
+MAX_PREVIOUS_RUNS = 40
+
+
+def _safe_ids(values: Any) -> list[str]:
+    out = []
+    for x in values if isinstance(values, list) else []:
+        try:
+            out.append(canonical_source_id(x))
+        except (UserError, TypeError, ValueError):
+            continue
+    return out[:MAX_SOURCE_IDS]
+
+
+def previous_research(store: Any, run_id: str, candidate: dict[str, Any], *, limit: int = 4) -> list[dict[str, Any]]:
+    """Accepted workstreams from earlier runs over the same conversation, newest run first, read-only.
+
+    Matches a parent candidate whose canonical source ids equal this candidate's. Only short fields
+    are returned so the child can keep titles and the split stable; full research stays in its run."""
+    wanted = sorted(set(candidate.get('source_ids') or []))
+    runs_dir = Path(store.state_root) / 'runs'
+    if not wanted or not runs_dir.is_dir():
+        return []
+    dirs = sorted((d for d in runs_dir.iterdir() if d.name != run_id and (d / 'ledger.json').is_file()),
+                  key=lambda d: (d / 'ledger.json').stat().st_mtime, reverse=True)[:MAX_PREVIOUS_RUNS]
+    for folder in dirs:
+        try:
+            ledger = json.loads((folder / 'ledger.json').read_text())
+        except (OSError, ValueError):
+            continue
+        for old in ledger.get('candidates') or []:
+            if old.get('parent_candidate_id') or sorted(set(old.get('source_ids') or [])) != wanted:
+                continue
+            marker = folder / 'research' / (str(old.get('candidate_id')) + '.bundle.json')
+            if old.get('decomposition_state') != 'complete' or not marker.is_file():
+                continue
+            out = []
+            for wid in (old.get('workstream_ids') or [])[:limit]:
+                try:
+                    unit = json.loads((folder / 'research' / (wid + '.json')).read_text())
+                except (OSError, ValueError):
+                    continue
+                if not isinstance(unit, dict):
+                    continue
+                out.append({'run_id': folder.name, 'title': str(unit.get('title', ''))[:MAX_TITLE_CHARS],
+                            'disposition': unit.get('disposition'),
+                            'next_action': str(unit.get('digest_next_action') or unit.get('substantive_next_action') or '')[:DIGEST_FIELD_CHARS],
+                            'subtasks': [str(x)[:SUBTASK_CHARS] for x in (unit.get('subtasks') or [])][:MAX_SUBTASKS],
+                            'decisive_source_ids': _safe_ids(unit.get('exact_source_ids'))})
+            if out:
+                return out
+    return []

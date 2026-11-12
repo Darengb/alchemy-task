@@ -142,8 +142,32 @@ def choice_line(ref, targets):
     return f'Reply {listed} to add this to that task, or "{ref}, create" for a separate task.'
 
 
+SUBTASKS_SHOWN = 5
+
+
+def subtask_lines(items, shown=SUBTASKS_SHOWN):
+    """A short bulleted list of a proposal's subtasks: the first few, then '+N more'."""
+    items = [' '.join(str(x).split()) for x in items or [] if str(x).strip()]
+    lines = ['- ' + x for x in items[:shown]]
+    if len(items) > shown: lines.append(f'- +{len(items) - shown} more')
+    return lines
+
+
+def _also_line(repeat):
+    """One compact line: an earlier open proposal gets this run's new step and subtasks."""
+    step = first_sentence(repeat.get('next_action') or '')
+    subtasks = [x for x in repeat.get('new_subtasks') or [] if x]
+    if not step and not subtasks: return ''
+    text = step.rstrip('.') if step else ''
+    if subtasks:
+        more = '; '.join(subtasks[:3]) + (f' (+{len(subtasks) - 3} more)' if len(subtasks) > 3 else '')
+        text = (text + '; also: ' + more) if text else more
+    if len(text) > 200: text = text[:200].rsplit(' ', 1)[0].rstrip(' ,;:') + ' ...'
+    return f"{repeat['earlier_ref']} gets a new step: {text}"
+
+
 def render_digest(run, *, stream, day, numbered, already, failures, coverage, outcomes, deferred, blocked,
-                  queued_count=0, follow_up_started=False, still_open=()):
+                  queued_count=0, follow_up_started=False, still_open=(), queued_reason='', also=()):
     """The Telegram digest text. Short fields come from authored digest_* research
     fields (first-sentence fallback); the stored items keep the full research."""
     date = dt.date.fromisoformat(day)
@@ -189,6 +213,7 @@ def render_digest(run, *, stream, day, numbered, already, failures, coverage, ou
             if addition: lines += ['**Proposed addition:** ' + addition, '']
         action = digest_field(item, 'digest_next_action')
         if action: lines += ['**Next action:** ' + action, '']
+        if item.get('subtasks'): lines += [*subtask_lines(item['subtasks']), '']
         if semantic:
             lines += ['**Choice:** ' + choice_line(ref, item.get('targets', [])), '']
         for url in list(dict.fromkeys(item.get('source_links') or []))[:2]:
@@ -215,13 +240,23 @@ def render_digest(run, *, stream, day, numbered, already, failures, coverage, ou
         # Multiple exact matches are an unnumbered blocked existing-task item.
         footer.append(f"**Existing task update blocked:** {conflict['title']}: multiple exact task matches conflict; nothing was changed"
                       + (' (' + '; '.join(t.get('title', 'Existing task') for t in conflict.get('targets', [])) + ')' if conflict.get('targets') else ''))
-    if still_open:
+    also_lines = [(r['earlier_proposal_id'], _also_line(r)) for r in also]
+    also_lines = [(pid, line) for pid, line in also_lines if line]
+    listed = {pid for pid, _ in also_lines}
+    open_rest = [o for o in still_open if o.get('proposal_id') not in listed]
+    if open_rest:
         footer.append('**Still open from earlier:** ' + ' · '.join(
-            f"{o['ref']}{' from ' + _day_label(o['day']) if o.get('day') and o['day'] != day else ''} ({_short_title(o['title'])})" for o in still_open))
+            f"{o['ref']}{' from ' + _day_label(o['day']) if o.get('day') and o['day'] != day else ''} ({_short_title(o['title'])})" for o in open_rest))
+    for _, line in also_lines:
+        footer.append('**Also from an earlier thread:** ' + line)
     if queued:
         verb = 'is' if queued == 1 else 'are'
-        tail = ', which is starting now.' if follow_up_started else '.'
-        footer.append(f"**Still researching:** {_plural(queued, 'item', 'items')} {verb} queued for the next run{tail}")
+        if queued_reason == 'daily_cap':
+            footer.append(f"**Still researching:** {_plural(queued, 'item', 'items')} {verb} waiting for tomorrow (daily limit reached).")
+        elif follow_up_started:
+            footer.append(f"**Still researching:** {_plural(queued, 'item', 'items')} {verb} queued for the next run, which is starting now.")
+        else:
+            footer.append(f"**Still researching:** {_plural(queued, 'item', 'items')} {verb} queued for the next scheduled run.")
     # One compact paragraph so attention notes never push the proposals out of view.
     notes = [(str(f['title']) + ': ' if f.get('title') else '') + _failure_status(f) for f in attention_failures]
     notes += [f'{_source_name(source)} {problem}' for source, problem in source_problems]
@@ -266,14 +301,20 @@ def _typed_keys(source):
     return ident, None
 
 
-def decisive_sources(item):
-    """Stable decisive source keys of a proposal: typed exact ids when present, else the primary link.
+_CONVERSATION_PREFIXES = ('slack:', 'mail:')
 
-    Returns (conversation keys, message keys). Supporting links (files, docs) are not decisive."""
+
+def decisive_sources(item):
+    """Stable decisive source keys of a proposal: typed exact ids plus every conversation link.
+
+    Every source link that names a conversation (a chat thread or an email thread) counts, in any
+    order; the primary link counts whatever it is. Returns (conversation keys, message keys).
+    Other supporting links (files, docs) are not decisive."""
     typed = item.get('exact_source_ids') or item.get('source_ids') or []
     pairs = [_typed_keys(x) for x in typed]
-    if not any(c for c, _ in pairs):
-        pairs = [_link_keys(url) for url in (item.get('source_links') or [])[:1]]
+    links = [_link_keys(url) for url in item.get('source_links') or []]
+    pairs += [pair for i, pair in enumerate(links) if i == 0 and not any(c for c, _ in pairs)
+              or (pair[0] or '').startswith(_CONVERSATION_PREFIXES)]
     return {c for c, _ in pairs if c}, {m for _, m in pairs if m}
 
 
@@ -310,7 +351,7 @@ class DiscoveryDigest:
         return read_json(self.path, {'digests': {}, 'proposals': {}, 'numbers': {}, 'seen': {}, 'delivery': {}})
 
     def prepare(self, run, *, stream, day, origin, items, failures=None, coverage=None, outcomes=None, label='', review_namespace='',
-                deferred=None, blocked=None, queued_count=0, follow_up_started=False):
+                deferred=None, blocked=None, queued_count=0, follow_up_started=False, queued_reason=''):
         dt.date.fromisoformat(day)
         if not origin.get('session_id'):
             raise UserError('digest requires actual origin session')
@@ -320,7 +361,8 @@ class DiscoveryDigest:
                 return data['digests'][run]
             numbered = []
             key = origin['session_id'] + ':' + day
-            already, still_open, repeats = [], [], []
+            already, still_open, repeats, also = [], [], [], []
+            items = [self._with_subtasks(run, raw) for raw in items]
             # Several units from one decisive source are separate asks: only their own unit repeats them.
             counts = {}
             for raw in items:
@@ -351,6 +393,14 @@ class DiscoveryDigest:
                                     'earlier_proposal_id': pid, 'earlier_ref': b['ref'], 'earlier_day': b['day'], 'earlier_state': state})
                     if state == 'pending' and pid not in {o['proposal_id'] for o in still_open}:
                         still_open.append({'proposal_id': pid, 'ref': b['ref'], 'day': b['day'], 'title': b['title']})
+                    if state == 'pending' and pid not in {a['earlier_proposal_id'] for a in also}:
+                        # The earlier proposal stays the place to reply; this run's new step is listed compactly.
+                        step = digest_field(raw, 'digest_next_action')
+                        known = {' '.join(str(x).split()).casefold() for x in b.get('subtasks') or []}
+                        fresh = [x for x in raw.get('subtasks') or [] if ' '.join(str(x).split()).casefold() not in known]
+                        if step and step == digest_field(b, 'digest_next_action'): step = ''
+                        if step or fresh:
+                            also.append({'earlier_proposal_id': pid, 'earlier_ref': b['ref'], 'next_action': step, 'new_subtasks': fresh})
                     data['seen'][identity] = pid
                     continue
                 num = data['numbers'].get(key, 0) + 1
@@ -365,16 +415,28 @@ class DiscoveryDigest:
             failures, coverage, deferred, blocked = failures or [], coverage or [], deferred or [], blocked or []
             text = render_digest(run, stream=stream, day=day, numbered=numbered, already=already, failures=failures,
                                  coverage=coverage, outcomes=outcomes or [], deferred=deferred, blocked=blocked,
-                                 queued_count=queued_count, follow_up_started=follow_up_started, still_open=still_open)
+                                 queued_count=queued_count, follow_up_started=follow_up_started, still_open=still_open,
+                                 queued_reason=queued_reason, also=also)
             result = {'run_id': run, 'stream': stream, 'day': day, 'prepared_at': dt.datetime.now(dt.timezone.utc).isoformat(), 'origin': origin, 'items': numbered,
                       'failures': failures, 'deferred': deferred, 'coverage': coverage, 'outcomes': outcomes or [], 'blocked': blocked,
                       'already_current': already, 'still_open': still_open, 'repeats': repeats,
-                      'queued_count': queued_count, 'follow_up_started': follow_up_started, 'text': text}
+                      'queued_count': queued_count, 'follow_up_started': follow_up_started, 'queued_reason': queued_reason,
+                      'also_from_earlier': also, 'text': text}
             result['sha256'] = hashlib.sha256(result['text'].encode()).hexdigest()
             data['digests'][run] = result
             data['delivery'][run] = {'state': 'prepared', 'digest_sha256': result['sha256'], 'origin': origin}
             atomic_json(self.path, data)
             return result
+
+    def _with_subtasks(self, run, raw):
+        """The proposal with its research subtasks; older decision records do not copy them."""
+        if 'subtasks' in raw or not raw.get('unit_id'): return raw
+        try:
+            research = self.store.research_for(raw.get('run_id') or run, raw['unit_id'])
+        except (UserError, OSError, ValueError, KeyError, TypeError):
+            return raw
+        items = [x for x in (research or {}).get('subtasks') or [] if isinstance(x, str) and x.strip()]
+        return {**raw, 'subtasks': items} if items else raw
 
     def get(self, run):
         try:
