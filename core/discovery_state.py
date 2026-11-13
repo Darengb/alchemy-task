@@ -1708,6 +1708,70 @@ class DiscoveryStore:
                 atomic_json(digest_path, digest_data)
         return {'deleted_runs': deleted, 'retained_runs': retained, 'days': days}
 
+    def retire_stream(self, stream_name: str, *, storage_streams: list[str] | None = None, source_keys: list[str] | None = None) -> dict[str, Any]:
+        """Retire every run, pending proposal, backlog and budget of one removed stream.
+
+        Runs become readable tombstones (``pruned_reason`` 'stream removed') and leave the
+        run list; pending proposals are dismissed with reason 'stream removed' and stay in the
+        digest ledger for audit. Only runs whose ``config.stream_name`` (or, for runs without
+        one, storage stream) equals ``stream_name`` are touched. Source backlog and budget
+        files are cleared only for storage names no remaining run of another stream uses.
+        """
+        name = _str(stream_name, 'stream name', allow_empty=False, limit=200)
+        removed, storages, dates, keys = [], set(storage_streams or []), set(), set(source_keys or [])
+        kept_storages = set()
+        with self._lock('retention'), self._lock('digest-ledger'):
+            for path in sorted((self.state_root / 'runs').iterdir()):
+                if not path.is_dir() or not (path / 'ledger.json').is_file():
+                    continue
+                with self._lock(self._run_lock_name(path.name)):
+                    try:
+                        ledger = self._load(path.name)
+                    except (UserError, OSError, ValueError):
+                        continue
+                    if (ledger.get('config') or {}).get('stream_name', ledger.get('stream')) != name:
+                        kept_storages.add(ledger.get('stream'))
+                        continue
+                    storages.add(ledger.get('stream'))
+                    dates.add(ledger.get('business_date'))
+                    keys.update(c['source_key'] for c in (ledger.get('config') or {}).get('sources', [])
+                                if isinstance(c, dict) and isinstance(c.get('source_key'), str))
+                    tombstone = {**ledger, 'pruned_at': now(), 'pruned_reason': 'stream removed', 'removed_stream': name}
+                    atomic_json(self.state_root / 'tombstones' / (path.name + '.json'), tombstone)
+                    shutil.rmtree(path)
+                    removed.append(path.name)
+            if removed:
+                dirfd = os.open(self.state_root / 'runs', os.O_RDONLY)
+                try:
+                    os.fsync(dirfd)
+                finally:
+                    os.close(dirfd)
+                with self._lock('hook-index:open'):
+                    index = read_json(self._open_index_path(), {})
+                    if any(r in index for r in removed):
+                        atomic_json(self._open_index_path(), {k: v for k, v in index.items() if k not in removed})
+            digest_path = self.state_root / 'digest-ledger.json'
+            dismissed = []
+            if digest_path.exists():
+                data = read_json(digest_path, {})
+                for pid, proposal in (data.get('proposals') or {}).items():
+                    binding = proposal.get('binding') or {}
+                    if proposal.get('state') == 'pending' and (binding.get('run_id') in removed or binding.get('stream') == name):
+                        proposal['state'] = 'dismissed'
+                        proposal['dismissed_reason'] = 'stream removed'
+                        dismissed.append(pid)
+                if dismissed:
+                    atomic_json(digest_path, data)
+        cleared = []
+        for storage in sorted(s for s in storages - kept_storages if isinstance(s, str) and s):
+            files = [self._source_path(storage, key) for key in sorted(keys)]
+            files += [self.state_root / 'budgets' / (_hash(f'{storage}:{day}'.encode()) + '.json') for day in sorted(d for d in dates if d)]
+            for file in files:
+                if file.is_file():
+                    file.unlink()
+                    cleared.append(file.name)
+        return {'removed_runs': removed, 'dismissed_proposals': dismissed, 'cleared_files': cleared}
+
     def quarantine(self, run_id: str, token: str, *, caller: dict[str, Any], payload: Any) -> dict[str, Any]:
         """Save early callback audit, never silently associate or accept it."""
         with self._lock(self._run_lock_name(run_id)):

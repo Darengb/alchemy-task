@@ -273,13 +273,59 @@ def test_removing_a_stream_keeps_bare_replies_and_run_list_working_for_the_other
     _finalized(integration, data_dir, stream='home', origin_session='parent', title='Ask 0')
     discovery.remove_stream(rt, 'home')
     assert ctx.state.get('streams')['work']['label'] == ''
-    assert len(integration.backend(session_id='parent')['runs']) == 2
+    # The removed stream's run leaves the run list; the other stream's run stays.
+    assert [r['stream'] for r in integration.backend(session_id='parent')['runs']] == ['work']
     before = task_files(settings)
     result = integration.decide({'approve': ['W1'], 'edits': {'W1': {'area': 'work', 'undated': True}}},
                                 session_id='parent', today='2030-01-02')
     assert result['results'][0]['state'] == 'complete'
     assert len(set(task_files(settings)) - set(before)) == 1
     assert integration.digest._load()['proposals'][work['items'][0]['proposal_id']]['state'] == 'complete'
+
+
+def test_removing_a_stream_retires_its_runs_proposals_and_backlog_only(settings, data_dir, tmp_path, monkeypatch, home):
+    """Removal tombstones the stream's runs, dismisses its pending proposals and clears its
+    backlog/budget files; another stream's runs, proposals and files are untouched."""
+    from alchemy_task import discovery, discovery_integration
+    from alchemy_task.core.discovery_state import atomic_json, read_json
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    monkeypatch.setattr(discovery_integration, '_profile_home', lambda: integration.home)
+    _two_streams(rt, ctx, ('parent', 'parent'))
+    work = _finalized(integration, data_dir, stream='work', origin_session='parent', title='Ask 0')
+    gone = _finalized(integration, data_dir, stream='home', origin_session='parent', title='Ask 0')
+    store = integration.store
+    runs = {r['config'].get('stream_name'): r for r in integration._all_runs()}
+    home_run, work_run = runs['home']['run_id'], runs['work']['run_id']
+    # Give each stream its own storage name, a source backlog and a budget file.
+    for run, storage in ((home_run, 'home'), (work_run, 'work')):
+        with store._lock(store._run_lock_name(run)):
+            ledger = store.get_run(run); ledger['stream'] = storage
+            ledger['config']['sources'] = [{'source_key': 'feed'}]; store._save(run, ledger)
+        atomic_json(store._source_path(storage, 'feed'), {'backlog': [{'status': 'queued'}], 'coverage': []})
+        atomic_json(store.state_root / 'budgets' / (store_hash(f"{storage}:{ledger['business_date']}") + '.json'), {'charged': ['x']})
+    result = discovery.remove_stream(rt, 'home')
+    assert result['removed_runs'] == 1 and result['dismissed_proposals'] == 1
+    assert [r['run_id'] for r in integration._all_runs()] == [work_run]
+    assert [r['run_id'] for r in integration.backend(session_id='parent')['runs']] == [work_run]
+    tomb = read_json(store.state_root / 'tombstones' / (home_run + '.json'))
+    assert tomb['pruned_reason'] == 'stream removed' and tomb['removed_stream'] == 'home'
+    proposals = integration.digest._load()['proposals']
+    removed = proposals[gone['items'][0]['proposal_id']]
+    assert (removed['state'], removed['dismissed_reason']) == ('dismissed', 'stream removed')
+    assert proposals[work['items'][0]['proposal_id']]['state'] == 'pending'
+    assert not store._source_path('home', 'feed').exists()
+    assert store._source_path('work', 'feed').exists()
+    budgets = sorted(p.name for p in (store.state_root / 'budgets').glob('*.json'))
+    assert budgets == [store_hash(f"work:{store.get_run(work_run)['business_date']}") + '.json']
+    # Removing an unrelated name never touches the remaining stream.
+    with pytest.raises(Exception):
+        discovery.remove_stream(rt, 'nope')
+    assert [r['run_id'] for r in integration._all_runs()] == [work_run]
+
+
+def store_hash(text):
+    import hashlib
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 # ---------------------------------------------------------------- M1 seven-day window

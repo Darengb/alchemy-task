@@ -149,6 +149,10 @@ def is_message_refinement(identity: str) -> bool:
     return (parts[0], len(parts)) in {("slack", 5), ("gmail", 4), ("source", 6)}
 
 
+# Separate actions one source may carry (a long multi-topic email); shared by the bundle limit.
+MAX_ACTIONS = 24
+
+
 def freeze_actions(parent_id: str, source_ids: list[Any], anchors: list[dict[str, str]], *, existing: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """Freeze parent-verified anchors. Changed anchors require explicit reconciliation.
 
@@ -156,8 +160,8 @@ def freeze_actions(parent_id: str, source_ids: list[Any], anchors: list[dict[str
     Existing entries may be carried forward; an existing locator cannot be re-keyed.
     """
     sources = sorted(set(canonical_source_id(x) for x in source_ids))
-    if not sources or not isinstance(anchors, list) or not anchors or len(anchors) > 12:
-        raise UserError("actions require sources and 1..12 anchors")
+    if not sources or not isinstance(anchors, list) or not anchors or len(anchors) > MAX_ACTIONS:
+        raise UserError(f"actions require sources and 1..{MAX_ACTIONS} anchors")
     registry = {entry["locator"]: dict(entry) for entry in existing or []}
     seen_locators, seen_outcomes = set(), set()
     for anchor in anchors:
