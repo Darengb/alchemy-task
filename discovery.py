@@ -321,13 +321,24 @@ def remove_stream(rt: Runtime, name: str) -> dict[str, Any]:
     _remove_job(rt, stream.get("job_id"))
     from .jobs import remove_stream_stub
     remove_stream_stub(stream["name"])
+    retired = _retire_stream_data(rt, stream["name"])
     with _lock:
         streams = _streams(rt)
         streams.pop(stream["name"], None)
         _assign_labels(streams, _origin_chat(rt))
         _save_streams(rt, streams)
     rt.ctx.state.set(f"proposals:{stream['name']}", None)
-    return {"removed": stream["name"]}
+    return {"removed": stream["name"], "removed_runs": len(retired["removed_runs"]),
+            "dismissed_proposals": len(retired["dismissed_proposals"])}
+
+
+def _retire_stream_data(rt: Runtime, name: str) -> dict[str, Any]:
+    """Tombstone the stream's runs, dismiss its pending proposals, clear its backlogs and budgets."""
+    from .core.discovery_dossiers import content_revision
+    from .core.discovery_state import DiscoveryStore
+    base = name if " " not in name else "stream-" + content_revision(name).split(":")[-1][:24]
+    storages = [base] + [f"{base}-{mode}" for mode in ("shadow", "research_only")]
+    return DiscoveryStore(rt.data_dir / "discovery").retire_stream(name, storage_streams=storages)
 
 
 def _remove_job(rt: Runtime, job_id: str | None) -> None:
