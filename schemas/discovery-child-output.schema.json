@@ -19,7 +19,7 @@
       "items": {
         "$ref": "#/$defs/workstream"
       },
-      "maxItems": 24
+      "maxItems": 40
     }
   },
   "$defs": {
@@ -546,6 +546,17 @@
           },
           "maxItems": 50,
           "uniqueItems": true
+        },
+        "priority": {
+          "description": "Optional. How important this workstream is, used to order and cap proposals: user_next_step (the user personally does the next step or is directly asked), dated (has a date or deadline), waiting_on_user (someone is blocked on the user), new_work, task_update, status_only (plain status or FYI). Return workstreams most important first in this order.",
+          "enum": [
+            "user_next_step",
+            "dated",
+            "waiting_on_user",
+            "new_work",
+            "task_update",
+            "status_only"
+          ]
         },
         "existing_task_already_current": {
           "description": "Optional. Set true only when a task you nominated in existing_task_candidates already records this work's current state and next step, so nothing would be added to it. The digest then lists the item once under Already in your tasks instead of offering it as a proposal. Omit or set false otherwise.",

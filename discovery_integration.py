@@ -1427,6 +1427,9 @@ class DiscoveryIntegration:
                       'research_disposition': outcome['research']['disposition'],
                       'uncertainty': outcome['research']['decisions_and_open_questions']['open_questions'],
                       'research_revision': content_revision(outcome['research'])}
+            # Titles the per-source cap left out; the digest shows them once under the source's first proposal.
+            not_proposed = self.store.not_proposed_for(run_id, unit_id)
+            if not_proposed: record['not_proposed'] = not_proposed
             if shadow and decision == 'auto': record['shadow'] = True
             if kind == 'selection' and outcome['kind'] == 'conflict': record['multiple_exact'] = True
             atomic_json(path, record)

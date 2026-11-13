@@ -149,8 +149,9 @@ def is_message_refinement(identity: str) -> bool:
     return (parts[0], len(parts)) in {("slack", 5), ("gmail", 4), ("source", 6)}
 
 
-# Separate actions one source may carry (a long multi-topic email); shared by the bundle limit.
-MAX_ACTIONS = 24
+# Safety bound on action anchors per source, equal to the submitted-workstream bound
+# (core.discovery_caps.SAFETY_BOUND). Proposal caps per source item type are much lower.
+MAX_ACTIONS = 40
 
 
 def freeze_actions(parent_id: str, source_ids: list[Any], anchors: list[dict[str, str]], *, existing: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:

@@ -18,6 +18,8 @@ import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Iterator
+from .discovery_caps import (CAPS as PROPOSAL_CAPS, SAFETY_BOUND, also_mentioned_line, classify_source_item,
+    is_noop, title_of, trim_workstreams)
 from .discovery_identity import (UserError, _component, canonical_source_id, candidate_id, freeze_actions,
     is_message_refinement, source_identity_covers)
 from .discovery_research import (MAX_CANDIDATES, MAX_INDEX_BYTES, MAX_SOURCE_IDS,
@@ -1056,8 +1058,9 @@ class DiscoveryStore:
         if not isinstance(parsed, dict) or not isinstance(parsed.get('workstreams'), list):
             return parsed, []
         out = copy.deepcopy(parsed)
-        streams = [w for w in out['workstreams'] if isinstance(w, dict)]
         repairs: list[str] = []
+        self._cap_workstreams(run_id, ledger, attempt, out, repairs)
+        streams = [w for w in out['workstreams'] if isinstance(w, dict)]
         locators = {}
         for i, w in enumerate(streams):
             anchor = w.get('action_anchor')
@@ -1093,6 +1096,54 @@ class DiscoveryStore:
             if dropped:
                 repairs.append(f'dropped action_key/action_anchor/action_relation from {dropped} workstream(s): no frozen action registry')
         return out, repairs
+
+    def _resource_json(self, run_id: str, ledger: dict[str, Any], name: str) -> Any:
+        info = ledger['resources'].get(name)
+        if not info:
+            return None
+        try:
+            return json.loads((self.run_dir(run_id) / 'resources' / info['sha256']).read_bytes())
+        except (OSError, ValueError):
+            return None
+
+    def source_item_type(self, run_id: str, ledger: dict[str, Any], cid: str) -> tuple[str, bool]:
+        """(item type, is email) for a research candidate; see discovery_caps.classify_source_item."""
+        versions = self._resource_json(run_id, ledger, 'source-body-' + cid)
+        versions = versions if isinstance(versions, list) else []
+        keys = {v.get('source_key') for v in versions if isinstance(v, dict) and v.get('source_key')}
+        selection = self._resource_json(run_id, ledger, 'backlog-selection')
+        keys |= {s.get('source_key') for s in selection or [] if isinstance(s, dict) and s.get('candidate_id') == cid and s.get('source_key')}
+        configs = [c for c in (ledger.get('config') or {}).get('sources') or [] if isinstance(c, dict) and c.get('source_key') in keys]
+        kind = 'transcript' if any(c.get('kind') == 'transcript' for c in configs) else (configs[0].get('kind') if configs else None)
+        try:
+            sources = self._candidate(ledger, cid).get('source_ids') or []
+        except UserError:
+            sources = []
+        email = kind == 'mail' or any(str(x).startswith('gmail:') for x in sources)
+        return classify_source_item(versions, kind), email
+
+    def _cap_workstreams(self, run_id: str, ledger: dict[str, Any], attempt: dict[str, Any], out: dict[str, Any], repairs: list[str]) -> None:
+        """Keep the top proposals for the source item's cap; list the rest by title. Never rejects."""
+        out.pop('not_proposed', None)
+        attempt.pop('not_proposed', None)
+        streams = out['workstreams']
+        dicts = [w for w in streams if isinstance(w, dict)]
+        proposed = [w for w in dicts if not is_noop(w)]
+        try:
+            item_type, email = self.source_item_type(run_id, ledger, attempt['candidate_id'])
+        except (UserError, KeyError, TypeError):
+            item_type, email = 'single', False
+        cap = PROPOSAL_CAPS[item_type]
+        if len(proposed) <= cap and len(streams) <= SAFETY_BOUND:
+            return
+        kept, dropped = trim_workstreams(dicts, cap)
+        out['workstreams'] = kept
+        titles = [title_of(w) for w in dropped]
+        if titles:
+            attempt['not_proposed'] = {'item_type': item_type, 'email': email, 'titles': titles,
+                                       'line': also_mentioned_line(item_type, titles, email=email)}
+        repairs.append(f'kept {len([w for w in kept if not is_noop(w)])} of {len(proposed)} proposed workstream(s) '
+                       f'(cap {cap} for a {item_type} item); listed {len(titles)} as also mentioned')
 
     def _auto_anchor(self, ledger: dict[str, Any], cid: str, streams: list[dict[str, Any]]) -> str | None:
         """Freeze one action anchor per workstream when separate actions share a decisive message.
@@ -1411,6 +1462,19 @@ class DiscoveryStore:
         with self._lock(self._run_lock_name(run_id)):
             ledger = self._load(run_id)
             return [self._materialize_bundle_locked(run_id, ledger, read_json(path)) for path in sorted((self.run_dir(run_id) / 'commits').glob('*.intent.json'))]
+
+    def not_proposed_for(self, run_id: str, unit_id: str) -> dict[str, Any] | None:
+        """Titles the cap left out of a unit's source item, from its accepted research attempt."""
+        ledger = self._load(run_id)
+        try:
+            unit = self._candidate(ledger, unit_id)
+        except UserError:
+            return None
+        parent = unit.get('parent_candidate_id') or unit_id
+        for attempt in ledger['attempts'].values():
+            if attempt.get('candidate_id') == parent and attempt.get('state') == 'accepted_bundle' and attempt.get('not_proposed'):
+                return {'parent_candidate_id': parent, **copy.deepcopy(attempt['not_proposed'])}
+        return None
 
     def accepted_bundle(self, run_id: str, cid: str) -> dict[str, Any] | None:
         return read_json(self.run_dir(run_id) / 'research' / (_name(cid) + '.bundle.json'))

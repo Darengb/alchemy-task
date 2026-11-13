@@ -114,11 +114,11 @@ def test_bootstrap_treats_previous_research_as_a_starting_point(tmp_path, monkey
 
 
 def test_long_multi_topic_email_with_many_actions_is_valid_on_first_submit(tmp_path):
-    """A weekly team update is one message carrying many separate actions. The old cap of 12
-    made the child merge or pad actions to fit, then the parent rejected the merged unit.
-    Every action now gets its own workstream and anchor on the first submit, within a clear bound."""
+    """A weekly team update is one message carrying many separate actions. The child returns one
+    workstream per action; the parent keeps the cap for a single email (7) and lists the rest by
+    title, on the first submit, never rejecting or merging."""
     from alchemy_task.core.discovery_research import MAX_WORKSTREAMS, child_schema
-    assert MAX_WORKSTREAMS == 24 and child_schema()['properties']['workstreams']['maxItems'] == MAX_WORKSTREAMS
+    assert MAX_WORKSTREAMS == 40 and child_schema()['properties']['workstreams']['maxItems'] == MAX_WORKSTREAMS
     titles = [f'Topic {i}: follow up on the weekly update section {i}' for i in range(1, 21)]
     store, run, cid = setup(tmp_path); token = prepare(store, run, cid)['token']
     receipt = store.spool_payload(run, token, shared_bundle(cid, titles))
@@ -126,16 +126,20 @@ def test_long_multi_topic_email_with_many_actions_is_valid_on_first_submit(tmp_p
     assert 'validation_error' not in attempt, attempt.get('validation_error')
     assert attempt['evidence']['helper'] == 'valid' and attempt['ordinal'] == 1
     registry = store._load(run)['action_registry'][cid]
-    assert len(registry) == 20
+    assert len(registry) == 7
+    assert attempt['not_proposed']['titles'] == titles[7:]
     units = m.DiscoveryStore._validate_for_attempt(store._load(run), attempt, json.loads(read_all(store, run, receipt['resource'], 'parent')))
-    assert len({u[0] for u in units}) == 20
+    assert len({u[0] for u in units}) == 7
 
 
-def test_over_the_action_bound_still_fails_with_a_clear_error(tmp_path):
-    import pytest
-    from alchemy_task.core.discovery_identity import UserError
+def test_over_the_action_bound_is_not_rejected_by_validation(tmp_path):
     from alchemy_task.core.discovery_research import validate_bundle
     store, run, cid = setup(tmp_path)
     b = shared_bundle(cid, [f'Action {i}' for i in range(25)])
-    with pytest.raises(UserError, match='workstream count exceeds shared limit'):
+    b['workstreams'][0]['exact_source_ids'] = [dict(MSG)]
+    import pytest
+    from alchemy_task.core.discovery_identity import UserError
+    # No count error any more: only ordinary identity checks apply (here the shared message is unanchored).
+    with pytest.raises(UserError) as err:
         validate_bundle(b, cid, [dict(THREAD)])
+    assert 'workstream count' not in str(err.value)
