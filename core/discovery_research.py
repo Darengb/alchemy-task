@@ -6,7 +6,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any
-from .discovery_identity import (UserError, canonical_source_id, source_identity_covers,
+from .discovery_identity import (MAX_ACTIONS, UserError, canonical_source_id, source_identity_covers,
     canonical_tasknote_relative_path, workstream_id, is_message_refinement)
 RESEARCH_KEYS = {
     "candidate_id", "status", "disposition", "title", "current_understanding",
@@ -32,7 +32,7 @@ REQUESTED_SOURCE_IDS = 12
 MAX_SOURCE_IDS = 15
 MAX_TITLE_CHARS = 300
 MAX_REASON_CHARS = 500
-MAX_WORKSTREAMS = 12
+MAX_WORKSTREAMS = MAX_ACTIONS  # one workstream per separate action, even in a long multi-topic email
 MAX_ARRAY_ITEMS = 50
 MAX_STRING_CHARS = 4000
 MAX_BUNDLE_BYTES = 512 * 1024

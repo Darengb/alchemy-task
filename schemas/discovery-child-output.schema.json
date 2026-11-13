@@ -19,7 +19,7 @@
       "items": {
         "$ref": "#/$defs/workstream"
       },
-      "maxItems": 12
+      "maxItems": 24
     }
   },
   "$defs": {
