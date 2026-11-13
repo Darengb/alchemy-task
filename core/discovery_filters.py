@@ -91,7 +91,7 @@ def normalize_rule(raw: Any, *, existing: dict | None = None) -> dict:
     """Validate and normalize one rule (merged over ``existing`` for updates)."""
     if not isinstance(raw, dict):
         raise FilterError('rule must be an object')
-    unknown = set(raw) - {'id', 'name', 'enabled', 'mode', 'action', 'match', *FIELDS}
+    unknown = set(raw) - {'id', 'name', 'enabled', 'mode', 'action', 'match', 'originals_only', *FIELDS}
     if unknown:
         raise FilterError('unknown rule fields: ' + ', '.join(sorted(unknown)))
     base = copy.deepcopy(existing or {})
@@ -120,8 +120,14 @@ def normalize_rule(raw: Any, *, existing: dict | None = None) -> dict:
     enabled = raw.get('enabled', base.get('enabled', True))
     if type(enabled) is not bool:
         raise FilterError('enabled must be true or false')
-    return {'id': base.get('id') or _clean(raw.get('id'), 40) or rule_id(name, match), 'name': name, 'enabled': enabled,
-            'mode': mode, 'action': 'exclude', 'match': {k: match[k] for k in FIELDS if k in match}}
+    originals_only = raw.get('originals_only', base.get('originals_only', False))
+    if type(originals_only) is not bool:
+        raise FilterError('originals_only must be true or false')
+    out = {'id': base.get('id') or _clean(raw.get('id'), 40) or rule_id(name, match), 'name': name, 'enabled': enabled,
+           'mode': mode, 'action': 'exclude', 'match': {k: match[k] for k in FIELDS if k in match}}
+    if originals_only:
+        out['originals_only'] = True
+    return out
 
 
 def _default_name(match: dict) -> str:
@@ -143,8 +149,9 @@ def describe_rule(rule: dict) -> str:
         sep = joiner if key in TEXT_FIELDS else ' or '
         parts.append(words[key] + ' ' + sep.join(f'"{v}"' if key in TEXT_FIELDS else v for v in shown))
     state = '' if rule.get('enabled', True) else ' (turned off)'
-    return (f"{rule.get('name', 'Rule')}: skip messages " + ', '.join(parts)
-            + '. Replies from others in the same thread are still read.' + state)
+    scope = ('Only original messages are skipped; every reply, including yours, is still read.'
+             if rule.get('originals_only') else 'Replies from others in the same thread are still read.')
+    return (f"{rule.get('name', 'Rule')}: skip messages " + ', '.join(parts) + '. ' + scope + state)
 
 
 # ------------------------------------------------------------------ storage
@@ -288,7 +295,22 @@ def _person_matches(person: str, value: str, me: dict, ids: Iterable[str] = ()) 
     return bool(display) and re.search(r'(?<![a-z0-9])' + re.escape(v) + r'(?![a-z0-9])', display) is not None
 
 
-def message_fields(item: dict, message: dict, kind: str, source_key: str) -> dict:
+_REPLY_SUBJECT = re.compile(r'^\s*(?:re|fwd?|aw|sv)\s*:', re.I)
+
+
+def is_reply(item: dict, message: dict, index: int = 0) -> bool:
+    """A message that answers or forwards an earlier one (not the thread's original)."""
+    if index > 0:
+        return True
+    if _REPLY_SUBJECT.match(_text(message.get('subject'))):
+        return True
+    if message.get('in_reply_to') or message.get('In-Reply-To'):
+        return True
+    thread_ts, ts = message.get('thread_ts'), message.get('ts')
+    return bool(thread_ts and ts and str(thread_ts) != str(ts))
+
+
+def message_fields(item: dict, message: dict, kind: str, source_key: str, index: int = 0) -> dict:
     """Matchable fields of one message. A field the source lacks is None (never matches)."""
     author = message.get('from') or message.get('author') or message.get('user') or message.get('sender') or ''
     ids = [message.get(k) for k in ('author_id', 'user', 'user_id', 'sender_id') if message.get(k)]
@@ -313,6 +335,7 @@ def message_fields(item: dict, message: dict, kind: str, source_key: str) -> dic
         if parts[0] == 'slack' and len(parts) >= 4:
             where.add(parts[2].lower())
     fields['where'] = where
+    fields['is_reply'] = is_reply(item, message, index)
     return fields
 
 
@@ -327,6 +350,8 @@ def _text_matches(haystack: str | None, terms: list[str], mode: str) -> bool:
 def rule_matches(rule: dict, fields: dict, me: dict) -> bool:
     match = rule.get('match') or {}
     if not match:
+        return False
+    if rule.get('originals_only') and fields.get('is_reply'):
         return False
     mode = rule.get('mode', 'all')
     for key, values in match.items():
@@ -379,9 +404,9 @@ def apply_to_item(item: dict, rules: list[dict], *, config: dict | None, me: dic
         item.pop('filtered', None)
         return item, [], False
     marked_ids = {}
-    for message in messages:
+    for index, message in enumerate(messages):
         message.pop('filtered', None)
-        rule = first_match(rules, message_fields(item, message, kind, key), me) if rules else None
+        rule = first_match(rules, message_fields(item, message, kind, key, index), me) if rules else None
         if rule:
             message['filtered'] = _marker(rule)
             matched.append({'message_id': message.get('id') or message.get('ts'), 'rule': rule.get('id'), 'name': rule.get('name')})

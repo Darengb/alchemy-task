@@ -150,10 +150,10 @@ const FILTER_FIELDS = [['from', 'From', 'me, a name, an address or @domain'], ['
   ['subject', 'Subject or title', 'email subject or meeting title'], ['body', 'Text contains', 'ignores quoted replies'],
   ['where', 'Where', 'source, channel or label']]
 const splitTerms = (text) => String(text || '').split(',').map((x) => x.trim()).filter(Boolean)
-const blankRule = () => ({ name: '', mode: 'all', from: '', to: '', subject: '', body: '', where: '' })
-const toForm = (r) => ({ name: r.name || '', mode: r.mode || 'all',
+const blankRule = () => ({ name: '', mode: 'all', originals_only: false, from: '', to: '', subject: '', body: '', where: '' })
+const toForm = (r) => ({ name: r.name || '', mode: r.mode || 'all', originals_only: !!r.originals_only,
   ...Object.fromEntries(FILTER_FIELDS.map(([k]) => [k, ((r.match || {})[k] || []).join(', ')])) })
-const fromForm = (f) => ({ name: f.name.trim() || undefined, mode: f.mode,
+const fromForm = (f) => ({ name: f.name.trim() || undefined, mode: f.mode, originals_only: !!f.originals_only,
   ...Object.fromEntries(FILTER_FIELDS.map(([k]) => [k, splitTerms(f[k])])) })
 
 // Message filters for one stream: rules that set single messages aside (replies from others are still read),
@@ -221,6 +221,12 @@ function StreamFilters({ name }) {
               <label className="at-filter-field"><span className="at-muted">Terms</span>
                 <select className="at-field" value={edit.form.mode} onChange={(e) => setEdit({ ...edit, form: { ...edit.form, mode: e.target.value } })}>
                   <option value="all">All must appear</option><option value="any">Any one is enough</option>
+                </select>
+              </label>
+              <label className="at-filter-field"><span className="at-muted">Replies</span>
+                <select className="at-field" value={edit.form.originals_only ? 'originals' : 'all'}
+                        onChange={(e) => setEdit({ ...edit, form: { ...edit.form, originals_only: e.target.value === 'originals' } })}>
+                  <option value="all">Skip matching replies too</option><option value="originals">Skip originals only, read every reply</option>
                 </select>
               </label>
               <div className="at-filter-buttons">

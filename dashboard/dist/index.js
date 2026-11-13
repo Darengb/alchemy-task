@@ -2800,15 +2800,17 @@
     ["where", "Where", "source, channel or label"]
   ];
   var splitTerms = (text) => String(text || "").split(",").map((x) => x.trim()).filter(Boolean);
-  var blankRule = () => ({ name: "", mode: "all", from: "", to: "", subject: "", body: "", where: "" });
+  var blankRule = () => ({ name: "", mode: "all", originals_only: false, from: "", to: "", subject: "", body: "", where: "" });
   var toForm = (r) => ({
     name: r.name || "",
     mode: r.mode || "all",
+    originals_only: !!r.originals_only,
     ...Object.fromEntries(FILTER_FIELDS.map(([k]) => [k, ((r.match || {})[k] || []).join(", ")]))
   });
   var fromForm = (f) => ({
     name: f.name.trim() || void 0,
     mode: f.mode,
+    originals_only: !!f.originals_only,
     ...Object.fromEntries(FILTER_FIELDS.map(([k]) => [k, splitTerms(f[k])]))
   });
   function StreamFilters({ name }) {
@@ -2889,7 +2891,16 @@
         value: edit.form[k],
         onChange: (e) => setEdit({ ...edit, form: { ...edit.form, [k]: e.target.value } })
       }
-    ))), /* @__PURE__ */ react_dashboard_default.createElement("label", { className: "at-filter-field" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Terms"), /* @__PURE__ */ react_dashboard_default.createElement("select", { className: "at-field", value: edit.form.mode, onChange: (e) => setEdit({ ...edit, form: { ...edit.form, mode: e.target.value } }) }, /* @__PURE__ */ react_dashboard_default.createElement("option", { value: "all" }, "All must appear"), /* @__PURE__ */ react_dashboard_default.createElement("option", { value: "any" }, "Any one is enough"))), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-filter-buttons" }, /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", onClick: () => {
+    ))), /* @__PURE__ */ react_dashboard_default.createElement("label", { className: "at-filter-field" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Terms"), /* @__PURE__ */ react_dashboard_default.createElement("select", { className: "at-field", value: edit.form.mode, onChange: (e) => setEdit({ ...edit, form: { ...edit.form, mode: e.target.value } }) }, /* @__PURE__ */ react_dashboard_default.createElement("option", { value: "all" }, "All must appear"), /* @__PURE__ */ react_dashboard_default.createElement("option", { value: "any" }, "Any one is enough"))), /* @__PURE__ */ react_dashboard_default.createElement("label", { className: "at-filter-field" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Replies"), /* @__PURE__ */ react_dashboard_default.createElement(
+      "select",
+      {
+        className: "at-field",
+        value: edit.form.originals_only ? "originals" : "all",
+        onChange: (e) => setEdit({ ...edit, form: { ...edit.form, originals_only: e.target.value === "originals" } })
+      },
+      /* @__PURE__ */ react_dashboard_default.createElement("option", { value: "all" }, "Skip matching replies too"),
+      /* @__PURE__ */ react_dashboard_default.createElement("option", { value: "originals" }, "Skip originals only, read every reply")
+    )), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-filter-buttons" }, /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", onClick: () => {
       setEdit(null);
       setPreview(null);
     } }, "Cancel"), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", disabled: busy, onClick: () => test({ rule: fromForm(edit.form) }) }, "Test on last 7 days"), /* @__PURE__ */ react_dashboard_default.createElement(
