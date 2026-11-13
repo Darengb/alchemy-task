@@ -223,3 +223,22 @@ def test_child_bootstrap_marks_filtered_messages_as_background(tmp_path):
     plain = json.loads(runner._bootstrap(run, prepare(store, run, second))['context'])['instructions']
     assert 'background' in marked and 'never cite one as a decisive message' in marked
     assert 'never cite one as a decisive message' not in plain
+
+
+def test_originals_only_rule_keeps_the_owners_own_replies():
+    from alchemy_task.core.discovery_filters import apply_to_item, normalize_rule
+    rule = normalize_rule({'name': 'Weekly update', 'from': 'me', 'subject': 'Weekly Team Update', 'originals_only': True})
+    me = {'addresses': {'owner@example.com'}, 'ids': set(), 'names': set()}
+    item = {'source_ids': ['gmail:acct:t1'], 'title': 'Weekly Team Update', 'messages': [
+        {'id': 'm1', 'from': 'Owner <owner@example.com>', 'subject': 'Weekly Team Update', 'text': 'Status'},
+        {'id': 'm2', 'from': 'Colleague <c@example.com>', 'subject': 'Re: Weekly Team Update', 'text': 'Question?'},
+        {'id': 'm3', 'from': 'Owner <owner@example.com>', 'subject': 'Re: Weekly Team Update', 'text': 'I will fix it Friday'}]}
+    marked, matched, all_out = apply_to_item(item, [rule], config={'kind': 'mail', 'source_key': 'gmail'}, me=me)
+    assert [m['message_id'] for m in matched] == ['m1'] and not all_out
+    # Without the option the owner's own reply is set aside too.
+    plain = normalize_rule({'name': 'Weekly update', 'from': 'me', 'subject': 'Weekly Team Update'})
+    _, matched2, _ = apply_to_item(item, [plain], config={'kind': 'mail', 'source_key': 'gmail'}, me=me)
+    assert [m['message_id'] for m in matched2] == ['m1', 'm3']
+    # A lone reply of the owner's (thread shows only that message) is not an original either.
+    lone = {'source_ids': ['gmail:acct:t2'], 'messages': [{'id': 'r1', 'from': 'owner@example.com', 'subject': 'RE: Weekly Team Update', 'text': 'x'}]}
+    assert apply_to_item(lone, [rule], config={'kind': 'mail', 'source_key': 'gmail'}, me=me)[1] == []
