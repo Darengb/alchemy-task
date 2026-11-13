@@ -3953,3 +3953,117 @@ html.at-dragging {
 .at-root .at-panel .at-panel-body.has-foot {
   padding-bottom: calc(132px + env(safe-area-inset-bottom, 0px));
 }
+.at-filters {
+  border-top: 1px solid var(--at-line, rgba(127,127,127,.2));
+  padding-top: 8px;
+}
+.at-filters-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  font-family: var(--at-mono);
+  font-size: 10.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.at-filters-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.at-filter-rule {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.at-filter-rule.is-off .at-filter-desc {
+  opacity: .55;
+}
+.at-filter-desc {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.4;
+}
+.at-filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.at-filter-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--at-soft);
+}
+.at-filter-field {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+.at-filter-field > .at-muted {
+  font-family: var(--at-mono);
+  font-size: 10.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.at-filter-field .at-field,
+.at-filter-form > .at-field {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.at-filters,
+.at-filters-body,
+.at-filter-form {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.at-filter-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.at-filter-preview {
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--at-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.at-filter-hit,
+.at-filter-shared {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.at-filter-guidance {
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+.at-filter-guidance textarea {
+  resize: vertical;
+  font: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+@media (max-width: 520px) {
+  .at-filter-field {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}

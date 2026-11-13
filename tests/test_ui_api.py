@@ -432,3 +432,20 @@ def test_run_progress_never_fails_on_odd_files_and_reaches_the_settings_payload(
     monkeypatch.setattr(di, 'get_service', lambda rt=None: SimpleNamespace(store=SimpleNamespace(state_root=tmp_path)))
     settings_api._FIRED.clear()
     assert settings_api._running_streams(object())['mbg']['stage'] == 'digest'
+
+
+def test_settings_filters_add_test_toggle_and_guidance(client, ctx):
+    ctx.state.set("streams", {"work": {"name": "work", "areas": ["work"], "sources": [], "origin_session": "chat-1"}})
+    assert client.get("/settings/filters/work").json()["scopes"] == {"work": {"rules": [], "guidance": ""}, "*": {"rules": [], "guidance": ""}}
+    rule = {"name": "Own report", "from": ["me"], "subject": ["Weekly Team Report"]}
+    added = client.post("/settings/filters/work", json={"action": "add", "rule": rule}).json()
+    assert added["ok"] and added["saved"] is True
+    rid = added["rule"]["id"]
+    preview = client.post("/settings/filters/work", json={"action": "test", "rule": rule}).json()
+    assert preview["ok"] and preview["messages_matched"] == 0 and preview["days"] == 7
+    client.post("/settings/filters/work", json={"action": "update", "rule_id": rid, "rule": {"enabled": False}})
+    client.post("/settings/filters/%2A", json={"action": "guidance", "guidance": "Skip vendor pitches."})
+    scopes = client.get("/settings/filters/work").json()["scopes"]
+    assert scopes["work"]["rules"][0]["enabled"] is False and scopes["*"]["guidance"] == "Skip vendor pitches."
+    assert client.post("/settings/filters/work", json={"action": "explode"}).json()["error"]["code"] == "invalid_request"
+    assert client.get("/settings/filters/nope").json()["ok"] is False

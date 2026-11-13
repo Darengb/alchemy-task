@@ -271,6 +271,9 @@ def render_digest(run, *, stream, day, numbered, already, failures, coverage, ou
     notes += [f'{_source_name(source)} {problem}' for source, problem in source_problems]
     if notes:
         footer.append('**Needs attention:** ' + ' · '.join(n.rstrip('.') for n in notes) + '.')
+    filtered = sum(int((s.get('filtered') or {}).get('messages') or 0) for s in coverage if isinstance(s, dict))
+    if filtered > 0:
+        footer.append(f"{filtered} {'message' if filtered == 1 else 'messages'} skipped by your filters.")
     for line in footer: lines += [line, '']
     if numbered:
         example = next((i['ref'] for i in numbered if i['kind'] == 'new'), numbered[0]['ref'])

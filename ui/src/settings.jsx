@@ -141,6 +141,126 @@ function StreamRow({ s, reload }) {
         </div>
       ) : null}
       {blocked ? <div className="at-banner at-tone-late"><Icon name="alert" size={14} /><span>{blocked}</span></div> : null}
+      <StreamFilters name={s.name} />
+    </div>
+  )
+}
+
+const FILTER_FIELDS = [['from', 'From', 'me, a name, an address or @domain'], ['to', 'To or cc', 'email only'],
+  ['subject', 'Subject or title', 'email subject or meeting title'], ['body', 'Text contains', 'ignores quoted replies'],
+  ['where', 'Where', 'source, channel or label']]
+const splitTerms = (text) => String(text || '').split(',').map((x) => x.trim()).filter(Boolean)
+const blankRule = () => ({ name: '', mode: 'all', from: '', to: '', subject: '', body: '', where: '' })
+const toForm = (r) => ({ name: r.name || '', mode: r.mode || 'all',
+  ...Object.fromEntries(FILTER_FIELDS.map(([k]) => [k, ((r.match || {})[k] || []).join(', ')])) })
+const fromForm = (f) => ({ name: f.name.trim() || undefined, mode: f.mode,
+  ...Object.fromEntries(FILTER_FIELDS.map(([k]) => [k, splitTerms(f[k])])) })
+
+// Message filters for one stream: rules that set single messages aside (replies from others are still read),
+// plus free-text screening preferences. Collapsed by default so the schedule stays compact.
+function StreamFilters({ name }) {
+  const { api } = useApp()
+  const toast = useToast()
+  const [open, setOpen] = React.useState(false)
+  const [data, setData] = React.useState(null)
+  const [edit, setEdit] = React.useState(null) // {id?, form}
+  const [preview, setPreview] = React.useState(null)
+  const [guidance, setGuidance] = React.useState('')
+  const [busy, setBusy] = React.useState(false)
+  const load = React.useCallback(async () => {
+    try {
+      const res = await api.filters(name)
+      setData(res.scopes || {})
+      setGuidance(((res.scopes || {})[name] || {}).guidance || '')
+    } catch (err) { toast(describeError(err), { tone: 'error' }) }
+  }, [api, name, toast])
+  React.useEffect(() => { if (open && !data) load() }, [open, data, load])
+  const act = async (body, done) => {
+    setBusy(true)
+    try { const res = await api.filterAction(name, body); if (done) done(res); await load() } catch (err) { toast(describeError(err), { tone: 'error' }) }
+    setBusy(false)
+  }
+  const test = async (body) => {
+    setBusy(true)
+    try { setPreview(await api.filterAction(name, { action: 'test', ...body })) } catch (err) { toast(describeError(err), { tone: 'error' }) }
+    setBusy(false)
+  }
+  const own = (data && data[name] && data[name].rules) || []
+  const shared = (data && data['*'] && data['*'].rules) || []
+  const count = own.filter((r) => r.enabled !== false).length
+  return (
+    <div className="at-filters">
+      <button type="button" className="at-filters-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Icon name={open ? 'chevD' : 'chevR'} size={13} /><span>Filters{count ? ` (${count})` : ''}</span>
+      </button>
+      {open ? (
+        <div className="at-filters-body">
+          {!data ? <Spinner /> : null}
+          {own.map((r) => (
+            <div key={r.id} className={cx('at-filter-rule', r.enabled === false && 'is-off')}>
+              <span className="at-filter-desc">{r.description}</span>
+              <span className="at-filter-actions">
+                <button type="button" role="switch" aria-label="Rule on" aria-checked={r.enabled !== false} className={cx('at-switch', r.enabled !== false && 'is-on')}
+                        disabled={busy} onClick={() => act({ action: 'update', rule_id: r.id, rule: { enabled: r.enabled === false } })}><i /></button>
+                <IconButton icon="edit" label="Edit rule" onClick={() => { setPreview(null); setEdit({ id: r.id, form: toForm(r) }) }} />
+                <IconButton icon="x" label="Delete rule" onClick={() => act({ action: 'remove', rule_id: r.id }, () => toast('Rule deleted'))} />
+              </span>
+            </div>
+          ))}
+          {shared.length ? <div className="at-muted at-filter-shared">All streams: {shared.map((r) => r.name).join(' · ')}</div> : null}
+          {edit ? (
+            <div className="at-filter-form">
+              <input type="text" className="at-field" placeholder="Rule name" value={edit.form.name} maxLength={80}
+                     onChange={(e) => setEdit({ ...edit, form: { ...edit.form, name: e.target.value } })} />
+              {FILTER_FIELDS.map(([k, label, hint]) => (
+                <label key={k} className="at-filter-field"><span className="at-muted">{label}</span>
+                  <input type="text" className="at-field" placeholder={hint} value={edit.form[k]}
+                         onChange={(e) => setEdit({ ...edit, form: { ...edit.form, [k]: e.target.value } })} />
+                </label>
+              ))}
+              <label className="at-filter-field"><span className="at-muted">Terms</span>
+                <select className="at-field" value={edit.form.mode} onChange={(e) => setEdit({ ...edit, form: { ...edit.form, mode: e.target.value } })}>
+                  <option value="all">All must appear</option><option value="any">Any one is enough</option>
+                </select>
+              </label>
+              <div className="at-filter-buttons">
+                <Button size="sm" variant="ghost" onClick={() => { setEdit(null); setPreview(null) }}>Cancel</Button>
+                <Button size="sm" variant="ghost" disabled={busy} onClick={() => test({ rule: fromForm(edit.form) })}>Test on last 7 days</Button>
+                <Button size="sm" variant="primary" disabled={busy}
+                        onClick={() => act(edit.id ? { action: 'update', rule_id: edit.id, rule: fromForm(edit.form) } : { action: 'add', rule: fromForm(edit.form) },
+                                           () => { setEdit(null); setPreview(null); toast('Rule saved') })}>Save</Button>
+              </div>
+            </div>
+          ) : (
+            <div className="at-filter-buttons">
+              <Button size="sm" variant="ghost" icon="plus" onClick={() => { setPreview(null); setEdit({ form: blankRule() }) }}>Add rule</Button>
+              {own.length ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => test({})}>Test on last 7 days</Button> : null}
+            </div>
+          )}
+          {preview ? <FilterPreview p={preview} /> : null}
+          <label className="at-filter-field at-filter-guidance"><span className="at-muted">Screening preferences</span>
+            <textarea className="at-field" rows={2} maxLength={2000} value={guidance}
+                      placeholder="In your words, what to skip or keep when deciding what to research"
+                      onChange={(e) => setGuidance(e.target.value)}
+                      onBlur={() => { if (data && guidance !== ((data[name] || {}).guidance || '')) act({ action: 'guidance', guidance }, () => toast('Saved')) }} />
+          </label>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function FilterPreview({ p }) {
+  const unknown = (p.me || []).filter((m) => !m.known)
+  return (
+    <div className="at-filter-preview">
+      <div>{p.messages_matched ? `${p.messages_matched} ${p.messages_matched === 1 ? 'message' : 'messages'} in the last ${p.days} days would be skipped`
+        + ` (${p.threads_skipped} ${p.threads_skipped === 1 ? 'thread' : 'threads'} skipped, ${p.threads_kept_with_context} kept for other messages).`
+        : `Nothing in the last ${p.days} days matches.`}</div>
+      {(p.matches || []).slice(0, 10).map((m, i) => (
+        <div key={i} className="at-muted at-filter-hit">{m.title}{m.from ? ` · ${m.from}` : ''}{m.time ? ` · ${m.time}` : ''} · {m.thread}</div>
+      ))}
+      {unknown.map((m) => <div key={m.source} className="at-muted">{m.source}: "me" is {m.me}.</div>)}
     </div>
   )
 }

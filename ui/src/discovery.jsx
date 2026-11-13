@@ -375,12 +375,27 @@ function RunCard({ run, filter, reload }) {
               <span className="at-muted">{c.status === 'complete' ? 'Checked' : c.status || 'Unknown'}</span>
             </div>
           ))}
+          {filteredRows(run.coverage).map((f, i) => (
+            <div key={'f' + i} className="at-detail-row">
+              <span className="at-muted">Filtered</span>
+              <span className="at-flex">{f.title}</span>
+              <span className="at-muted">{f.rule}{f.kept ? ' · replies kept' : ''}</span>
+            </div>
+          ))}
           <div className="at-detail-row"><span className="at-muted">Run</span><span className="at-flex" /><span className="at-mono">{String(run.run_id).slice(0, 12)}</span></div>
           {run.delivery && run.delivery.state ? <div className="at-detail-row"><span className="at-muted">Digest</span><span className="at-flex" /><span>{deliveryLabel(run.delivery.state)}</span></div> : null}
         </div>
       </Disclosure>
     </article>
   )
+}
+
+// What the user's message filters set aside in this run: skipped threads, and threads kept for other messages.
+function filteredRows(coverage) {
+  return (coverage || []).flatMap((c) => {
+    const f = c.filtered || {}
+    return [...(f.skipped || []).map((x) => ({ ...x, kept: false })), ...(f.context_only || []).map((x) => ({ ...x, kept: true }))]
+  }).slice(0, 50)
 }
 
 const deliveryLabel = (s) => ({ delivered: 'Sent', host_pending: 'Sent by Hermes', prepared: 'Prepared', not_prepared: 'Not sent', unknown: 'Unknown', inflight: 'Sending' }[s] || s)

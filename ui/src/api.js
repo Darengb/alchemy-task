@@ -87,6 +87,9 @@ export function makeTransport(send) {
     patchStream: (name, changes) => call('PATCH', `/settings/streams/${enc(name)}`, changes),
     runStream: (name) => call('POST', `/settings/streams/${enc(name)}/run`, {}),
     patchTaskSettings: (changes) => call('PATCH', '/settings/tasks', changes),
+    // Message filters and screening guidance for a stream ('*' = all streams).
+    filters: (scope) => call('GET', `/settings/filters/${enc(scope)}`),
+    filterAction: (scope, body) => call('POST', `/settings/filters/${enc(scope)}`, body),
   }
 }
 

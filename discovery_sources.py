@@ -487,7 +487,7 @@ class SourceAdapter:
         validate_source_config(config)
         self.store, self.config, self.read_page = store, copy.deepcopy(config), read_page
 
-    def collect(self, stream, *, start: str, end: str, max_pages: int | None = None, previous_receipt=None):
+    def collect(self, stream, *, start: str, end: str, max_pages: int | None = None, previous_receipt=None, filters=None):
         if _date(start) >= _date(end):
             raise UserError('source window must increase')
         if max_pages is not None and (type(max_pages) is not int or max_pages < 1):
@@ -506,6 +506,7 @@ class SourceAdapter:
         seen, ids = {p['cursor'] for p in receipts if p.get('cursor') is not None}, list(prior.get('backlog_ids', []))
         status, error, exhausted, primary_partial = 'partial', '', False, []
         screened = list(prior.get('screened', []))
+        filtered = copy.deepcopy(prior.get('filtered') or {'messages': 0, 'skipped': [], 'context_only': []})
         while True:
             try:
                 read_started = datetime.now(timezone.utc).isoformat()
@@ -523,6 +524,8 @@ class SourceAdapter:
                 # bulk mail and bot-only threads are saved as excluded, never researched.
                 from .core.screening import screen_items, record_screened
                 kept, dropped = screen_items(page['items'])
+                kept, skipped = _apply_user_filters(kept, self.config, filters, filtered)
+                dropped += skipped
                 state = _persist_items(self.store, stream, self.config, kept)
                 if dropped:
                     screened += record_screened(self.store, stream, self.config['source_key'], dropped,
@@ -568,11 +571,31 @@ class SourceAdapter:
         receipt = {'config_revision': hashlib.sha256(json.dumps(self.config, sort_keys=True).encode()).hexdigest(), 'covered_intervals': [[start, end]] if exhausted else [], 'status': status, 'verification': 'adapter_verified', 'account_key': self.config['account_key'], 'scope': self.config['scope'], 'start': start, 'end': end, 'pagination_exhausted': exhausted, 'continuation': cursor, 'pages': receipts, 'backlog_ids': ids, 'error': error}
         if primary_partial: receipt['primary_partial'] = primary_partial
         if screened: receipt['screened'] = screened
+        if filtered['messages']: receipt['filtered'] = filtered
         self.store.record_coverage(stream, self.config['source_key'], receipt)
         return receipt
 
 
-def collect_attested(store, stream, config, envelope):
+def _apply_user_filters(items, config, filters, summary):
+    """Apply the user's message filters; returns (kept items, [(skipped item, reason)]).
+
+    Excluded messages stay in kept items marked ``filtered`` (background only);
+    items whose messages are all excluded are returned as skipped. ``summary``
+    accumulates counts and titles for the digest and dashboard.
+    """
+    rules = (filters or {}).get('rules') or []
+    if not rules:
+        return items, []
+    from .core.discovery_filters import apply_filters
+    kept, skipped, found = apply_filters(items, rules, config=config, me=(filters or {}).get('me') or {})
+    summary['messages'] = summary.get('messages', 0) + found['messages']
+    for key in ('skipped', 'context_only'):
+        summary.setdefault(key, []).extend(found[key])
+        summary[key] = summary[key][-100:]
+    return kept, skipped
+
+
+def collect_attested(store, stream, config, envelope, filters=None):
     validate_source_config(config)
     if envelope.get('account_key') != config['account_key']:
         raise UserError('attested account mismatch')
@@ -581,11 +604,18 @@ def collect_attested(store, stream, config, envelope):
     # Calendar notices, auto-replies, bulk mail, bot threads and parent exclusions are saved as excluded, never researched.
     from .core.screening import screen_items, record_screened
     items, screened = screen_items(envelope.get('items', []))
+    filtered = {'messages': 0, 'skipped': [], 'context_only': []}
+    if (filters or {}).get('rules'):
+        # Rules read the item's own messages, so file pointers are inlined first.
+        items = [inline_primary(item, store) for item in items]
+        items, skipped = _apply_user_filters(items, config, filters, filtered)
+        screened = list(screened) + skipped
     state = _persist_items(store, stream, config, items, inline=True)
     screened = record_screened(store, stream, config['source_key'], screened, lambda xs: _persist_items(store, stream, config, xs))
     state = store.source_state(stream, config['source_key']) if screened else state
     receipt = {k: envelope.get(k) for k in ('status', 'start', 'end', 'pagination_exhausted', 'continuation', 'error')}
     if screened: receipt['screened'] = screened
+    if filtered['messages']: receipt['filtered'] = filtered
     # Plain-language gaps the agent knows it missed (shown to the user); never boilerplate about attestation.
     gaps = envelope.get('gaps')
     if isinstance(gaps, list):
