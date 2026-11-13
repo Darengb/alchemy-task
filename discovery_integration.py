@@ -299,6 +299,7 @@ class DiscoveryIntegration:
         count = 0
         for config in ledger['config'].get('sources', []):
             if not isinstance(config, dict) or not config.get('source_key'): continue
+            self.store.drop_stale_pending(ledger['stream'], config['source_key'])
             for entry in self.store.source_state(ledger['stream'], config['source_key'])['backlog']:
                 retry = entry['status'] == 'blocked' and int(entry.get('retries') or 0) < 1
                 if entry['status'] in {'queued', 'deferred'} or retry:
@@ -1013,6 +1014,8 @@ class DiscoveryIntegration:
                 raise UserError('collect every approved source or record failed/partial coverage first')
         candidates, selection = [], []
         for config in ledger['config']['sources']:
+            # Waiting items whose thread was already researched with nothing newer are not researched again.
+            self.store.drop_stale_pending(ledger['stream'], config['source_key'])
             for entry in self.store.source_state(ledger['stream'], config['source_key'])['backlog']:
                 # A blocked item (research cut off by a time box or an interrupted run) gets one more run.
                 retry = entry['status'] == 'blocked' and int(entry.get('retries') or 0) < 1

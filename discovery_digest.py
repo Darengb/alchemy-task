@@ -30,7 +30,13 @@ def _failure_status(failure):
     # Internal research-review wording (field names, candidate ids, repair instructions) is not for the user.
     if re.search(r'\b[a-z]+_[a-z_]+\b|\bc_[0-9a-f]{20}\b|\b(?:Repair|payload|bundle|workstream|schema)\b', reason):
         return 'research needs another pass; it is queued for the next run'
-    return first_sentence(reason)[:160]
+    # Drop a repeated "Needs attention: <title>:" prefix and never cut a word in half.
+    title = str(failure.get('title') or '')
+    reason = re.sub(r'^\s*(?:Needs attention:\s*)?' + (re.escape(title) + r'\s*:\s*' if title else ''), '', reason, flags=re.I) or reason
+    text = first_sentence(reason)
+    if len(text) > 160:
+        text = text[:160].rsplit(' ', 1)[0].rstrip(' ,;:') + '...'
+    return text
 
 
 def failure_queued(failure):
