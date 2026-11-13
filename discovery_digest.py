@@ -222,6 +222,7 @@ def render_digest(run, *, stream, day, numbered, already, failures, coverage, ou
         action = digest_field(item, 'digest_next_action')
         if action: lines += ['**Next action:** ' + action, '']
         if item.get('subtasks'): lines += [*subtask_lines(item['subtasks']), '']
+        if item.get('not_proposed_line'): lines += [str(item['not_proposed_line']), '']
         if semantic:
             lines += ['**Choice:** ' + choice_line(ref, item.get('targets', [])), '']
         for url in list(dict.fromkeys(item.get('source_links') or []))[:2]:
@@ -421,6 +422,15 @@ class DiscoveryDigest:
                 numbered.append(item)
                 data['proposals'][pid] = {'binding': item, 'state': 'pending'}
                 data['seen'][identity] = pid
+            # One 'also mentioned' line per source item, under its first numbered proposal.
+            shown_parents = set()
+            for item in numbered:
+                extra = item.get('not_proposed') if isinstance(item.get('not_proposed'), dict) else None
+                parent = extra.get('parent_candidate_id') if extra else None
+                if extra and extra.get('line') and parent not in shown_parents:
+                    shown_parents.add(parent)
+                    item['not_proposed_line'] = str(extra['line'])[:600]
+                    data['proposals'][item['proposal_id']]['binding'] = item
             failures, coverage, deferred, blocked = failures or [], coverage or [], deferred or [], blocked or []
             text = render_digest(run, stream=stream, day=day, numbered=numbered, already=already, failures=failures,
                                  coverage=coverage, outcomes=outcomes or [], deferred=deferred, blocked=blocked,

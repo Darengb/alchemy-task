@@ -502,6 +502,7 @@ function ProposalCard({ p, run, reload, readOnly }) {
           {subtasks.length > 5 ? <li className="at-muted">+{subtasks.length - 5} more</li> : null}
         </ul>
       ) : null}
+      {p.not_proposed_line ? <p className="at-prop-text at-muted" style={{ fontSize: 13 }}>{p.not_proposed_line}</p> : null}
       {uncertain ? (
         <div className="at-prop-uncertain"><Icon name="alert" size={14} />
           <span>{[].concat(p.uncertainty || []).join(' ') || 'Hermes was not sure about this one. Check it before you add it.'}</span></div>

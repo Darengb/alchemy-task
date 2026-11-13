@@ -6,6 +6,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+from .discovery_caps import PRIORITIES
 from .discovery_identity import (MAX_ACTIONS, UserError, canonical_source_id, source_identity_covers,
     canonical_tasknote_relative_path, workstream_id, is_message_refinement)
 RESEARCH_KEYS = {
@@ -16,7 +17,7 @@ RESEARCH_KEYS = {
     "sources_unavailable", "existing_task_candidates", "new_information", "errors",
     "represented_candidate_ids",
 }
-OPTIONAL_RESEARCH_KEYS = {"existing_task_already_current", "digest_current_state", "digest_next_action", "digest_addition", "recommended_task_path", "subtasks"}
+OPTIONAL_RESEARCH_KEYS = {"priority", "existing_task_already_current", "digest_current_state", "digest_next_action", "digest_addition", "recommended_task_path", "subtasks"}
 MAX_SUBTASKS, SUBTASK_CHARS = 8, 140
 CONFIDENCES = {"high", "medium", "low"}
 DIGEST_FIELD_CHARS = 300
@@ -32,7 +33,7 @@ REQUESTED_SOURCE_IDS = 12
 MAX_SOURCE_IDS = 15
 MAX_TITLE_CHARS = 300
 MAX_REASON_CHARS = 500
-MAX_WORKSTREAMS = MAX_ACTIONS  # one workstream per separate action, even in a long multi-topic email
+MAX_WORKSTREAMS = MAX_ACTIONS  # payload-size safety bound; the parent trims extra workstreams, never rejects
 MAX_ARRAY_ITEMS = 50
 MAX_STRING_CHARS = 4000
 MAX_BUNDLE_BYTES = 512 * 1024
@@ -75,7 +76,9 @@ def validate_research(payload: Any, cid: str, expected_sources: list[str]) -> di
     if isinstance(payload, dict): _privacy_walk(payload)
     if isinstance(payload, dict) and set(payload) & OPTIONAL_RESEARCH_KEYS:
         for key in set(payload) & OPTIONAL_RESEARCH_KEYS:
-            if key == "existing_task_already_current":
+            if key == "priority":
+                if payload[key] not in PRIORITIES: raise UserError("priority must be one of: " + ", ".join(PRIORITIES))
+            elif key == "existing_task_already_current":
                 if type(payload[key]) is not bool: raise UserError(f"{key} must be a boolean")
             elif key == "subtasks":
                 value = payload[key]
@@ -285,8 +288,6 @@ def validate_bundle(bundle: Any, cid: str, expected_sources: list[Any], *, other
     if bundle.get('candidate_id') != cid:
         raise UserError('research bundle must match the assigned candidate')
     workstreams = bundle.get('workstreams')
-    if isinstance(workstreams, list) and len(workstreams) > MAX_WORKSTREAMS:
-        raise UserError('workstream count exceeds shared limit')
     if isinstance(workstreams, list) and any(isinstance(w, dict) and w.get('research_status') in ('insufficient', 'failed') for w in workstreams):
         raise UserError('delivery-ineligible research_status requires a fresh research retry')
     # Preserve the helper error for the combined identity ceiling.
