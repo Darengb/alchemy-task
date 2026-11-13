@@ -1488,6 +1488,32 @@ class DiscoveryStore:
             atomic_json(self._source_path(stream, source), state)
             return state
 
+    def drop_stale_pending(self, stream: str, source: str) -> list[str]:
+        """Resolve waiting items whose thread was already researched with no newer messages.
+
+        Items queued before a newer version of the same thread was researched (or before the
+        new-messages rule existed) would otherwise be researched again. Cheap: compares saved
+        message ids and times only. Returns the resolved backlog ids.
+        """
+        dropped: list[str] = []
+        with self._lock('source:' + _name(stream) + ':' + _name(source)):
+            state = self.source_state(stream, source)
+            for entry in state['backlog']:
+                if entry['status'] not in {'queued', 'deferred', 'blocked'}:
+                    continue
+                researched = [x for x in state['backlog'] if x is not entry and x['source_ids'] == entry['source_ids']
+                              and x['status'] in TERMINAL_BACKLOG]
+                if not researched:
+                    continue
+                if _has_newer_messages(content_version(entry.get('candidate')), researched):
+                    continue
+                entry['status'] = 'resolved'
+                entry['lineage'] = {'stale': True, 'reason': 'already researched; no newer messages', 'at': now()}
+                dropped.append(entry['backlog_id'])
+            if dropped:
+                atomic_json(self._source_path(stream, source), state)
+        return dropped
+
     def update_backlog(self, stream: str, source: str, backlog_id: str, *, status: str, lineage: dict[str, Any]) -> dict[str, Any]:
         if status not in {'queued', 'selected', 'deferred', 'blocked', 'accepted', 'excluded', 'resolved', 'pilot_skipped'} or not isinstance(lineage, dict):
             raise UserError('invalid backlog status or lineage')
