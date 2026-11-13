@@ -758,7 +758,7 @@ class DiscoveryIntegration:
                 out = {'run_id': run['run_id'], 'resumed': True, 'stream': current['name'],
                        'sources': run['config']['sources'], 'windows': run['config']['windows'],
                        'index_revision': run.get('index_revision'), 'recovery_required': True}
-                return {**out, **(self._follow_up_start(run['run_id'], run['config']) if not run.get('index_revision') else {})}
+                return self._with_screening({**out, **(self._follow_up_start(run['run_id'], run['config']) if not run.get('index_revision') else {})}, current['name'])
             configs = (self.rt.ctx.state.get('discovery_sources', default={}) or {}).get(current['name'], {})
 
             if len(configs) != len(current['sources']):
@@ -811,7 +811,19 @@ class DiscoveryIntegration:
             if mode == 'production' and _lineage is None: self._mark_active(current['name'], run)
             out = {'run_id': run, 'resumed': False, 'stream': current['name'], 'sources': config['sources'],
                    'windows': windows, 'research_remaining_today': current['research_cap']}
-            return {**out, **self._follow_up_start(run, config)}
+            return self._with_screening({**out, **self._follow_up_start(run, config)}, current['name'])
+
+    def _with_screening(self, out, stream_name):
+        """Add the user's own screening preferences for the parent's keep/drop step (soft guidance)."""
+        guidance = self.screening_guidance(stream_name)
+        if guidance:
+            out['user_screening_preferences'] = {
+                'text': guidance,
+                'how_to_use': ("The user's screening preferences for this stream, in their own words. Apply them when you give "
+                               "each envelope item its research/exclude disposition: lean toward excluding what they describe as "
+                               "unwanted and toward researching what they ask to keep. They are soft guidance: when unsure, keep "
+                               "the item. Message filters the user saved are applied by the plugin itself at collect.")}
+        return out
 
     def replay(self, run_id, *, operation, mode, session_id, user_approved=False, candidate_ids=None):
         """Three explicit operations; never relabel a current query as old input."""
@@ -974,18 +986,147 @@ class DiscoveryIntegration:
         prior = self._collection_receipts(ledger).get(source_key)
         if prior and prior['status'] == 'complete': return prior
         window = ledger['config']['windows'][source_key]
+        filters = self.source_filters(ledger['config'].get('stream_name', ledger['stream']), config)
         if envelope is None:
-            receipt = SourceAdapter(self.store, config, read_page=self._collector_reader(run_id, config)).collect(ledger['stream'], **window, max_pages=max_pages, previous_receipt=prior if prior and prior.get('verification') == 'adapter_verified' else None)
+            receipt = SourceAdapter(self.store, config, read_page=self._collector_reader(run_id, config)).collect(ledger['stream'], **window, max_pages=max_pages, previous_receipt=prior if prior and prior.get('verification') == 'adapter_verified' else None, filters=filters)
         else:
             if any(envelope.get(k) != v for k, v in window.items()):
                 raise UserError('attestation must use SAME saved source window')
-            receipt = collect_attested(self.store, ledger['stream'], config, envelope)
+            receipt = collect_attested(self.store, ledger['stream'], config, envelope, filters=filters)
             receipt['status'] = 'partial'  # agent assertion never exhaustive
         receipt['source_key'] = source_key
         receipt['pass'] = (prior or {}).get('pass', 0) + 1
         if prior: resource += '-pass-' + str(receipt['pass'])
         self.store.put_resource(run_id, resource, receipt)
         return receipt
+
+    # ------------------------------------------------------------ user filters
+
+    def _filter_data(self):
+        from .core import discovery_filters as F
+        return F.load(lambda key, default=None: self.rt.ctx.state.get(key, default=default))
+
+    def source_filters(self, stream_name, config):
+        """The enabled message rules for one stream and source, plus who 'me' is there."""
+        from .core import discovery_filters as F
+        try:
+            rules = F.rules_for(self._filter_data(), stream_name)
+        except Exception:  # noqa: BLE001 - filters never stop collection
+            return None
+        if not rules:
+            return None
+        accounts = self.rt.ctx.state.get('discovery_identity_accounts', default={}) or {}
+        return {'rules': rules, 'me': F.me_identity(config, accounts)}
+
+    def screening_guidance(self, stream_name):
+        from .core import discovery_filters as F
+        try:
+            return F.guidance_for(self._filter_data(), stream_name)
+        except Exception:  # noqa: BLE001
+            return ''
+
+    def filters(self, action, *, stream=None, rule=None, rule_id=None, guidance=None, user_approved=False, now=None):
+        """Chat and dashboard path for message filters and screening guidance.
+
+        Actions: filter_list, filter_add, filter_update, filter_remove, filter_test, guidance_set.
+        ``stream`` is a stream name or '*' for all streams. Saving needs user_approved=true;
+        filter_add/filter_update without it return the normalized rule and its plain description
+        to show back. filter_test reads only already-collected data (last 7 days).
+        """
+        from .core import discovery_filters as F
+        scope = (stream or '').strip()
+        if scope in ('', 'all', 'all streams', 'all_streams'):
+            scope = F.ALL_STREAMS if action != 'filter_list' or scope else ''
+        if scope and scope != F.ALL_STREAMS:
+            scope = self._stream(scope)['name']
+        data = copy.deepcopy(self._filter_data())
+        def save():
+            self.rt.ctx.state.set(F.STATE_KEY, data)
+        if action == 'filter_list':
+            scopes = [scope] if scope else sorted(k for k in data if isinstance(data.get(k), dict))
+            out = {}
+            for key in scopes:
+                entry = F.scope_settings(data, key)
+                out[key] = {'rules': [{**r, 'description': F.describe_rule(r)} for r in entry['rules']], 'guidance': entry['guidance']}
+            return {'scopes': out, 'all_streams_key': F.ALL_STREAMS}
+        if not scope:
+            raise UserError("name the stream, or '*' for all streams")
+        entry = data.setdefault(scope, {'rules': [], 'guidance': ''})
+        entry.setdefault('rules', [])
+        try:
+            if action == 'guidance_set':
+                text = F.clean_guidance(guidance)
+                if user_approved is not True:
+                    return {'saved': False, 'stream': scope, 'guidance': text, 'needs': 'confirm',
+                            'message': 'Show this guidance to the user and save it with user_approved=true after they confirm.'}
+                entry['guidance'] = text
+                save()
+                return {'saved': True, 'stream': scope, 'guidance': text}
+            if action in ('filter_add', 'filter_update'):
+                existing = None
+                if action == 'filter_update':
+                    existing = next((r for r in entry['rules'] if r.get('id') == (rule_id or (rule or {}).get('id'))), None)
+                    if existing is None:
+                        raise UserError('no rule with that id on this stream; run filter_list first')
+                normalized = F.normalize_rule(rule or {}, existing=existing)
+                if action == 'filter_add':
+                    if len(entry['rules']) >= F.MAX_RULES:
+                        raise UserError(f'at most {F.MAX_RULES} rules per stream')
+                    taken = {r.get('id') for r in entry['rules']}
+                    base, n = normalized['id'], 2
+                    while normalized['id'] in taken:
+                        normalized['id'] = f'{base}-{n}'; n += 1
+                shown = {'stream': scope, 'rule': normalized, 'description': F.describe_rule(normalized)}
+                if user_approved is not True:
+                    return {**shown, 'saved': False, 'needs': 'confirm',
+                            'message': 'Show the description to the user (optionally run filter_test with this rule) and save with user_approved=true after they confirm.'}
+                if existing is not None:
+                    entry['rules'] = [normalized if r.get('id') == existing.get('id') else r for r in entry['rules']]
+                else:
+                    entry['rules'].append(normalized)
+                save()
+                return {**shown, 'saved': True}
+            if action == 'filter_remove':
+                target = rule_id or (rule or {}).get('id')
+                if not any(r.get('id') == target for r in entry['rules']):
+                    raise UserError('no rule with that id on this stream; run filter_list first')
+                if user_approved is not True:
+                    return {'saved': False, 'needs': 'confirm', 'stream': scope, 'rule_id': target}
+                entry['rules'] = [r for r in entry['rules'] if r.get('id') != target]
+                save()
+                return {'saved': True, 'removed': target, 'stream': scope}
+            if action == 'filter_test':
+                if rule:
+                    rules = [F.normalize_rule(rule)]
+                elif rule_id:
+                    rules = [r for r in entry['rules'] if r.get('id') == rule_id]
+                    if not rules: raise UserError('no rule with that id on this stream; run filter_list first')
+                    rules = [{**rules[0], 'enabled': True}]
+                else:
+                    rules = F.rules_for(data, scope) if scope != F.ALL_STREAMS else [r for r in entry['rules'] if r.get('enabled', True)]
+                return {'stream': scope, 'rules': [F.describe_rule(r) for r in rules], **self._filter_preview(scope, rules, now=now)}
+        except F.FilterError as exc:
+            raise UserError(str(exc)) from exc
+        raise UserError('unknown filter action')
+
+    def _filter_preview(self, scope, rules, *, now=None):
+        from .core import discovery_filters as F
+        from .discovery import _streams
+        import time as _time
+        configs = self.rt.ctx.state.get('discovery_sources', default={}) or {}
+        accounts = self.rt.ctx.state.get('discovery_identity_accounts', default={}) or {}
+        names = sorted(_streams(self.rt)) if scope == F.ALL_STREAMS else [scope]
+        sources = []
+        for name in names:
+            for key, config in sorted((configs.get(name) or {}).items()):
+                if not isinstance(config, dict):
+                    continue
+                config = {**config, 'source_key': config.get('source_key', key)}
+                storage = name if ' ' not in name else 'stream-' + content_revision(name).split(':')[-1][:24]
+                items = [e.get('candidate') for e in self.store.source_state(storage, config['source_key']).get('backlog', [])
+                         if isinstance(e, dict) and isinstance(e.get('candidate'), dict)]
+                sources.append((config, F.me_identity(config, accounts), items))
+        return F.preview(rules, sources, now=_time.time() if now is None else now)
 
     def _collection_receipts(self, ledger):
         current = {}
@@ -1755,7 +1896,7 @@ SCHEMAS = {
  'discovery_recover': _schema('discovery_recover', 'Recover SAME saved run without blind relaunch/refund. New parent adoption requires out-of-band authorization. action=correct_source (run parent only, after freeze): replace ONE frozen item whose saved text is incomplete with its full thread (candidate_id, item in the discovery_collect envelope item shape {title, source_ids, source_revision, messages: [{id, author, time, text}]}, reason). Same thread only, before that item is accepted, once per item per run, and not while its research is running (reject that bundle first). Only that item is researched again, with a fresh attempt; the run continues.', {**RUN, 'action': {'type': 'string', 'enum': ['recover', 'correct_source']}, 'owner_restarted': BOOL, 'adopt': BOOL, 'candidate_id': STR, 'item': OBJ, 'reason': STR}, ['run_id']),
  'discovery_release_hold': _schema('discovery_release_hold', 'Deliberately release safety hold without refunding unknown attempts.', {**RUN, 'reason': STR}, ['run_id', 'reason']),
  'discovery_replay': _schema('discovery_replay', 'Explicit saved_input replay of finalized frozen inputs, or current fresh_validation / targeted_supplement. Distinct lineage/review; no old task mutation.', {**RUN, 'operation': {'type': 'string', 'enum': ['saved_input', 'fresh_validation', 'targeted_supplement']}, 'mode': {'type': 'string', 'enum': ['shadow', 'research_only']}, 'candidate_ids': {'type': 'array', 'items': STR}, 'user_approved': BOOL}, ['run_id', 'operation', 'mode', 'user_approved']),
- 'discovery_config': _schema('discovery_config', 'Configure approved source/delivery, confirm identity, or approvals. transcripts: one opt-in adds a meeting-transcript source per configured mail source (config: exclude [mail source keys], optional service_senders [addresses or @domains], keywords, admit_all, remove: true to delete the transcript sources of excluded mailboxes after the user approves); it reuses each mailbox read. Re-running keeps saved transcript sources and changes only the fields passed. approvals.owner_only is not available in this version (turning it on is refused with needs=not_available; planned follow-up). status shows current approvals. No approver list or credentials.', {'action': {'type': 'string', 'enum': ['source', 'transcripts', 'identity', 'delivery', 'approvals', 'status']}, 'stream': STR, 'config': OBJ, 'account_key': STR, 'identity': OBJ, 'user_approved': BOOL}, ['action']),
+ 'discovery_config': _schema('discovery_config', 'Configure approved source/delivery, confirm identity, or approvals. Message filters (see the alchemy-task:discovery skill): filter_list, filter_add, filter_update, filter_remove, filter_test and guidance_set with stream (a stream name, or \'*\' for all streams). rule: {name, from, to, subject, body, where, mode: all|any, enabled}; from/to accept \'me\', a name, an address or @domain. filter_add/filter_update/filter_remove/guidance_set without user_approved=true only return what would be saved: show it to the user and save after they confirm. filter_test previews what a rule (rule or rule_id, else the saved ones) would skip in the last 7 days of already-collected messages, without reading anything new. guidance: free-text screening preferences for that stream. transcripts: one opt-in adds a meeting-transcript source per configured mail source (config: exclude [mail source keys], optional service_senders [addresses or @domains], keywords, admit_all, remove: true to delete the transcript sources of excluded mailboxes after the user approves); it reuses each mailbox read. Re-running keeps saved transcript sources and changes only the fields passed. approvals.owner_only is not available in this version (turning it on is refused with needs=not_available; planned follow-up). status shows current approvals. No approver list or credentials.', {'action': {'type': 'string', 'enum': ['source', 'transcripts', 'identity', 'delivery', 'approvals', 'status', 'filter_list', 'filter_add', 'filter_update', 'filter_remove', 'filter_test', 'guidance_set']}, 'stream': STR, 'config': OBJ, 'account_key': STR, 'identity': OBJ, 'rule': OBJ, 'rule_id': STR, 'guidance': STR, 'user_approved': BOOL}, ['action']),
  'discovery_collect': _schema('discovery_collect', 'Collect approved source with actual configured reader, or explicitly partial attested envelope. SAME saved window. Each envelope item carries its full text in one provider-neutral shape: {title, source_ids, source_revision, messages: [{id, author, time, text}], subject?, url?}; never a file path. A refused item names itself: read its text and call again with the same run.', {**RUN, 'source_key': STR, 'envelope': OBJ, 'max_pages': {'type': 'integer', 'minimum': 1}}, ['run_id', 'source_key']),
  'discovery_context': _schema('discovery_context', 'Freeze collected source inventory, ALL-status task bodies, installed full skills, full rubric and approved context before research.', {**RUN, 'context': OBJ}, ['run_id']),
  'discovery_match': _schema('discovery_match', 'Post-join typed exact matching and all semantic target options; returns full body resources, no mutation.', {**RUN, 'unit_id': STR}, ['run_id', 'unit_id']),
@@ -1809,7 +1950,12 @@ def register(ctx, *, integration=None):
         action = a['action']
         if action == 'approvals':
             return service.configure_approvals(a['config'], session_id=session_id, user_approved=a.get('user_approved', False))
+        if action in ('filter_list', 'filter_test'):
+            return service.filters(action, stream=a.get('stream'), rule=a.get('rule'), rule_id=a.get('rule_id'))
         if action != 'status': service.authorize_approval(session_id)
+        if action in ('filter_add', 'filter_update', 'filter_remove', 'guidance_set'):
+            return service.filters(action, stream=a.get('stream'), rule=a.get('rule'), rule_id=a.get('rule_id'),
+                                   guidance=a.get('guidance'), user_approved=a.get('user_approved', False))
         if action == 'source':
             return service.configure(a['stream'], a['config'], user_approved=a.get('user_approved', False))
         if action == 'transcripts':
@@ -1823,7 +1969,7 @@ def register(ctx, *, integration=None):
         if action == 'identity':
             return service.confirm_identity(a['account_key'], a['identity'], user_confirmed=a.get('user_approved', False))
         if action == 'status':
-            return {'sources': ctx.state.get('discovery_sources', default={}), 'identities': ctx.state.get('discovery_identity_accounts', default={}), 'streams': ctx.state.get('streams', default={}), 'delivery': ctx.state.get('discovery_delivery', default={}), 'approvals': service.approval_settings()}
+            return {'sources': ctx.state.get('discovery_sources', default={}), 'identities': ctx.state.get('discovery_identity_accounts', default={}), 'streams': ctx.state.get('streams', default={}), 'delivery': ctx.state.get('discovery_delivery', default={}), 'approvals': service.approval_settings(), 'filters': ctx.state.get('discovery_filters', default={})}
         raise UserError('unknown configuration action')
     def digest_call(a, session_id='', **_):
         ledger = service.store.get_run(a['run_id'])

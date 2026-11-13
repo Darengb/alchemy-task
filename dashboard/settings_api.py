@@ -261,3 +261,50 @@ async def patch_tasks(request: Request):
                 rt.ctx.set_config(key, value.strip())  # empty: research uses the main model
         return {"ok": True, "plugin": PLUGIN}
     return await handle(request, run, {"default_area", "research_by_default", "research_model", "research_provider"})
+
+
+# ---------------------------------------------------------------- message filters
+
+_FILTER_ACTIONS = {"add": "filter_add", "update": "filter_update", "remove": "filter_remove", "test": "filter_test",
+                   "guidance": "guidance_set"}
+
+
+def _filters_service(rt: Any):
+    from ..discovery_integration import get_service
+    return get_service(rt)
+
+
+@router.get("/settings/filters/{scope}")
+async def get_filters(request: Request, scope: str):
+    """A stream's message filters and screening guidance, plus the all-streams ones ('*')."""
+    def run() -> dict[str, Any]:
+        rt = runtime()
+        service = _filters_service(rt)
+        out = {}
+        for key in dict.fromkeys([scope, "*"]):
+            try:
+                out.update(service.filters("filter_list", stream=key)["scopes"])
+            except Exception as exc:  # noqa: BLE001 - an unknown stream name
+                raise UIError("not_found", str(exc), 404) from exc
+        return {"ok": True, "scopes": out}
+    return await handle(request, run)
+
+
+@router.post("/settings/filters/{scope}")
+async def post_filters(request: Request, scope: str):
+    """Add, update, remove or test a rule, or set guidance. The signed-in owner's UI is the approval."""
+    def run(body: dict[str, Any]) -> dict[str, Any]:
+        action = _FILTER_ACTIONS.get(str(body.get("action") or ""))
+        if not action:
+            raise UIError("invalid_request", "Unknown filter action")
+        rt = runtime()
+        service = _filters_service(rt)
+        from ..core.discovery_identity import UserError
+        try:
+            out = service.filters(action, stream=scope, rule=body.get("rule"), rule_id=body.get("rule_id"),
+                                  guidance=body.get("guidance"), user_approved=action != "filter_test")
+        except UserError as exc:
+            raise UIError("invalid_request", str(exc)) from exc
+        return {"ok": True, **out}
+    return await handle(request, run, {"action", "rule", "rule_id", "guidance"})
+

@@ -344,7 +344,10 @@
       settings: () => call("GET", "/settings"),
       patchStream: (name, changes) => call("PATCH", `/settings/streams/${enc(name)}`, changes),
       runStream: (name) => call("POST", `/settings/streams/${enc(name)}/run`, {}),
-      patchTaskSettings: (changes) => call("PATCH", "/settings/tasks", changes)
+      patchTaskSettings: (changes) => call("PATCH", "/settings/tasks", changes),
+      // Message filters and screening guidance for a stream ('*' = all streams).
+      filters: (scope) => call("GET", `/settings/filters/${enc(scope)}`),
+      filterAction: (scope, body) => call("POST", `/settings/filters/${enc(scope)}`, body)
     };
   }
   function describeError(err) {
@@ -2590,7 +2593,13 @@
     const outcomes = (run.outcomes || []).filter((o) => o.status !== "noop");
     const attention = [...(run.conflicts || []).map((c) => ({ ...c, kind: "conflict" })), ...run.failures || []];
     const test = run.mode && run.mode !== "production";
-    return /* @__PURE__ */ react_dashboard_default.createElement("article", { className: "at-run" }, /* @__PURE__ */ react_dashboard_default.createElement("header", { className: "at-run-head" }, /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-title" }, titleCase(run.stream)), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-sub" }, /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(run.day, today), runTime(run) ? ` \xB7 ${runTime(run)}` : ""), sourcesLine(run) ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx(run.degraded && "is-late") }, sourcesLine(run)) : null, test ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-badge" }, "Test run") : null)), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), run.summary && run.summary.pending ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-count is-accent" }, run.summary.pending, " waiting") : null), visible.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-proposals" }, visible.map((p) => /* @__PURE__ */ react_dashboard_default.createElement(ProposalCard, { key: p.proposal_id, p, run, reload, readOnly: test }))) : filter === "all" && !proposals.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-none" }, "No new proposals in this run.") : null, outcomes.length ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Updated automatically", count: outcomes.length, className: "at-run-fold" }, outcomes.map((o) => /* @__PURE__ */ react_dashboard_default.createElement(Outcome, { key: o.unit_id, o, run, reload }))) : null, attention.length ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Needs attention", count: attention.length, tone: "late", className: "at-run-fold", defaultOpen: true }, attention.map((a, i) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: i, className: "at-attn" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 14 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-attn-title" }, a.title || (a.kind === "conflict" ? "Several tasks match one item" : "Research follow-up")), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, a.kind === "conflict" ? "Nothing was changed. Ask Hermes which task this belongs to." : a.reason))))) : null, /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Run details", className: "at-run-fold is-quiet" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-details" }, (run.coverage || []).map((c, i) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: i, className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx("at-statusdot", c.status === "complete" ? "is-ok" : "is-late") }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, c.source_key || c.source || "Source"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, c.status === "complete" ? "Checked" : c.status || "Unknown"))), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Run"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono" }, String(run.run_id).slice(0, 12))), run.delivery && run.delivery.state ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Digest"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, deliveryLabel(run.delivery.state))) : null)));
+    return /* @__PURE__ */ react_dashboard_default.createElement("article", { className: "at-run" }, /* @__PURE__ */ react_dashboard_default.createElement("header", { className: "at-run-head" }, /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-title" }, titleCase(run.stream)), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-sub" }, /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(run.day, today), runTime(run) ? ` \xB7 ${runTime(run)}` : ""), sourcesLine(run) ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx(run.degraded && "is-late") }, sourcesLine(run)) : null, test ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-badge" }, "Test run") : null)), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), run.summary && run.summary.pending ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-count is-accent" }, run.summary.pending, " waiting") : null), visible.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-proposals" }, visible.map((p) => /* @__PURE__ */ react_dashboard_default.createElement(ProposalCard, { key: p.proposal_id, p, run, reload, readOnly: test }))) : filter === "all" && !proposals.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-none" }, "No new proposals in this run.") : null, outcomes.length ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Updated automatically", count: outcomes.length, className: "at-run-fold" }, outcomes.map((o) => /* @__PURE__ */ react_dashboard_default.createElement(Outcome, { key: o.unit_id, o, run, reload }))) : null, attention.length ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Needs attention", count: attention.length, tone: "late", className: "at-run-fold", defaultOpen: true }, attention.map((a, i) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: i, className: "at-attn" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 14 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-attn-title" }, a.title || (a.kind === "conflict" ? "Several tasks match one item" : "Research follow-up")), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, a.kind === "conflict" ? "Nothing was changed. Ask Hermes which task this belongs to." : a.reason))))) : null, /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Run details", className: "at-run-fold is-quiet" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-details" }, (run.coverage || []).map((c, i) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: i, className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx("at-statusdot", c.status === "complete" ? "is-ok" : "is-late") }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, c.source_key || c.source || "Source"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, c.status === "complete" ? "Checked" : c.status || "Unknown"))), filteredRows(run.coverage).map((f, i) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: "f" + i, className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Filtered"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, f.title), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, f.rule, f.kept ? " \xB7 replies kept" : ""))), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Run"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono" }, String(run.run_id).slice(0, 12))), run.delivery && run.delivery.state ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Digest"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, deliveryLabel(run.delivery.state))) : null)));
+  }
+  function filteredRows(coverage) {
+    return (coverage || []).flatMap((c) => {
+      const f = c.filtered || {};
+      return [...(f.skipped || []).map((x) => ({ ...x, kept: false })), ...(f.context_only || []).map((x) => ({ ...x, kept: true }))];
+    }).slice(0, 50);
   }
   var deliveryLabel = (s) => ({ delivered: "Sent", host_pending: "Sent by Hermes", prepared: "Prepared", not_prepared: "Not sent", unknown: "Unknown", inflight: "Sending" })[s] || s;
   function Outcome({ o, run, reload }) {
@@ -2781,7 +2790,145 @@
     };
     const pickFreq = (e) => overlay.open(e.currentTarget, (close) => /* @__PURE__ */ react_dashboard_default.createElement(Menu, { close, items: FREQUENCIES.map(([v, l]) => ({ label: l, icon: v === freq ? "check" : void 0, run: () => setFreq(v) })) }), { width: 200 });
     const blocked = s.setup_blocked_reason || (s.activation_state && !/active|ok|ready/i.test(s.activation_state) ? s.activation_state : "");
-    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-stream" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-stream-head" }, /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-stream-name" }, String(s.name).replace(/\b\w/g, (c) => c.toUpperCase())), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, (s.areas || []).map((a) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: a, className: "at-inline-area" }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: a }), a)), s.last_run ? /* @__PURE__ */ react_dashboard_default.createElement("span", null, " \xB7 last ran ", lastRun(s.last_run)) : null)), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", icon: "play", onClick: runNow, disabled: !!busy }, busy === "run" ? "Starting\u2026" : "Run now")), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-stream-sched" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickFreq }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "clock", size: 14 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, (FREQUENCIES.find(([v]) => v === freq) || [0, freq])[1]), /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "chevD", size: 13 })), timed(freq) ? /* @__PURE__ */ react_dashboard_default.createElement("label", { className: "at-field at-timefield" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "at"), /* @__PURE__ */ react_dashboard_default.createElement("input", { type: "time", value: time, step: 300, onChange: (e) => setTime(e.target.value || time) })) : null, s.timezone ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted at-tz" }, s.timezone.replace(/_/g, " ")) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), dirty ? /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "primary", onClick: save, disabled: !!busy }, busy === "save" ? "Saving\u2026" : "Save") : null), (s.sources || []).length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-stream-sources" }, (s.sources || []).map((src) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: src.name, className: "at-chip", title: src.scope }, src.name))) : null, blocked ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-banner at-tone-late" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 14 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, blocked)) : null);
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-stream" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-stream-head" }, /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-stream-name" }, String(s.name).replace(/\b\w/g, (c) => c.toUpperCase())), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, (s.areas || []).map((a) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: a, className: "at-inline-area" }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: a }), a)), s.last_run ? /* @__PURE__ */ react_dashboard_default.createElement("span", null, " \xB7 last ran ", lastRun(s.last_run)) : null)), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", icon: "play", onClick: runNow, disabled: !!busy }, busy === "run" ? "Starting\u2026" : "Run now")), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-stream-sched" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickFreq }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "clock", size: 14 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, (FREQUENCIES.find(([v]) => v === freq) || [0, freq])[1]), /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "chevD", size: 13 })), timed(freq) ? /* @__PURE__ */ react_dashboard_default.createElement("label", { className: "at-field at-timefield" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "at"), /* @__PURE__ */ react_dashboard_default.createElement("input", { type: "time", value: time, step: 300, onChange: (e) => setTime(e.target.value || time) })) : null, s.timezone ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted at-tz" }, s.timezone.replace(/_/g, " ")) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), dirty ? /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "primary", onClick: save, disabled: !!busy }, busy === "save" ? "Saving\u2026" : "Save") : null), (s.sources || []).length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-stream-sources" }, (s.sources || []).map((src) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: src.name, className: "at-chip", title: src.scope }, src.name))) : null, blocked ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-banner at-tone-late" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 14 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, blocked)) : null, /* @__PURE__ */ react_dashboard_default.createElement(StreamFilters, { name: s.name }));
+  }
+  var FILTER_FIELDS = [
+    ["from", "From", "me, a name, an address or @domain"],
+    ["to", "To or cc", "email only"],
+    ["subject", "Subject or title", "email subject or meeting title"],
+    ["body", "Text contains", "ignores quoted replies"],
+    ["where", "Where", "source, channel or label"]
+  ];
+  var splitTerms = (text) => String(text || "").split(",").map((x) => x.trim()).filter(Boolean);
+  var blankRule = () => ({ name: "", mode: "all", from: "", to: "", subject: "", body: "", where: "" });
+  var toForm = (r) => ({
+    name: r.name || "",
+    mode: r.mode || "all",
+    ...Object.fromEntries(FILTER_FIELDS.map(([k]) => [k, ((r.match || {})[k] || []).join(", ")]))
+  });
+  var fromForm = (f) => ({
+    name: f.name.trim() || void 0,
+    mode: f.mode,
+    ...Object.fromEntries(FILTER_FIELDS.map(([k]) => [k, splitTerms(f[k])]))
+  });
+  function StreamFilters({ name }) {
+    const { api } = useApp();
+    const toast = useToast();
+    const [open, setOpen] = react_dashboard_default.useState(false);
+    const [data, setData] = react_dashboard_default.useState(null);
+    const [edit, setEdit] = react_dashboard_default.useState(null);
+    const [preview, setPreview] = react_dashboard_default.useState(null);
+    const [guidance, setGuidance] = react_dashboard_default.useState("");
+    const [busy, setBusy] = react_dashboard_default.useState(false);
+    const load = react_dashboard_default.useCallback(async () => {
+      try {
+        const res = await api.filters(name);
+        setData(res.scopes || {});
+        setGuidance(((res.scopes || {})[name] || {}).guidance || "");
+      } catch (err) {
+        toast(describeError(err), { tone: "error" });
+      }
+    }, [api, name, toast]);
+    react_dashboard_default.useEffect(() => {
+      if (open && !data) load();
+    }, [open, data, load]);
+    const act = async (body, done) => {
+      setBusy(true);
+      try {
+        const res = await api.filterAction(name, body);
+        if (done) done(res);
+        await load();
+      } catch (err) {
+        toast(describeError(err), { tone: "error" });
+      }
+      setBusy(false);
+    };
+    const test = async (body) => {
+      setBusy(true);
+      try {
+        setPreview(await api.filterAction(name, { action: "test", ...body }));
+      } catch (err) {
+        toast(describeError(err), { tone: "error" });
+      }
+      setBusy(false);
+    };
+    const own = data && data[name] && data[name].rules || [];
+    const shared = data && data["*"] && data["*"].rules || [];
+    const count = own.filter((r) => r.enabled !== false).length;
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-filters" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-filters-toggle", "aria-expanded": open, onClick: () => setOpen(!open) }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: open ? "chevD" : "chevR", size: 13 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, "Filters", count ? ` (${count})` : "")), open ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-filters-body" }, !data ? /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null) : null, own.map((r) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: r.id, className: cx("at-filter-rule", r.enabled === false && "is-off") }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-filter-desc" }, r.description), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-filter-actions" }, /* @__PURE__ */ react_dashboard_default.createElement(
+      "button",
+      {
+        type: "button",
+        role: "switch",
+        "aria-label": "Rule on",
+        "aria-checked": r.enabled !== false,
+        className: cx("at-switch", r.enabled !== false && "is-on"),
+        disabled: busy,
+        onClick: () => act({ action: "update", rule_id: r.id, rule: { enabled: r.enabled === false } })
+      },
+      /* @__PURE__ */ react_dashboard_default.createElement("i", null)
+    ), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "edit", label: "Edit rule", onClick: () => {
+      setPreview(null);
+      setEdit({ id: r.id, form: toForm(r) });
+    } }), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "x", label: "Delete rule", onClick: () => act({ action: "remove", rule_id: r.id }, () => toast("Rule deleted")) })))), shared.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted at-filter-shared" }, "All streams: ", shared.map((r) => r.name).join(" \xB7 ")) : null, edit ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-filter-form" }, /* @__PURE__ */ react_dashboard_default.createElement(
+      "input",
+      {
+        type: "text",
+        className: "at-field",
+        placeholder: "Rule name",
+        value: edit.form.name,
+        maxLength: 80,
+        onChange: (e) => setEdit({ ...edit, form: { ...edit.form, name: e.target.value } })
+      }
+    ), FILTER_FIELDS.map(([k, label, hint]) => /* @__PURE__ */ react_dashboard_default.createElement("label", { key: k, className: "at-filter-field" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, label), /* @__PURE__ */ react_dashboard_default.createElement(
+      "input",
+      {
+        type: "text",
+        className: "at-field",
+        placeholder: hint,
+        value: edit.form[k],
+        onChange: (e) => setEdit({ ...edit, form: { ...edit.form, [k]: e.target.value } })
+      }
+    ))), /* @__PURE__ */ react_dashboard_default.createElement("label", { className: "at-filter-field" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Terms"), /* @__PURE__ */ react_dashboard_default.createElement("select", { className: "at-field", value: edit.form.mode, onChange: (e) => setEdit({ ...edit, form: { ...edit.form, mode: e.target.value } }) }, /* @__PURE__ */ react_dashboard_default.createElement("option", { value: "all" }, "All must appear"), /* @__PURE__ */ react_dashboard_default.createElement("option", { value: "any" }, "Any one is enough"))), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-filter-buttons" }, /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", onClick: () => {
+      setEdit(null);
+      setPreview(null);
+    } }, "Cancel"), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", disabled: busy, onClick: () => test({ rule: fromForm(edit.form) }) }, "Test on last 7 days"), /* @__PURE__ */ react_dashboard_default.createElement(
+      Button,
+      {
+        size: "sm",
+        variant: "primary",
+        disabled: busy,
+        onClick: () => act(
+          edit.id ? { action: "update", rule_id: edit.id, rule: fromForm(edit.form) } : { action: "add", rule: fromForm(edit.form) },
+          () => {
+            setEdit(null);
+            setPreview(null);
+            toast("Rule saved");
+          }
+        )
+      },
+      "Save"
+    ))) : /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-filter-buttons" }, /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", icon: "plus", onClick: () => {
+      setPreview(null);
+      setEdit({ form: blankRule() });
+    } }, "Add rule"), own.length ? /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", disabled: busy, onClick: () => test({}) }, "Test on last 7 days") : null), preview ? /* @__PURE__ */ react_dashboard_default.createElement(FilterPreview, { p: preview }) : null, /* @__PURE__ */ react_dashboard_default.createElement("label", { className: "at-filter-field at-filter-guidance" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Screening preferences"), /* @__PURE__ */ react_dashboard_default.createElement(
+      "textarea",
+      {
+        className: "at-field",
+        rows: 2,
+        maxLength: 2e3,
+        value: guidance,
+        placeholder: "In your words, what to skip or keep when deciding what to research",
+        onChange: (e) => setGuidance(e.target.value),
+        onBlur: () => {
+          if (data && guidance !== ((data[name] || {}).guidance || "")) act({ action: "guidance", guidance }, () => toast("Saved"));
+        }
+      }
+    ))) : null);
+  }
+  function FilterPreview({ p }) {
+    const unknown = (p.me || []).filter((m) => !m.known);
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-filter-preview" }, /* @__PURE__ */ react_dashboard_default.createElement("div", null, p.messages_matched ? `${p.messages_matched} ${p.messages_matched === 1 ? "message" : "messages"} in the last ${p.days} days would be skipped (${p.threads_skipped} ${p.threads_skipped === 1 ? "thread" : "threads"} skipped, ${p.threads_kept_with_context} kept for other messages).` : `Nothing in the last ${p.days} days matches.`), (p.matches || []).slice(0, 10).map((m, i) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: i, className: "at-muted at-filter-hit" }, m.title, m.from ? ` \xB7 ${m.from}` : "", m.time ? ` \xB7 ${m.time}` : "", " \xB7 ", m.thread)), unknown.map((m) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: m.source, className: "at-muted" }, m.source, ': "me" is ', m.me, ".")));
   }
   function lastRun(v) {
     const d = typeof v === "number" ? new Date(v * (v < 1e12 ? 1e3 : 1)) : new Date(v);

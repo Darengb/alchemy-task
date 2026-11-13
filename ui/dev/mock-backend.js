@@ -135,6 +135,18 @@ export function createMockBackend({ today = nyToday() } = {}) {
       return { ok: true, stream: clone(s), message: `Updated ${s.name}: ${s.when}.` }
     }],
     ['POST', /^\/settings\/streams\/([^/]+)\/run$/, (q, [name]) => ({ ok: true, message: `The ${decodeURIComponent(name)} discovery run has started. Its proposals will appear here.` })],
+    ['GET', /^\/settings\/filters\/([^/]+)$/, (q, [scope]) => ({ ok: true, scopes: { [decodeURIComponent(scope)]: (db.filters ||= {})[decodeURIComponent(scope)] || { rules: [], guidance: '' }, '*': { rules: [], guidance: '' } } })],
+    ['POST', /^\/settings\/filters\/([^/]+)$/, (q, [scope], body) => {
+      const key = decodeURIComponent(scope); const f = ((db.filters ||= {})[key] ||= { rules: [], guidance: '' })
+      if (body.action === 'test') return { ok: true, days: 7, messages_matched: 1, threads_skipped: 1, threads_kept_with_context: 0, matches: [{ title: 'Weekly report', from: 'You', thread: 'skipped' }], me: [] }
+      if (body.action === 'guidance') { f.guidance = body.guidance; return { ok: true } }
+      if (body.action === 'remove') { f.rules = f.rules.filter((r) => r.id !== body.rule_id); return { ok: true } }
+      const r = body.action === 'update' ? f.rules.find((x) => x.id === body.rule_id) : { id: crypto.randomUUID(), enabled: true }
+      Object.assign(r, body.rule); r.match = Object.fromEntries(['from', 'to', 'subject', 'body', 'where'].filter((k) => (r[k] || []).length).map((k) => [k, r[k]]))
+      r.name ||= 'Rule'; r.description = `${r.name}: skip messages matching ${JSON.stringify(r.match)}.`
+      if (body.action === 'add') f.rules.push(r)
+      return { ok: true, saved: true, rule: r }
+    }],
     ['PATCH', /^\/settings\/tasks$/, (q, m, body) => { Object.assign(db.settings.tasks, body); for (const k of ['research_model', 'research_provider']) if (body[k] === '') db.settings.tasks[k] = null; if (body.default_area) db.settings.tasks.default_area = body.default_area; return { ok: true } }],
   ]
 

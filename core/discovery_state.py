@@ -1059,6 +1059,7 @@ class DiscoveryStore:
             return parsed, []
         out = copy.deepcopy(parsed)
         repairs: list[str] = []
+        self._drop_filtered_only(run_id, ledger, attempt, out, repairs)
         self._cap_workstreams(run_id, ledger, attempt, out, repairs)
         streams = [w for w in out['workstreams'] if isinstance(w, dict)]
         locators = {}
@@ -1121,6 +1122,39 @@ class DiscoveryStore:
             sources = []
         email = kind == 'mail' or any(str(x).startswith('gmail:') for x in sources)
         return classify_source_item(versions, kind), email
+
+    def _drop_filtered_only(self, run_id: str, ledger: dict[str, Any], attempt: dict[str, Any], out: dict[str, Any], repairs: list[str]) -> None:
+        """A workstream whose decisive messages are all ones the user's filters excluded is not proposed.
+
+        Filtered messages are background only. Never rejects: the workstream becomes a
+        no-op (kept in the record, never shown as a proposal) and the rest of the bundle stands.
+        """
+        from .discovery_filters import filtered_message_ids
+        versions = self._resource_json(run_id, ledger, 'source-body-' + attempt['candidate_id'])
+        filtered = filtered_message_ids(versions)
+        if not filtered:
+            return
+        dropped = 0
+        for w in out['workstreams']:
+            if not isinstance(w, dict) or is_noop(w):
+                continue
+            decisive = []
+            for x in w.get('exact_source_ids') or []:
+                try:
+                    cid = canonical_source_id(x)
+                except (UserError, TypeError, ValueError):
+                    continue
+                if is_message_refinement(cid):
+                    decisive.append(cid.rsplit(':', 1)[1])
+            anchor = w.get('action_anchor')
+            locator = anchor.get('locator') if isinstance(anchor, dict) else None
+            if not decisive and isinstance(locator, str) and locator.startswith('message:'):
+                decisive.append(locator.split(':', 1)[1])
+            if decisive and all(m in filtered for m in decisive):
+                w['disposition'] = 'exclude_resolved'
+                dropped += 1
+        if dropped:
+            repairs.append(f'not proposed: {dropped} workstream(s) rest only on messages your filters exclude (background only)')
 
     def _cap_workstreams(self, run_id: str, ledger: dict[str, Any], attempt: dict[str, Any], out: dict[str, Any], repairs: list[str]) -> None:
         """Keep the top proposals for the source item's cap; list the rest by title. Never rejects."""

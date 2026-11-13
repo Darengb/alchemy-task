@@ -169,6 +169,12 @@ SHARED_MESSAGE_INSTRUCTIONS = (
     'When one message (such as one email of meeting notes) holds several separate actions, keep one workstream per action '
     'and let them all cite that same message: the plugin anchors each action automatically, so never merge separate actions '
     'to avoid sharing a message and never invent action anchors.')
+FILTERED_MESSAGE_INSTRUCTIONS = (
+    ' Some messages in the source body carry "filtered" (context_only): the user\'s own filters excluded them. Read them '
+    'only as background to understand the other messages. Never base a workstream on a filtered message alone and never '
+    'cite one as a decisive message; a workstream must rest on at least one message without "filtered". If nothing '
+    'outside the filtered messages asks for action, propose nothing for it. The plugin does not propose workstreams whose '
+    'decisive messages are all filtered.')
 PREVIOUS_RESEARCH_INSTRUCTIONS = (
     ' This conversation was researched before: previous-research lists the earlier accepted workstreams (read-only). '
     'Earlier research is a starting point: keep its items (same titles, one item per earlier action) and ADD every other '
@@ -414,6 +420,8 @@ class DiscoveryRunner:
                 'Use action_key/action_anchor only when an action registry resource is provided. When you split a thread into several workstreams, give each the message-level id of its decisive message from the source body. ' + SHARED_MESSAGE_INSTRUCTIONS + ' '
                 + DIGEST_FIELD_INSTRUCTIONS + ' You must call discovery_research_submit before finishing.'}
         base_len = len(data['instructions'])
+        if '"context_only"' in self.store._source_body_text(run, ledger, attempt['candidate_id']):
+            data['instructions'] += FILTERED_MESSAGE_INSTRUCTIONS
         from .core.discovery_research import previous_research
         earlier = previous_research(self.store, run, self.store.get_candidate(run, attempt['candidate_id']))
         if earlier:
