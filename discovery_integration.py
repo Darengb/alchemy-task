@@ -300,6 +300,7 @@ class DiscoveryIntegration:
         for config in ledger['config'].get('sources', []):
             if not isinstance(config, dict) or not config.get('source_key'): continue
             self.store.drop_stale_pending(ledger['stream'], config['source_key'])
+            self.refilter_waiting(ledger, config)
             for entry in self.store.source_state(ledger['stream'], config['source_key'])['backlog']:
                 retry = entry['status'] == 'blocked' and int(entry.get('retries') or 0) < 1
                 if entry['status'] in {'queued', 'deferred'} or retry:
@@ -1018,6 +1019,20 @@ class DiscoveryIntegration:
         accounts = self.rt.ctx.state.get('discovery_identity_accounts', default={}) or {}
         return {'rules': rules, 'me': F.me_identity(config, accounts)}
 
+    def refilter_waiting(self, ledger, config):
+        """Apply the stream's current filters to its waiting items (queued, deferred, blocked)."""
+        empty = {'resolved': [], 'updated': [], 'messages': 0}
+        filters = self.source_filters(ledger['config'].get('stream_name', ledger['stream']), config)
+        if not filters:
+            return empty
+        from .core import discovery_filters as F
+        rules, me = filters['rules'], filters['me']
+        try:
+            return self.store.refilter_pending(ledger['stream'], config['source_key'],
+                                               lambda item: F.apply_to_item(item, rules, config=config, me=me))
+        except UserError:
+            return empty
+
     def screening_guidance(self, stream_name):
         from .core import discovery_filters as F
         try:
@@ -1128,6 +1143,25 @@ class DiscoveryIntegration:
                 sources.append((config, F.me_identity(config, accounts), items))
         return F.preview(rules, sources, now=_time.time() if now is None else now)
 
+    def _with_refiltered(self, ledger, coverage):
+        """Count messages the pre-research filter re-check excluded in the digest's filtered line."""
+        extra = {}
+        for name, info in ledger['resources'].items():
+            if name.startswith('refiltered-'):
+                found = read_json(self.store.run_dir(ledger['run_id']) / 'resources' / info['sha256'], {})
+                extra[name[len('refiltered-'):]] = int(found.get('messages') or 0)
+        if not extra:
+            return coverage
+        out = []
+        for r in coverage:
+            n = extra.pop(r.get('source_key'), 0) if isinstance(r, dict) else 0
+            if n:
+                f = dict(r.get('filtered') or {})
+                f['messages'] = int(f.get('messages') or 0) + n
+                r = {**r, 'filtered': f}
+            out.append(r)
+        return out
+
     def _collection_receipts(self, ledger):
         current = {}
         for name, info in ledger['resources'].items():
@@ -1157,6 +1191,10 @@ class DiscoveryIntegration:
         for config in ledger['config']['sources']:
             # Waiting items whose thread was already researched with nothing newer are not researched again.
             self.store.drop_stale_pending(ledger['stream'], config['source_key'])
+            # Filters added after an item was queued apply before it is researched.
+            refiltered = self.refilter_waiting(ledger, config)
+            if refiltered['messages'] and 'refiltered-' + config['source_key'] not in ledger['resources']:
+                self.store.put_resource(run_id, 'refiltered-' + config['source_key'], refiltered)
             for entry in self.store.source_state(ledger['stream'], config['source_key'])['backlog']:
                 # A blocked item (research cut off by a time box or an interrupted run) gets one more run.
                 retry = entry['status'] == 'blocked' and int(entry.get('retries') or 0) < 1
@@ -1626,6 +1664,7 @@ class DiscoveryIntegration:
         names = {c['source_key']: c['name'] for c in ledger['config'].get('sources', []) if isinstance(c, dict) and c.get('source_key') and c.get('name')}
         coverage = [{**r, 'name': names[r['source_key']]} if r.get('source_key') in names and not r.get('name') else r
                     for r in self._collection_receipts(ledger).values()]
+        coverage = self._with_refiltered(ledger, coverage)
         supplement_failures = []
         if 'supplement-selection' in ledger['resources']:
             info = ledger['resources']['supplement-selection']

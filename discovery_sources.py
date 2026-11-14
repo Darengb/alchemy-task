@@ -209,7 +209,7 @@ def normalize_mail_threads(threads, config):
             payload = msg.get('payload') or {}
             headers = {h['name'].lower(): h.get('value', '') for h in payload.get('headers', [])}
             sender = parseaddr(headers.get('from', ''))[1].lower()
-            entry = {'id': msg['id'], 'from': sender, 'subject': headers.get('subject', ''), 'date': msg['internalDate'], 'body': extract_body_text(payload)}
+            entry = {'id': msg['id'], 'from': sender, 'subject': headers.get('subject', ''), 'date': msg['internalDate'], 'body': extract_message_text(payload)}
             # Bulk/auto-reply markers let pre-research screening drop newsletters and auto-replies.
             marks = {k: headers[k] for k in SCREENING_HEADERS if k in headers}
             if marks: entry['headers'] = marks
@@ -419,7 +419,7 @@ def _header(msg, name):
 def _gmail_text(msg):
     return {'from': _header(msg, 'from'), 'to': _header(msg, 'to'), 'cc': _header(msg, 'cc'),
             'date': _header(msg, 'date'), 'subject': _header(msg, 'subject'), 'id': msg.get('id'),
-            'text': extract_body_text(msg.get('payload') or {}) or msg.get('snippet', '')}
+            'text': extract_message_text(msg.get('payload') or {}) or msg.get('snippet', '')}
 
 
 def _slack_text(msg):
@@ -633,15 +633,92 @@ def _decode_b64(data: str) -> str:
     except Exception:
         return ""
 
+TEXT_ATTACHMENT_SUFFIXES = ('.md', '.txt', '.csv')
+TEXT_ATTACHMENT_TYPES = ('text/plain', 'text/markdown', 'text/x-markdown', 'text/csv')
+ATTACHMENT_MAX_BYTES = 50 * 1024
+ATTACHMENTS_MAX_BYTES = 100 * 1024
+ATTACHMENT_LABEL = '[Attachment: '
+
+
+def _is_attachment(part: dict) -> bool:
+    if part.get('filename'):
+        return True
+    for h in part.get('headers') or []:
+        if str(h.get('name', '')).lower() == 'content-disposition' and str(h.get('value', '')).lower().startswith('attachment'):
+            return True
+    return False
+
+
+def is_text_attachment(part: dict) -> bool:
+    """A small-text attachment research may read: .md/.txt/.csv by name or text/plain|markdown|csv by type."""
+    if not isinstance(part, dict) or not _is_attachment(part):
+        return False
+    name = str(part.get('filename') or '').lower()
+    mime = str(part.get('mimeType') or '').lower().split(';')[0].strip()
+    return name.endswith(TEXT_ATTACHMENT_SUFFIXES) or mime in TEXT_ATTACHMENT_TYPES
+
+
+def _attachment_parts(payload: dict):
+    for part in (payload or {}).get('parts') or []:
+        if not isinstance(part, dict):
+            continue
+        if _is_attachment(part):
+            yield part
+        else:
+            yield from _attachment_parts(part)
+
+
+def _cut_utf8(raw: bytes, limit: int) -> str:
+    return raw[:limit].decode('utf-8', errors='ignore')
+
+
+def extract_attachment_text(payload: dict) -> str:
+    """Labeled blocks for inline text attachments; other attachments stay filename-only (omitted).
+
+    Bounded: ATTACHMENT_MAX_BYTES per attachment and ATTACHMENTS_MAX_BYTES per message, with a
+    plain note wherever text was cut, so nothing is lost silently.
+    """
+    blocks, budget = [], ATTACHMENTS_MAX_BYTES
+    for part in _attachment_parts(payload):
+        if not is_text_attachment(part):
+            continue
+        data = (part.get('body') or {}).get('data')
+        if not data:
+            continue
+        try:
+            raw = base64.urlsafe_b64decode(str(data) + '===')
+        except Exception:
+            continue
+        name = ' '.join(str(part.get('filename') or 'attachment').split())[:200].replace(']', ')')
+        limit = min(ATTACHMENT_MAX_BYTES, budget)
+        if limit <= 0:
+            blocks.append(f'{ATTACHMENT_LABEL}{name}]\n(not included: this message\'s attachment text limit was reached)')
+            continue
+        text = _normalize_text(_cut_utf8(raw, limit))
+        budget -= min(len(raw), limit)
+        if len(raw) > limit:
+            text += f'\n(attachment truncated: first {limit // 1024} KB of {max(1, len(raw) // 1024)} KB shown)'
+        if text:
+            blocks.append(f'{ATTACHMENT_LABEL}{name}]\n{text}')
+    return '\n\n'.join(blocks)
+
+
+def extract_message_text(payload: dict) -> str:
+    """Message body plus labeled text-attachment blocks."""
+    body = extract_body_text(payload)
+    extra = extract_attachment_text(payload)
+    return (body + '\n\n' + extra if body else extra) if extra else body
+
+
 def extract_body_text(payload: dict) -> str:
-    """Best-effort plaintext extraction from a Gmail message payload."""
+    """Best-effort plaintext extraction from a Gmail message payload (attachments excluded)."""
     if not payload:
         return ""
     mime = payload.get("mimeType", "")
     body = payload.get("body", {}) or {}
     if mime == "text/plain":
         return _normalize_text(_decode_b64(body.get("data", "")))
-    parts = payload.get("parts") or []
+    parts = [p for p in payload.get("parts") or [] if isinstance(p, dict) and not _is_attachment(p)]
     # Prefer text/plain children
     for p in parts:
         if p.get("mimeType") == "text/plain":

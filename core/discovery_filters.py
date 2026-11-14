@@ -256,9 +256,23 @@ def source_type(config: dict | None, item: dict) -> str:
     return 'other'
 
 
+_ATTACHMENT_BLOCK = re.compile(r'\n\n(?=\[Attachment: [^\]\n]{1,200}\]\n)')
+
+
 def strip_quoted(text: str) -> str:
-    """The message's own text: drops '>' lines and everything from a reply header down."""
+    """The message's own text: drops '>' lines and everything from a reply header down.
+
+    Labeled text-attachment blocks appended after the body are the sender's own
+    content, never quoted reply text, so they are kept whole.
+    """
     text = _text(text)
+    found = _ATTACHMENT_BLOCK.search(text)
+    if found:
+        return _strip_quoted_body(text[:found.start()]) + text[found.start():]
+    return _strip_quoted_body(text)
+
+
+def _strip_quoted_body(text: str) -> str:
     cut = len(text)
     for pattern in (_QUOTE_HEADER, _QUOTE_BANNERS):
         found = pattern.search(text)
@@ -491,6 +505,8 @@ def _epoch(value: Any) -> float | None:
         return None
     if re.fullmatch(r'\d{9,11}(?:\.\d+)?', text):
         return float(text)
+    if re.fullmatch(r'\d{12,14}(?:\.\d+)?', text):  # epoch milliseconds (Gmail internalDate style)
+        return float(text) / 1000.0
     try:
         parsed = dt.datetime.fromisoformat(text.replace('Z', '+00:00'))
     except ValueError:
