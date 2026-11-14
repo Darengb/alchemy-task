@@ -17,7 +17,7 @@ import shutil
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 from .discovery_caps import (CAPS as PROPOSAL_CAPS, SAFETY_BOUND, also_mentioned_line, classify_source_item,
     is_noop, title_of, trim_workstreams)
 from .discovery_identity import (UserError, _component, canonical_source_id, candidate_id, freeze_actions,
@@ -1611,6 +1611,41 @@ class DiscoveryStore:
             if dropped:
                 atomic_json(self._source_path(stream, source), state)
         return dropped
+
+    def refilter_pending(self, stream: str, source: str, apply: Callable[[dict[str, Any]], tuple[dict[str, Any], list, bool]]) -> dict[str, Any]:
+        """Re-check waiting items against the user's current filters.
+
+        ``apply(candidate)`` returns (marked candidate, matched messages, all excluded). An item whose
+        messages are all excluded is resolved; otherwise its stored message marks are refreshed.
+        Returns {'resolved': [backlog ids], 'updated': [backlog ids], 'messages': excluded count}.
+        """
+        out: dict[str, Any] = {'resolved': [], 'updated': [], 'messages': 0}
+        with self._lock('source:' + _name(stream) + ':' + _name(source)):
+            state = self.source_state(stream, source)
+            changed = False
+            for entry in state['backlog']:
+                if entry['status'] not in {'queued', 'deferred', 'blocked'} or not isinstance(entry.get('candidate'), dict):
+                    continue
+                try:
+                    marked, matched, all_out = apply(entry['candidate'])
+                except Exception:  # noqa: BLE001 - a broken rule never drops an item
+                    continue
+                if all_out:
+                    entry['status'] = 'resolved'
+                    entry['lineage'] = {'filtered': True, 'reason': 'filtered by your rules',
+                                        'rules': sorted({str(m.get('name') or m.get('rule')) for m in matched if isinstance(m, dict)}), 'at': now()}
+                    entry['candidate'] = marked
+                    out['resolved'].append(entry['backlog_id'])
+                    out['messages'] += len(matched)
+                    changed = True
+                elif marked != entry['candidate']:
+                    entry['candidate'] = marked
+                    out['updated'].append(entry['backlog_id'])
+                    out['messages'] += len(matched)
+                    changed = True
+            if changed:
+                atomic_json(self._source_path(stream, source), state)
+        return out
 
     def update_backlog(self, stream: str, source: str, backlog_id: str, *, status: str, lineage: dict[str, Any]) -> dict[str, Any]:
         if status not in {'queued', 'selected', 'deferred', 'blocked', 'accepted', 'excluded', 'resolved', 'pilot_skipped'} or not isinstance(lineage, dict):
