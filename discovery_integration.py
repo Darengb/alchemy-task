@@ -1307,7 +1307,11 @@ class DiscoveryIntegration:
             owner = (current or {}).get('lineage', {}).get('run_id')
             if current and owner and owner != run_id and self._run_created(owner) > str(ledger.get('created') or ''):
                 continue
-            self.store.update_backlog(ledger['stream'], entry['source_key'], entry['backlog_id'], status=state, lineage=lineage)
+            # Items closed between runs (filtered, already researched) stay closed; one odd item never stops a start.
+            try:
+                self.store.settle_backlog(ledger['stream'], entry['source_key'], entry['backlog_id'], status=state, lineage=lineage)
+            except UserError:
+                continue
 
     # Per-unit problems that are not a caller mistake: they land under Needs attention, never stop the run.
     UNIT_PROBLEMS = ('malformed', 'inventory is incomplete', 'parse', 'conflicting approved workspace',

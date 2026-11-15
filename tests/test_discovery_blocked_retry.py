@@ -29,3 +29,30 @@ def test_time_box_cut_offs_are_deferred_without_limit_and_newer_runs_take_over_o
     src = inspect.getsource(di.DiscoveryIntegration._settle_backlog)
     assert 'TIME_BOX_REASON' in src and "'deferred' if (not attempts or timed_out)" in src
     assert "self._run_created(owner) > str(ledger.get('created')" in src
+
+
+def test_replaying_an_old_run_leaves_an_item_closed_by_filters_or_the_stale_check_closed(tmp_path):
+    store = DiscoveryStore(tmp_path)
+    cand = {'source_ids': ['source:feed:acct:issue:1'], 'source_revision': 'v1', 'title': 'x', 'messages': [{'id': 'm1', 'text': 'x'}]}
+    store.enqueue_backlog('work', 'feed', [{'source_ids': cand['source_ids'], 'source_revision': 'v1', 'candidate': cand}])
+    bid = store.source_state('work', 'feed')['backlog'][0]['backlog_id']
+    store.update_backlog('work', 'feed', bid, status='blocked', lineage={'run_id': 'old', 'candidate_id': 'c'})
+    store.refilter_pending('work', 'feed', lambda item: (item, [{'name': 'rule'}], True))
+    assert store.source_state('work', 'feed')['backlog'][0]['status'] == 'resolved'
+    # The old run's outcome is replayed when the stream starts again: no error, item stays closed.
+    assert store.settle_backlog('work', 'feed', bid, status='blocked', lineage={'run_id': 'old', 'candidate_id': 'c'}) is None
+    item = store.source_state('work', 'feed')['backlog'][0]
+    assert item['status'] == 'resolved' and item['lineage'].get('filtered')
+    # A run's own terminal outcome is still idempotent.
+    store.enqueue_backlog('work', 'feed', [{'source_ids': ['source:feed:acct:issue:2'], 'source_revision': 'v1', 'title': 'y', 'body': 'text'}])
+    b2 = [b for b in store.source_state('work', 'feed')['backlog'] if b['backlog_id'] != bid][0]['backlog_id']
+    lin = {'run_id': 'r', 'candidate_id': 'c2'}
+    store.update_backlog('work', 'feed', b2, status='accepted', lineage=lin)
+    assert store.settle_backlog('work', 'feed', b2, status='accepted', lineage=lin)['status'] == 'accepted'
+
+
+def test_settle_uses_the_closed_item_safe_path():
+    import inspect
+    from alchemy_task import discovery_integration as di
+    src = inspect.getsource(di.DiscoveryIntegration._settle_backlog)
+    assert 'self.store.settle_backlog(' in src and 'self.store.update_backlog(' not in src

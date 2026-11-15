@@ -1647,6 +1647,18 @@ class DiscoveryStore:
                 atomic_json(self._source_path(stream, source), state)
         return out
 
+    def settle_backlog(self, stream: str, source: str, backlog_id: str, *, status: str, lineage: dict[str, Any]) -> dict[str, Any] | None:
+        """Record a run's outcome for a backlog item, unless the item was closed outside that run.
+
+        Filters and the stale-queue check resolve waiting items between runs (their lineage names no run).
+        Replaying an older run's outcome must leave such an item closed instead of failing the whole stream.
+        """
+        with self._lock('source:' + _name(stream) + ':' + _name(source)):
+            current = next((x for x in self.source_state(stream, source)['backlog'] if x['backlog_id'] == backlog_id), None)
+        if current and current['status'] in TERMINAL_BACKLOG and (current.get('lineage') or {}).get('run_id') != lineage.get('run_id'):
+            return None
+        return self.update_backlog(stream, source, backlog_id, status=status, lineage=lineage)
+
     def update_backlog(self, stream: str, source: str, backlog_id: str, *, status: str, lineage: dict[str, Any]) -> dict[str, Any]:
         if status not in {'queued', 'selected', 'deferred', 'blocked', 'accepted', 'excluded', 'resolved', 'pilot_skipped'} or not isinstance(lineage, dict):
             raise UserError('invalid backlog status or lineage')
