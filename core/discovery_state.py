@@ -1668,8 +1668,14 @@ class DiscoveryStore:
             if len(found) != 1:
                 raise UserError('unknown backlog identity')
             item = found[0]
-            if item['status'] in {'accepted', 'excluded', 'resolved'} and (item['status'] != status or item.get('lineage') != lineage):
-                raise UserError('terminal backlog lineage is immutable; new source activity needs a new revision')
+            # Closed items stay closed (reopening would research the same thread again; new messages arrive
+            # as a new entry). A conflicting update is a quiet no-op, never an error that stops a run.
+            if item['status'] in TERMINAL_BACKLOG and (item['status'] != status or item.get('lineage') != lineage):
+                ignored = item.setdefault('ignored_updates', [])
+                ignored.append({'status': status, 'run_id': lineage.get('run_id'), 'at': now()})
+                del ignored[:-5]
+                atomic_json(self._source_path(stream, source), state)
+                return item
             if item['status'] == 'blocked' and status == 'selected':
                 item['retries'] = int(item.get('retries') or 0) + 1
             item.update(status=status, lineage=copy.deepcopy(lineage))
