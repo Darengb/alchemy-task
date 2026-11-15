@@ -56,3 +56,15 @@ def test_settle_uses_the_closed_item_safe_path():
     from alchemy_task import discovery_integration as di
     src = inspect.getsource(di.DiscoveryIntegration._settle_backlog)
     assert 'self.store.settle_backlog(' in src and 'self.store.update_backlog(' not in src
+
+
+def test_any_update_to_a_closed_item_is_a_quiet_no_op(tmp_path):
+    store = DiscoveryStore(tmp_path)
+    store.enqueue_backlog('work', 'feed', [{'source_ids': ['source:feed:acct:issue:9'], 'source_revision': 'v1', 'title': 'x', 'body': 'text'}])
+    bid = store.source_state('work', 'feed')['backlog'][0]['backlog_id']
+    store.update_backlog('work', 'feed', bid, status='accepted', lineage={'run_id': 'r1', 'candidate_id': 'c'})
+    for status in ('blocked', 'selected', 'queued', 'excluded'):
+        out = store.update_backlog('work', 'feed', bid, status=status, lineage={'run_id': 'r2', 'candidate_id': 'c'})
+        assert out['status'] == 'accepted' and out['lineage']['run_id'] == 'r1'
+    item = store.source_state('work', 'feed')['backlog'][0]
+    assert item['status'] == 'accepted' and len(item['ignored_updates']) == 4
