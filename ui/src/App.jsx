@@ -74,7 +74,6 @@ function AppInner({ transport, host, initialView, settingsOnly, chat }) {
 
   // ---- actions
   const actions = React.useMemo(() => {
-    const done = (t) => t.status === 'done' || t.status === 'cancelled'
     const fail = (err) => toast(describeError(err), { tone: 'error' })
     const complete = (t) => store.mutate(t.task_id, { status: 'done', completed: store.getState().today }, () => api.complete(t.task_id))
     const reopen = (t) => store.mutate(t.task_id, { status: 'open', completed: null }, () => api.reopen(t.task_id))
@@ -84,7 +83,10 @@ function AppInner({ transport, host, initialView, settingsOnly, chat }) {
       open: (id) => setSelectedId(id),
       async toggle(t) {
         try {
-          if (done(t)) {
+          if (t.status === 'cancelled') {
+            await reopen(t)
+            toast('Task reopened')
+          } else if (t.status === 'done') {
             await reopen(t)
             toast('Marked not done', { undo: () => complete(t).catch(fail) })
           } else {

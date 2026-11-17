@@ -47,13 +47,15 @@ export function createMockBackend({ today = nyToday() } = {}) {
     ['GET', /^\/tasks\/([^/]+)$/, (q, [id]) => ({ ok: true, task: full(find(id)) })],
     ['PATCH', /^\/tasks\/([^/]+)$/, (q, [id], body) => {
       const t = find(id)
-      if (body.expected_revision && body.expected_revision !== t.revision && (body.title || body.summary !== undefined)) {
+      if (body.expected_revision && body.expected_revision !== t.revision) {
         throw new HttpError(409, 'stale_revision', 'The task changed since it was read')
       }
       if (body.date) { t.scheduled = body.date; t.due = body.date; log(t, `Moved to ${body.date}.`) }
       if (body.keep_separate) { if (body.due) t.due = body.due; if (body.scheduled) t.scheduled = body.scheduled }
       for (const k of ['title', 'summary', 'priority', 'area', 'status']) if (body[k] !== undefined) t[k] = body[k]
       if (body.status === 'done') t.completed = today
+      if (body.status === 'cancelled') { t.completed = null; log(t, `Cancelled. Reason: ${body.reason || 'No longer needed.'}`) }
+      if (body.reopen) log(t, 'Reopened.')
       bump(t)
       return { ok: true, task: full(t) }
     }],

@@ -6,6 +6,7 @@ import * as D from './lib/dates.js'
 // ------------------------------------------------------------------ icons
 const P = {
   check: 'M5 12.5l4.2 4.2L19 7',
+  slash: 'M5 19L19 5',
   chevL: 'M15 18l-6-6 6-6',
   chevR: 'M9 6l6 6-6 6',
   chevD: 'M6 9l6 6 6-6',
@@ -97,12 +98,12 @@ export function IconButton({ icon, label, className, size = 16, ...rest }) {
   )
 }
 
-export function Check({ checked, onChange, label, size = 'md', tone }) {
+export function Check({ checked, cancelled = false, onChange, label, size = 'md', tone }) {
   return (
-    <button type="button" role="checkbox" aria-checked={!!checked} aria-label={label}
-            className={cx('at-check', `at-check-${size}`, checked && 'is-on', tone && `at-tone-${tone}`)}
+    <button type="button" role={cancelled ? undefined : 'checkbox'} aria-checked={cancelled ? undefined : !!checked} aria-label={label}
+            className={cx('at-check', `at-check-${size}`, cancelled ? 'is-cancelled' : checked && 'is-on', tone && `at-tone-${tone}`)}
             data-no-drag="" onClick={(e) => { e.stopPropagation(); onChange(!checked) }}>
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d={P.check} /></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d={cancelled ? P.slash : P.check} /></svg>
     </button>
   )
 }

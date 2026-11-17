@@ -490,7 +490,7 @@ class TaskStore:
                     completed = tf.parse_date_words(changes.get("completed"), today, "completed") or \
                         tf.norm_date(fm.get("completed")) or today
                     setf("completed", completed)
-                elif old_closed and new not in tf.CLOSED_STATUSES:
+                elif new == "cancelled" or (old_closed and new not in tf.CLOSED_STATUSES):
                     setf("completed", None)
             elif changes.get("completed"):
                 setf("completed", tf.parse_date_words(changes["completed"], today, "completed"))

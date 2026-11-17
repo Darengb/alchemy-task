@@ -260,6 +260,9 @@
 .at-check.is-on { background: var(--at-accent); border-color: var(--at-accent-hi); box-shadow: 0 0 10px rgba(60, 70, 255, .6); }
 .at-check.is-on svg { stroke: #fff; stroke-dashoffset: 0; opacity: 1; }
 .at-check.at-tone-high:not(.is-on) { border-color: rgba(255, 179, 92, .75); }
+.at-check.is-cancelled:not(:hover) { border-color: var(--at-muted); }
+.at-check.is-cancelled:not(:hover) svg { stroke: var(--at-muted); }
+.at-check.is-cancelled svg { stroke-dashoffset: 0; opacity: 1; }
 .at-check-sm { width: 13px; height: 13px; border-width: 1.3px; }
 .at-check-sm svg { width: 8px; height: 8px; stroke-width: 3.6; }
 .at-check-lg { width: 26px; height: 26px; border-width: 1.6px; }

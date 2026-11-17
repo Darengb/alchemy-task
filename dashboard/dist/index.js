@@ -553,6 +553,7 @@
   // ui/src/ui.jsx
   var P = {
     check: "M5 12.5l4.2 4.2L19 7",
+    slash: "M5 19L19 5",
     chevL: "M15 18l-6-6 6-6",
     chevR: "M9 6l6 6-6 6",
     chevD: "M6 9l6 6 6-6",
@@ -649,22 +650,22 @@
   function IconButton({ icon, label, className, size = 16, ...rest }) {
     return /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-iconbtn", className), "aria-label": label, title: label, ...rest }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: icon, size }));
   }
-  function Check({ checked, onChange, label, size = "md", tone }) {
+  function Check({ checked, cancelled = false, onChange, label, size = "md", tone }) {
     return /* @__PURE__ */ react_dashboard_default.createElement(
       "button",
       {
         type: "button",
-        role: "checkbox",
-        "aria-checked": !!checked,
+        role: cancelled ? void 0 : "checkbox",
+        "aria-checked": cancelled ? void 0 : !!checked,
         "aria-label": label,
-        className: cx("at-check", `at-check-${size}`, checked && "is-on", tone && `at-tone-${tone}`),
+        className: cx("at-check", `at-check-${size}`, cancelled ? "is-cancelled" : checked && "is-on", tone && `at-tone-${tone}`),
         "data-no-drag": "",
         onClick: (e) => {
           e.stopPropagation();
           onChange(!checked);
         }
       },
-      /* @__PURE__ */ react_dashboard_default.createElement("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, /* @__PURE__ */ react_dashboard_default.createElement("path", { d: P.check }))
+      /* @__PURE__ */ react_dashboard_default.createElement("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, /* @__PURE__ */ react_dashboard_default.createElement("path", { d: cancelled ? P.slash : P.check }))
     );
   }
   function Segmented({ value, options, onChange, label }) {
@@ -930,6 +931,7 @@
     const { bind } = useDrag();
     const overlay = useOverlay();
     const done = isDone(task);
+    const cancelled = task.status === "cancelled";
     const overdue = !done && taskDate(task) && taskDate(task) < today;
     const dueDiffers = task.due && task.scheduled && task.due !== task.scheduled;
     const researching = task.research === "pending" || task.research === "running";
@@ -965,10 +967,11 @@
         Check,
         {
           checked: done,
+          cancelled,
           onChange: () => actions.toggle(task),
-          label: done ? "Mark not done" : "Mark done",
+          label: cancelled ? "Cancelled. Reopen task" : done ? "Mark not done" : "Mark done",
           size: compact ? "sm" : "md",
-          tone: overdue || task.priority === "urgent" || task.priority === "high" ? "high" : void 0
+          tone: !cancelled && (overdue || task.priority === "urgent" || task.priority === "high") ? "high" : void 0
         }
       ),
       /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-row-main" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-row-title", title: compact ? task.title : void 0 }, task.title), compact ? null : /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-row-meta" }, task.area ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-meta-area" }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: task.area }), task.area) : null, showDate ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx("at-meta-date", overdue && "is-late") }, relativeDay(taskDate(task), today)) : null, dueDiffers ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-meta-due" }, "due ", relativeDay(task.due, today)) : null, task.priority === "urgent" || task.priority === "high" ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-meta-prio" }, task.priority) : null, task.status === "waiting" ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-meta-status" }, "waiting") : null, task.status === "in-progress" ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-meta-status is-active" }, "in progress") : null, researching ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-meta-research" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "spark", size: 12 }), "researching") : null)),
@@ -988,7 +991,7 @@
       run: () => actions.move(task, q.date)
     })).filter((it, i) => quickDates(today)[i].date !== taskDate(task));
     return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-menu", role: "menu" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-menu-label" }, "Move to"), /* @__PURE__ */ react_dashboard_default.createElement(Menu, { items, close }), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-menu-item", onClick: () => setPicking(true) }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "cal", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, "Pick a date\u2026")), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-menu-sep" }), /* @__PURE__ */ react_dashboard_default.createElement(Menu, { close, items: [
-      { label: isDone(task) ? "Mark not done" : "Mark done", icon: "check", run: () => actions.toggle(task) },
+      { label: task.status === "cancelled" ? "Reopen task" : isDone(task) ? "Mark not done" : "Mark done", icon: "check", run: () => actions.toggle(task) },
       { label: "Open", icon: "arrowR", run: () => actions.open(task.task_id) }
     ] }));
   }
@@ -998,7 +1001,7 @@
     const isToday = date === today;
     const visible = prefs.hideDone ? tasks.filter((t) => !isDone(t)) : tasks;
     const doneHidden = tasks.length - visible.length;
-    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-daylist", drag && drag.over === date && "is-over"), "data-at-drop": date }, isToday && overdue.length ? /* @__PURE__ */ react_dashboard_default.createElement(OverdueSection, { tasks: overdue }) : null, visible.map((t) => /* @__PURE__ */ react_dashboard_default.createElement(TaskRow, { key: t.task_id, task: t, from: date, compact, selected: selectedId === t.task_id })), !visible.length && !(isToday && overdue.length) ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-empty-day" }, doneHidden ? `${doneHidden} done` : empty) : null, showAdd ? /* @__PURE__ */ react_dashboard_default.createElement(QuickAdd, { date }) : null, drag && drag.over === date && drag.from !== date ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-drop-hint" }, "Move to ", relativeDay(date, today)) : null);
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-daylist", drag && drag.over === date && "is-over"), "data-at-drop": date }, isToday && overdue.length ? /* @__PURE__ */ react_dashboard_default.createElement(OverdueSection, { tasks: overdue }) : null, visible.map((t) => /* @__PURE__ */ react_dashboard_default.createElement(TaskRow, { key: t.task_id, task: t, from: date, compact, selected: selectedId === t.task_id })), !visible.length && !(isToday && overdue.length) ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-empty-day" }, doneHidden ? `${doneHidden} closed` : empty) : null, showAdd ? /* @__PURE__ */ react_dashboard_default.createElement(QuickAdd, { date }) : null, drag && drag.over === date && drag.from !== date ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-drop-hint" }, "Move to ", relativeDay(date, today)) : null);
   }
   function OverdueSection({ tasks, defaultOpen = false }) {
     const { actions, today, selectedId } = useApp();
@@ -1406,7 +1409,7 @@
       "-",
       ...areas.map((ar) => ({ label: ar, icon: prefs.area === ar ? "check" : void 0, run: () => setPrefs({ area: ar }) })),
       "-",
-      { label: prefs.hideDone ? "Show completed" : "Hide completed", run: () => setPrefs({ hideDone: !prefs.hideDone }) }
+      { label: prefs.hideDone ? "Show closed tasks" : "Hide closed tasks", run: () => setPrefs({ hideDone: !prefs.hideDone }) }
     ] }), { width: 200, align: "end" });
     const addMenu = (e) => overlay.open(e.currentTarget, (close) => /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-pop-add" }, /* @__PURE__ */ react_dashboard_default.createElement(QuickAdd, { date: view === "day" ? a : today, autoFocus: true, onDone: close })), { width: 320, align: "end" });
     return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-tasks", `is-${view}`) }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-toolbar" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-toolbar-nav" }, /* @__PURE__ */ react_dashboard_default.createElement(Button, { variant: "ghost", size: "sm", onClick: () => setAnchor(today), disabled: a === today && view !== "month" }, "Today"), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "chevL", label: "Previous", onClick: () => step(-1) }), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "chevR", label: "Next", onClick: () => step(1) }), /* @__PURE__ */ react_dashboard_default.createElement("h1", { className: "at-period" }, periodText, view !== "week" && !periodText.includes(a.slice(0, 4)) ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-period-year" }, a.slice(0, 4)) : null)), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-toolbar-right" }, /* @__PURE__ */ react_dashboard_default.createElement(
@@ -1902,10 +1905,15 @@
       if (ok) setEditing(false);
       return ok;
     };
-    const patch = async (changes, local) => {
+    const patch = async (changes, local, { expectedRevision, expectedStatus } = {}) => {
       if (!await settle()) return;
+      const current = store.getState().byId[id] || task;
+      if (expectedStatus && current.status !== expectedStatus) {
+        toast("This task\u2019s status changed. Open the status menu again.", { tone: "error" });
+        return;
+      }
       try {
-        await store.mutate(id, local || changes, () => api.patch(id, { ...changes, expected_revision: (store.getState().byId[id] || task || {}).revision }));
+        return await store.mutate(id, local || changes, () => api.patch(id, { ...changes, expected_revision: expectedRevision ?? current.revision }));
       } catch (err) {
         if (err.code === "stale_revision" || err.code === "retry") setStale(true);
         toast(describeError(err), { tone: "error" });
@@ -1957,11 +1965,23 @@
       icon: p === (task.priority || "normal") ? "check" : void 0,
       run: () => patch({ priority: p })
     })) }), { width: 180 });
-    const pickStatus = (e) => overlay.open(e.currentTarget, (close) => /* @__PURE__ */ react_dashboard_default.createElement(Menu, { close, items: STATUSES.map(([v, l]) => ({
+    const toggleDone = async () => {
+      if (await settle()) actions.toggle(store.getState().byId[id] || task);
+    };
+    const reopenTask = async () => {
+      if (await patch({ status: "open", reopen: true }, { status: "open", completed: null }, { expectedStatus: "cancelled" })) toast("Task reopened");
+    };
+    const cancelTask = async () => {
+      const previous = task.status || "open";
+      const res = await patch({ status: "cancelled" }, { status: "cancelled", completed: null }, { expectedStatus: previous });
+      if (res) toast("Task cancelled", { undo: () => patch({ status: previous, reopen: true }, { status: previous }, { expectedRevision: res.task.revision }) });
+    };
+    const cancelled = task.status === "cancelled";
+    const pickStatus = (e) => overlay.open(e.currentTarget, (close) => /* @__PURE__ */ react_dashboard_default.createElement(Menu, { close, items: cancelled ? [{ label: "Reopen task", run: reopenTask }] : [...STATUSES.map(([v, l]) => ({
       label: l,
       icon: v === task.status ? "check" : void 0,
       run: () => patch({ status: v, ...v === "waiting" ? { reason: "Marked waiting from the Tasks UI" } : {} })
-    })) }), { width: 180 });
+    })), "-", { label: "Cancelled", run: cancelTask }] }), { width: 180 });
     const copyForChat = async () => {
       const cur = store.getState().byId[id] || task;
       const ok = await copyText(taskHandoff(cur));
@@ -2026,9 +2046,16 @@
         setSending(false);
       }
     };
-    return /* @__PURE__ */ react_dashboard_default.createElement(PanelShell, { narrow, onClose, footer: isDone(task) ? null : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-cta", sending && "is-busy"), onClick: sendToChat, disabled: sending }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "chat", size: 19, strokeWidth: 2 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, sending ? "Starting\u2026" : "Start in chat")), actions: /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, task.loading ? /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null) : null, /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "clipboard", label: "Copy title and ID for chat", onClick: copyForChat }), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Reload", onClick: load })) }, stale ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-banner at-tone-late" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, "This task changed somewhere else."), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", onClick: load }, "Reload")) : null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-titlerow" }, /* @__PURE__ */ react_dashboard_default.createElement(Check, { checked: isDone(task), onChange: async () => {
-      if (await settle()) actions.toggle(store.getState().byId[id] || task);
-    }, label: isDone(task) ? "Mark not done" : "Mark done", size: "lg" }), /* @__PURE__ */ react_dashboard_default.createElement(
+    return /* @__PURE__ */ react_dashboard_default.createElement(PanelShell, { narrow, onClose, footer: isDone(task) ? null : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-cta", sending && "is-busy"), onClick: sendToChat, disabled: sending }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "chat", size: 19, strokeWidth: 2 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, sending ? "Starting\u2026" : "Start in chat")), actions: /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, task.loading ? /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null) : null, /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "clipboard", label: "Copy title and ID for chat", onClick: copyForChat }), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Reload", onClick: load })) }, stale ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-banner at-tone-late" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, "This task changed somewhere else."), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", onClick: load }, "Reload")) : null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-titlerow" }, /* @__PURE__ */ react_dashboard_default.createElement(
+      Check,
+      {
+        checked: isDone(task),
+        cancelled,
+        onChange: cancelled ? reopenTask : toggleDone,
+        label: cancelled ? "Cancelled. Reopen task" : isDone(task) ? "Mark not done" : "Mark done",
+        size: "lg"
+      }
+    ), /* @__PURE__ */ react_dashboard_default.createElement(
       TitleField,
       {
         value: task.title,
@@ -2038,7 +2065,7 @@
         onLongPress: copyForChat,
         copied
       }
-    )), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-fields" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field", date && date < today && !isDone(task) && "is-late"), onClick: pickDate }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "cal", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, date ? relativeDay(date, today) : "No date")), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickArea }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: task.area }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, task.area || "No area")), isDone(task) ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-field at-status is-static", "data-s": task.status }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, task.status === "cancelled" ? "Cancelled" : "Done")) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field at-status", "data-s": task.status || "open", onClick: pickStatus }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, (STATUSES.find(([v]) => v === task.status) || [0, "Open"])[1])), separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickDue }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(task.due, today))) : null), /* @__PURE__ */ react_dashboard_default.createElement(SummaryField, { value: task.summary || "", onSave: (summary) => patch({ summary }) }), editing ? /* @__PURE__ */ react_dashboard_default.createElement(BodyEditor, { task, onSave: saveBody, onDone: () => setEditing(false), onStale: () => setStale(true), flushRef }) : task.body === void 0 ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-loading" }, /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null)) : /* @__PURE__ */ react_dashboard_default.createElement(BodyView, { task, onEdit: () => setEditing(true), onToggle: toggle }), /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "More", className: "at-more" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-more-grid" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Priority"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field is-plain", (task.priority === "high" || task.priority === "urgent") && "is-high"), onClick: pickPriority }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-prio-glyph", "data-p": task.priority || "normal" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, (task.priority || "normal").replace(/^\w/, (c) => c.toUpperCase())))), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due date"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field is-plain", onClick: pickDue }, shortDate(task.due, today)) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-link", onClick: pickDue }, "Set a separate due date")), task.completed ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Completed"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, shortDate(task.completed, today))) : null, task.project ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Project"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono" }, String(task.project).replace(/^\[\[|\]\]$/g, "").split("/").slice(-2, -1)[0] || task.project)) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "File"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono at-break" }, task.path))));
+    )), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-fields" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field", date && date < today && !isDone(task) && "is-late"), onClick: pickDate }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "cal", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, date ? relativeDay(date, today) : "No date")), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickArea }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: task.area }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, task.area || "No area")), task.status === "done" ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-field at-status is-static", "data-s": task.status }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, "Done")) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field at-status", "data-s": task.status || "open", onClick: pickStatus }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, cancelled ? "Cancelled" : (STATUSES.find(([v]) => v === task.status) || [0, "Open"])[1])), separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickDue }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(task.due, today))) : null), /* @__PURE__ */ react_dashboard_default.createElement(SummaryField, { value: task.summary || "", onSave: (summary) => patch({ summary }) }), editing ? /* @__PURE__ */ react_dashboard_default.createElement(BodyEditor, { task, onSave: saveBody, onDone: () => setEditing(false), onStale: () => setStale(true), flushRef }) : task.body === void 0 ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-loading" }, /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null)) : /* @__PURE__ */ react_dashboard_default.createElement(BodyView, { task, onEdit: () => setEditing(true), onToggle: toggle }), /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "More", className: "at-more" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-more-grid" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Priority"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field is-plain", (task.priority === "high" || task.priority === "urgent") && "is-high"), onClick: pickPriority }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-prio-glyph", "data-p": task.priority || "normal" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, (task.priority || "normal").replace(/^\w/, (c) => c.toUpperCase())))), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due date"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field is-plain", onClick: pickDue }, shortDate(task.due, today)) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-link", onClick: pickDue }, "Set a separate due date")), task.completed ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Completed"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, shortDate(task.completed, today))) : null, task.project ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Project"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono" }, String(task.project).replace(/^\[\[|\]\]$/g, "").split("/").slice(-2, -1)[0] || task.project)) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "File"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono at-break" }, task.path))));
   }
   function ResearchBar({ task }) {
     const { store, api } = useApp();
@@ -3084,7 +3111,6 @@
       return () => window.removeEventListener("alchemy-task:open", open);
     }, []);
     const actions = react_dashboard_default.useMemo(() => {
-      const done = (t) => t.status === "done" || t.status === "cancelled";
       const fail = (err) => toast(describeError(err), { tone: "error" });
       const complete = (t) => store.mutate(t.task_id, { status: "done", completed: store.getState().today }, () => api.complete(t.task_id));
       const reopen = (t) => store.mutate(t.task_id, { status: "open", completed: null }, () => api.reopen(t.task_id));
@@ -3097,7 +3123,10 @@
         open: (id) => setSelectedId(id),
         async toggle(t) {
           try {
-            if (done(t)) {
+            if (t.status === "cancelled") {
+              await reopen(t);
+              toast("Task reopened");
+            } else if (t.status === "done") {
               await reopen(t);
               toast("Marked not done", { undo: () => complete(t).catch(fail) });
             } else {

@@ -60,7 +60,8 @@ UPDATE_SCHEMA = {
         "date unless the user asks for different ones, so 'move X to Friday' or 'X is now due Friday' sets both; "
         "pass both (or keep_separate) only for 'due Friday, I'll do it Tuesday'. Changes only the fields you pass "
         "and appends a dated log line. Marking done sets the completed date. Reopening a done or cancelled task "
-        "needs reopen=true. Cancelled and waiting need a reason. Use this instead of editing task files."),
+        "needs reopen=true. Use cancelled when the user drops the task or says it is no longer needed. "
+        "Cancelled and waiting need a reason. Use this instead of editing task files."),
     "parameters": {
         "type": "object",
         "properties": {

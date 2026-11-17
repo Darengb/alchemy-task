@@ -75,10 +75,15 @@ export function TaskPanel({ id, narrow, onClose }) {
     if (ok) setEditing(false)
     return ok
   }
-  const patch = async (changes, local) => {
+  const patch = async (changes, local, { expectedRevision, expectedStatus } = {}) => {
     if (!(await settle())) return
+    const current = store.getState().byId[id] || task
+    if (expectedStatus && current.status !== expectedStatus) {
+      toast('This task’s status changed. Open the status menu again.', { tone: 'error' })
+      return
+    }
     try {
-      await store.mutate(id, local || changes, () => api.patch(id, { ...changes, expected_revision: (store.getState().byId[id] || task || {}).revision }))
+      return await store.mutate(id, local || changes, () => api.patch(id, { ...changes, expected_revision: expectedRevision ?? current.revision }))
     } catch (err) {
       if (err.code === 'stale_revision' || err.code === 'retry') setStale(true)
       toast(describeError(err), { tone: 'error' })
@@ -132,10 +137,20 @@ export function TaskPanel({ id, narrow, onClose }) {
       label: p[0].toUpperCase() + p.slice(1), icon: p === (task.priority || 'normal') ? 'check' : undefined, run: () => patch({ priority: p }),
     }))} />
   ), { width: 180 })
+  const toggleDone = async () => { if (await settle()) actions.toggle(store.getState().byId[id] || task) }
+  const reopenTask = async () => {
+    if (await patch({ status: 'open', reopen: true }, { status: 'open', completed: null }, { expectedStatus: 'cancelled' })) toast('Task reopened')
+  }
+  const cancelTask = async () => {
+    const previous = task.status || 'open'
+    const res = await patch({ status: 'cancelled' }, { status: 'cancelled', completed: null }, { expectedStatus: previous })
+    if (res) toast('Task cancelled', { undo: () => patch({ status: previous, reopen: true }, { status: previous }, { expectedRevision: res.task.revision }) })
+  }
+  const cancelled = task.status === 'cancelled'
   const pickStatus = (e) => overlay.open(e.currentTarget, (close) => (
-    <Menu close={close} items={STATUSES.map(([v, l]) => ({
+    <Menu close={close} items={cancelled ? [{ label: 'Reopen task', run: reopenTask }] : [...STATUSES.map(([v, l]) => ({
       label: l, icon: v === task.status ? 'check' : undefined, run: () => patch({ status: v, ...(v === 'waiting' ? { reason: 'Marked waiting from the Tasks UI' } : {}) }),
-    }))} />
+    })), '-', { label: 'Cancelled', run: cancelTask }]} />
   ), { width: 180 })
 
   // Hand the task to chat: copies its title and ID. Runs inside the tap or release that triggers it.
@@ -212,7 +227,8 @@ export function TaskPanel({ id, narrow, onClose }) {
         </div>
       ) : null}
       <div className="at-panel-titlerow">
-        <Check checked={isDone(task)} onChange={async () => { if (await settle()) actions.toggle(store.getState().byId[id] || task) }} label={isDone(task) ? 'Mark not done' : 'Mark done'} size="lg" />
+        <Check checked={isDone(task)} cancelled={cancelled} onChange={cancelled ? reopenTask : toggleDone}
+               label={cancelled ? 'Cancelled. Reopen task' : isDone(task) ? 'Mark not done' : 'Mark done'} size="lg" />
         <TitleField value={task.title} done={isDone(task)} onSave={(title) => patch({ title })}
                     onHold={holdRegistered} onLongPress={copyForChat} copied={copied} />
       </div>
@@ -223,13 +239,13 @@ export function TaskPanel({ id, narrow, onClose }) {
         <button type="button" className="at-field" onClick={pickArea}>
           <AreaDot area={task.area} /><span>{task.area || 'No area'}</span>
         </button>
-        {isDone(task) ? (
+        {task.status === 'done' ? (
           <span className="at-field at-status is-static" data-s={task.status}>
-            <span className="at-status-dot" /><span>{task.status === 'cancelled' ? 'Cancelled' : 'Done'}</span>
+            <span className="at-status-dot" /><span>Done</span>
           </span>
         ) : (
           <button type="button" className="at-field at-status" data-s={task.status || 'open'} onClick={pickStatus}>
-            <span className="at-status-dot" /><span>{(STATUSES.find(([v]) => v === task.status) || [0, 'Open'])[1]}</span>
+            <span className="at-status-dot" /><span>{cancelled ? 'Cancelled' : (STATUSES.find(([v]) => v === task.status) || [0, 'Open'])[1]}</span>
           </button>
         )}
         {separateDue ? (

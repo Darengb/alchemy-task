@@ -709,6 +709,16 @@
 .at-check.at-tone-high:not(.is-on) {
   border-color: rgba(255, 179, 92, .75);
 }
+.at-check.is-cancelled:not(:hover) {
+  border-color: var(--at-muted);
+}
+.at-check.is-cancelled:not(:hover) svg {
+  stroke: var(--at-muted);
+}
+.at-check.is-cancelled svg {
+  stroke-dashoffset: 0;
+  opacity: 1;
+}
 .at-check-sm {
   width: 13px;
   height: 13px;
