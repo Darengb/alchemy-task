@@ -147,7 +147,7 @@ async def task(request: Request, task_id: str):
 # ------------------------------------------------------------------ writes
 
 PATCH_FIELDS = {"date", "due", "scheduled", "keep_separate", "title", "summary", "priority", "area", "status",
-                "reason", "expected_revision"}
+                "reason", "reopen", "expected_revision"}
 
 
 def _update(task_id: str, changes: dict[str, Any], log: str, *, expect: str | None = None) -> dict[str, Any]:
@@ -178,14 +178,19 @@ async def patch_task(request: Request, task_id: str):
                 changes[key] = str(body[key])
         if body.get("status"):
             status = str(body["status"]).strip().lower()
-            if status not in ("open", "in-progress", "waiting"):
-                raise UIError("invalid_request", "Use complete or reopen for done; cancel from chat")
+            if status not in ("open", "in-progress", "waiting", "cancelled"):
+                raise UIError("invalid_request", "Use complete to mark a task done")
             changes["status"] = status
+            if body.get("reopen") is True:
+                changes["reopen"] = True
             if status == "waiting" and not changes.get("reason"):
                 changes["reason"] = "Marked waiting in the Tasks view"
+            if status == "cancelled" and not changes.get("reason"):
+                changes["reason"] = "No longer needed."
         if not changes:
             raise UIError("invalid_request", "Nothing to change")
-        what = "Moved" if body.get("date") else "Changed"
+        what = ("Cancelled" if changes.get("status") == "cancelled" else "Reopened" if changes.get("reopen")
+                else "Moved" if body.get("date") else "Changed")
         return _update(task_id, changes, f"{what} in the Tasks view.", expect=body.get("expected_revision") or None)
     return await handle(request, run, PATCH_FIELDS)
 

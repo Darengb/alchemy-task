@@ -43,6 +43,7 @@ export function TaskRow({ task, from, compact, showDate, selected }) {
   const { bind } = useDrag()
   const overlay = useOverlay()
   const done = isDone(task)
+  const cancelled = task.status === 'cancelled'
   const overdue = !done && D.taskDate(task) && D.taskDate(task) < today
   const dueDiffers = task.due && task.scheduled && task.due !== task.scheduled
   const researching = task.research === 'pending' || task.research === 'running'
@@ -58,8 +59,9 @@ export function TaskRow({ task, from, compact, showDate, selected }) {
            if (e.key === ' ' && e.target === e.currentTarget) { e.preventDefault(); actions.toggle(task) }
          }}
          tabIndex={0} role="button" aria-label={task.title} data-task={task.task_id}>
-      <Check checked={done} onChange={() => actions.toggle(task)} label={done ? 'Mark not done' : 'Mark done'}
-             size={compact ? 'sm' : 'md'} tone={overdue || task.priority === 'urgent' || task.priority === 'high' ? 'high' : undefined} />
+      <Check checked={done} cancelled={cancelled} onChange={() => actions.toggle(task)}
+             label={cancelled ? 'Cancelled. Reopen task' : done ? 'Mark not done' : 'Mark done'}
+             size={compact ? 'sm' : 'md'} tone={!cancelled && (overdue || task.priority === 'urgent' || task.priority === 'high') ? 'high' : undefined} />
       <div className="at-row-main">
         <div className="at-row-title" title={compact ? task.title : undefined}>{task.title}</div>
         {compact ? null : (
@@ -97,7 +99,7 @@ function RowMenu({ task, close }) {
       </button>
       <div className="at-menu-sep" />
       <Menu close={close} items={[
-        { label: isDone(task) ? 'Mark not done' : 'Mark done', icon: 'check', run: () => actions.toggle(task) },
+        { label: task.status === 'cancelled' ? 'Reopen task' : isDone(task) ? 'Mark not done' : 'Mark done', icon: 'check', run: () => actions.toggle(task) },
         { label: 'Open', icon: 'arrowR', run: () => actions.open(task.task_id) },
       ]} />
     </div>
@@ -117,7 +119,7 @@ export function DayList({ date, tasks = [], overdue = [], compact, empty = 'Noth
       {isToday && overdue.length ? <OverdueSection tasks={overdue} /> : null}
       {visible.map((t) => <TaskRow key={t.task_id} task={t} from={date} compact={compact} selected={selectedId === t.task_id} />)}
       {!visible.length && !(isToday && overdue.length) ? (
-        <div className="at-empty-day">{doneHidden ? `${doneHidden} done` : empty}</div>
+        <div className="at-empty-day">{doneHidden ? `${doneHidden} closed` : empty}</div>
       ) : null}
       {showAdd ? <QuickAdd date={date} /> : null}
       {drag && drag.over === date && drag.from !== date ? <div className="at-drop-hint">Move to {D.relativeDay(date, today)}</div> : null}
@@ -484,7 +486,7 @@ export function TasksView({ narrow }) {
       '-',
       ...areas.map((ar) => ({ label: ar, icon: prefs.area === ar ? 'check' : undefined, run: () => setPrefs({ area: ar }) })),
       '-',
-      { label: prefs.hideDone ? 'Show completed' : 'Hide completed', run: () => setPrefs({ hideDone: !prefs.hideDone }) },
+      { label: prefs.hideDone ? 'Show closed tasks' : 'Hide closed tasks', run: () => setPrefs({ hideDone: !prefs.hideDone }) },
     ]} />
   ), { width: 200, align: 'end' })
   const addMenu = (e) => overlay.open(e.currentTarget, (close) => (

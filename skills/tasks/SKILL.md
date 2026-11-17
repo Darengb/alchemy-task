@@ -64,7 +64,8 @@ If they say no or ignore the offer, do not ask again about the same item.
 
 - Pass only the fields that change, plus a one-sentence `log` saying what changed and why. Write it as a
   neutral record ("Emailed the hall manager; confirmed 9 AM load-in"), not addressed to the user.
-- Done: `status: done` (the completed date is set for you). Cancelled or waiting: include `reason`.
+- Use `status: done` when the work was finished (the tool sets the completion date).
+- Use `status: cancelled` when the user drops a task or says it is no longer needed. Pass the reason they gave, or `reason: "No longer needed."` if they didn't give one. For `waiting`, include what or whom the task is waiting on.
 - Reopening a done or cancelled task needs `reopen: true`, only when the user wants it reopened.
 - A user correction ("actually it's due Thursday") updates the existing task; never create a second one.
 
@@ -123,7 +124,8 @@ Map what people say to tools; never tell them to type a command when you can do 
 | "move all the overdue BFCM ones to Wednesday" | `task_update` per task, after listing which ones you will change |
 | "research X again", "redo the research" | `task_research` with the task |
 | "work on X", "pick up X", "continue X", "where was I on X?" | `task_work_start` |
-| "I'm done with X", "X is finished", "drop X", "X is waiting on Sam" | `task_update` (or `task_checkpoint` inside a work session) |
+| "I'm done with X", "X is finished", "X is waiting on Sam" | `task_update` (or `task_checkpoint` inside a work session) |
+| "drop X", "I don't need to do X anymore" | `task_update` with `status: cancelled` and a `reason` |
 | "set up a daily digest from my email", "add a discovery for work" | load `alchemy-task:discovery`; `discovery_stream` `create` |
 | "change my digest to 7 PM", "make it weekdays only", "stop the work digest" | `discovery_stream` `update` / `remove` (confirm first) |
 | "run my digest now", "check my email for tasks now" | `discovery_stream` `run_now` |

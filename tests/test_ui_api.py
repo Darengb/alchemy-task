@@ -97,6 +97,41 @@ def test_complete_and_reopen_round_trip(client):
     assert back["status"] == "open" and "completed" not in back
 
 
+def test_dashboard_cancel_stays_in_closed_list_and_undo_restores_status(client):
+    t = make_task(client, date="2026-01-05")
+    url = f"/tasks/{t['task_id']}"
+    waiting = client.patch(url, json={"status": "waiting"}).json()["task"]
+    cancelled = client.patch(url, json={"status": "cancelled", "expected_revision": waiting["revision"]}).json()["task"]
+    assert cancelled["status"] == "cancelled" and "completed" not in cancelled
+    assert "Reason: No longer needed." in cancelled["body"]
+    params = {"from": t["date"], "to": t["date"]}
+    assert not client.get("/tasks", params=params).json()["tasks"]
+    closed = client.get("/tasks", params={**params, "include_done": "1"}).json()["tasks"]
+    assert [r["status"] for r in closed if r["task_id"] == t["task_id"]] == ["cancelled"]
+    assert t["task_id"] not in {r["task_id"] for r in client.get("/overdue").json()["tasks"]}
+    undo = {"status": "waiting", "reopen": True, "expected_revision": cancelled["revision"]}
+    assert client.patch(url, json={**undo, "expected_revision": waiting["revision"]}).status_code == 409
+    back = client.patch(url, json=undo).json()["task"]
+    assert back["status"] == "waiting" and back["date"] == t["date"]
+
+
+def test_agent_cancel_is_visible_in_dashboard_without_completion(client, ctx):
+    from alchemy_task import task_tools
+
+    t = make_task(client)
+    url = f"/tasks/{t['task_id']}"
+    client.post(f"{url}/complete")
+    runtime.bind(ctx)
+    try:
+        result = json.loads(task_tools.task_update({"task": t["task_id"], "status": "cancelled", "reason": "Scope changed."}))
+        assert result["ok"], result
+    finally:
+        runtime.bind(None)
+    found = client.get(url).json()["task"]
+    assert found["status"] == "cancelled" and "completed" not in found
+    assert "Scope changed." in found["body"]
+
+
 def test_title_edit_with_stale_revision_is_refused(client):
     t = make_task(client)
     client.patch(f"/tasks/{t['task_id']}", json={"priority": "high"})
