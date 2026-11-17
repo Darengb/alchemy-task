@@ -135,7 +135,9 @@ async def runs(request: Request):
             if query.get(key): dt.date.fromisoformat(query[key])
         def work():
             service = _service()
-            records = [service.project_run(r) for r in service._all_runs()
+            # History is polled even from the Tasks tab. Read saved state here;
+            # explicit discovery operations own reconciliation and backlog writes.
+            records = [service.project_run(r, reconcile=False) for r in service._all_runs()
                        if (not query.get('stream') or r['config'].get('stream_name', r['stream']) == query['stream'])
                        and (not query.get('day_from') or r['business_date'] >= query['day_from'])
                        and (not query.get('day_to') or r['business_date'] <= query['day_to'])]
@@ -151,7 +153,7 @@ async def run(request: Request, run_id: str):
         _query(request)
         def work():
             service = _service()
-            return {'ok': True, **service.project_run(_run(service, run_id))}
+            return {'ok': True, **service.project_run(_run(service, run_id), reconcile=False)}
         return await asyncio.to_thread(work)
     except (UserError, NeedsInput, ConcurrentEditError, HTTPException, ValueError, KeyError, TypeError, OSError) as exc:
         return _error(exc)

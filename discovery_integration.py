@@ -1851,12 +1851,12 @@ class DiscoveryIntegration:
         if run_id: return project(self.store.get_run(run_id))
         return {'runs': [project(r) for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')} or self._actor_allowed(session_id, read=True)]}
 
-    def project_run(self, ledger):
+    def project_run(self, ledger, *, reconcile=True):
         """Project durable state after the entrypoint has checked its caller."""
         def project(ledger):
             # UI sees full records; child capability tokens/launch capabilities remain internal.
             run = ledger['run_id']
-            if ledger.get('review'):
+            if reconcile and ledger.get('review'):
                 self.reconcile_endstate(run)
                 ledger = self.store.get_run(run)
             attempts = [{k: v for k, v in a.items() if k not in {'token', 'handle'}} for a in ledger['attempts'].values()]
