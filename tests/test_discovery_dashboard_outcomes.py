@@ -16,6 +16,22 @@ APPROVE = '/api/plugins/alchemy-task/proposals/{}/approve'
 EXPIRED_NOW = dt.datetime(2030, 2, 1, 12, tzinfo=dt.timezone.utc)
 CREATE = {'choice': 'create', 'undated': True, 'area': 'work'}
 
+def test_dashboard_history_reads_saved_proposals_without_replaying_runs(tmp_path, settings, data_dir, monkeypatch):
+    service, _, run, _, proposal = fixture_service(tmp_path, settings, data_dir)
+    client, owner = client_for(service, monkeypatch)
+
+    def unexpected_replay(_):
+        pytest.fail('Dashboard history must not replay the backlog')
+
+    monkeypatch.setattr(service, 'reconcile_endstate', unexpected_replay)
+    endpoint = '/api/plugins/alchemy-task/runs'
+    for response, listing in ((client.get(endpoint, headers=owner), True),
+                              (client.get(f'{endpoint}/{run}', headers=owner), False)):
+        assert response.status_code == 200, response.text
+        data = response.json()
+        record = next(row for row in data['runs'] if row['run_id'] == run) if listing else data
+        assert record['proposals'][0]['proposal_id'] == proposal['proposal_id']
+
 
 def _head(settings):
     return subprocess.check_output(['git', '-C', str(settings.workspace_root), 'rev-parse', 'HEAD'], text=True).strip()
