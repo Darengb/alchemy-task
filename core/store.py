@@ -495,6 +495,10 @@ class TaskStore:
             elif changes.get("completed"):
                 setf("completed", tf.parse_date_words(changes["completed"], today, "completed"))
 
+            if "subtask_edits" in changes:
+                body, subtask_notes = tf.edit_subtasks(body, changes["subtask_edits"])
+                notes.extend(subtask_notes)
+
             if changes.get("notes_append"):
                 body = tf.append_to_section(body, "Notes", str(changes["notes_append"]))
                 notes.append("notes added")

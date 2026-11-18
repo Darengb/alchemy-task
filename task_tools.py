@@ -56,7 +56,7 @@ CREATE_SCHEMA = {
 UPDATE_SCHEMA = {
     "name": "task_update",
     "description": (
-        "Change an existing task: status, dates, priority, title, area, notes. Dates: due and scheduled are one "
+        "Change an existing task: status, dates, priority, title, area, notes, or subtasks. Dates: due and scheduled are one "
         "date unless the user asks for different ones, so 'move X to Friday' or 'X is now due Friday' sets both; "
         "pass both (or keep_separate) only for 'due Friday, I'll do it Tuesday'. Changes only the fields you pass "
         "and appends a dated log line. Marking done sets the completed date. Reopening a done or cancelled task "
@@ -86,6 +86,11 @@ UPDATE_SCHEMA = {
             "tags_add": _LIST,
             "tags_remove": _LIST,
             "notes_append": {"type": "string", "description": "Text to add at the end of the Notes section."},
+            "subtask_edits": {"type": "array", "maxItems": 50, "minItems": 1,
+                "description": "Add, remove or rename checkboxes in Subtasks. Read the task body first and use exact current titles for remove/rename. Rename preserves checked state.",
+                "items": {"type": "object", "required": ["op", "title"], "additionalProperties": False,
+                    "properties": {"op": {"type": "string", "enum": ["add", "remove", "rename"]},
+                        "title": {"type": "string"}, "new_title": {"type": "string", "description": "Required only for rename."}}}},
             "log": {"type": "string", "description": "What changed and why, in one sentence (recommended)."},
         },
         "required": ["task"],
@@ -206,7 +211,7 @@ def task_create(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
 
 _UPDATE_KEYS = ("status", "reason", "reopen", "completed", "title", "summary", "rename_file", "due", "undated", "scheduled",
                 "keep_separate",
-                "priority", "project", "estimate", "area", "contexts", "tags_add", "tags_remove", "notes_append", "log")
+                "priority", "project", "estimate", "area", "contexts", "tags_add", "tags_remove", "notes_append", "subtask_edits", "log")
 
 
 @_guard

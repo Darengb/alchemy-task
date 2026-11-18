@@ -11,7 +11,7 @@ tools; they validate fields, keep IDs stable, commit and push, and queue researc
 | You want to | Call |
 |---|---|
 | Add a task | `task_find` (check for an existing one), then `task_create` |
-| Change status, dates, title, area or notes | `task_update` with the `task_id` |
+| Change status, dates, title, area, notes or subtasks | `task_update` with the `task_id` |
 | Look something up | `task_find` (`include_body: true` to read one task in full) |
 | Work on or continue a task | `task_work_start`, then `task_checkpoint` when you stop |
 
@@ -68,6 +68,10 @@ If they say no or ignore the offer, do not ask again about the same item.
 - Use `status: cancelled` when the user drops a task or says it is no longer needed. Pass the reason they gave, or `reason: "No longer needed."` if they didn't give one. For `waiting`, include what or whom the task is waiting on.
 - Reopening a done or cancelled task needs `reopen: true`, only when the user wants it reopened.
 - A user correction ("actually it's due Thursday") updates the existing task; never create a second one.
+- To add, remove or rename a subtask on an existing task, read its body with `task_find` first, then pass
+  `subtask_edits` to `task_update`. Each edit takes `op` (`add`, `remove`, or `rename`) and `title`.
+  Use the exact current checkbox text for `remove` and `rename`; `rename` also takes `new_title` and keeps
+  the checkbox checked if it was checked. If the title is ambiguous, ask which step the user means.
 
 ## Working on a task
 

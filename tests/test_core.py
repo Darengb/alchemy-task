@@ -146,6 +146,26 @@ def test_update_done_sets_completed_and_preserves_owned_blocks(settings, data_di
     assert paths == ["areas/work/tasks/2026-11-01-draft-the-spring-newsletter.md"]
 
 
+def test_subtask_add_creates_section_and_duplicate_is_a_noop(settings, data_dir):
+    store = TaskStore(settings, data_dir)
+    task = store.create(title="Plan the launch", area="work", undated=True)
+    changes = {"subtask_edits": [{"op": "add", "title": "Book the venue"}]}
+    saved, _, _ = store.update(task.task_id, changes)
+    assert "## Subtasks\n\n- [ ] Book the venue\n" in saved.body.split("## Log")[0]
+    _, paths, _ = store.update(task.task_id, changes)
+    assert paths == []
+
+
+def test_subtask_rename_rejects_ambiguous_title(settings, data_dir):
+    store = TaskStore(settings, data_dir)
+    task = store.create(title="Plan the launch", area="work", undated=True,
+                        subtasks=["Send email", "Send email"])
+    before = task.path.read_bytes()
+    with pytest.raises(tf.TaskFormatError, match="More than one"):
+        store.update(task.task_id, {"subtask_edits": [{"op": "rename", "title": "Send email", "new_title": "Email Sam"}]})
+    assert task.path.read_bytes() == before
+
+
 def test_update_rules(settings, data_dir):
     store = TaskStore(settings, data_dir)
     with pytest.raises(NeedsInput) as e:

@@ -142,6 +142,32 @@ def test_title_edit_with_stale_revision_is_refused(client):
     assert ok["task"]["title"] == "New title"
 
 
+def test_agent_edits_existing_subtasks_and_preserves_other_sections(client, ctx):
+    from alchemy_task import task_tools
+
+    t = make_task(client)
+    url = f"/tasks/{t['task_id']}"
+    managed = "<!-- discovery-dossier:start sample -->\n\n## Subtasks\n\n- [ ] Remove this\n\n<!-- discovery-dossier:end sample -->"
+    body = ("\n## Notes\n\n- [ ] Remove this\n\n" + managed + "\n\n## Subtasks\n\n- [x] Old title\n- [ ] Remove this"
+            "\n\n```md\n- [ ] Remove this\n```\n\n## Log\n")
+    client.put(f"{url}/body", json={"body": body, "expected_revision": t["revision"]}).raise_for_status()
+    runtime.bind(ctx)
+    try:
+        edits = [{"op": "rename", "title": "Old title", "new_title": "New title"},
+                 {"op": "remove", "title": "Remove this"}, {"op": "add", "title": "New step"}]
+        saved = json.loads(task_tools.task_update({"task": t["task_id"], "subtask_edits": edits}))
+        assert saved["ok"] and saved["changed"] and saved["git"]["committed"], saved
+        after = client.get(url).json()["task"]
+        assert "- [x] New title" in after["body"] and "- [ ] New step" in after["body"]
+        assert after["body"].count("- [ ] Remove this") == 3 and managed in after["body"]
+        assert "Old title" not in after["body"].split("## Log")[0]
+        failed = json.loads(task_tools.task_update({"task": t["task_id"], "subtask_edits": [
+            {"op": "add", "title": "Should not save"}, {"op": "remove", "title": "Does not exist"}]}))
+        assert not failed["ok"] and client.get(url).json()["task"]["revision"] == after["revision"]
+    finally:
+        runtime.bind(None)
+
+
 def test_body_replace_keeps_frontmatter_and_checks_revision(client, workspace):
     t = client.get(f"/tasks/{make_task(client)['task_id']}").json()["task"]
     body = t["body"].replace("## Log", "## Notes from the editor\n\n- [ ] first step\n\n## Log")
