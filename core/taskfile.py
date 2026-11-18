@@ -497,6 +497,97 @@ def append_to_section(body: str, heading: str, text: str, *, before: str = "Log"
     return "\n".join(new_lines)
 
 
+_SUBTASK_LINE = re.compile(r"^([-*+]\s+\[[ xX]\]\s+)(.+?)\s*$")
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+
+def edit_subtasks(body: str, edits: list[dict]) -> tuple[str, list[str]]:
+    """Edit top-level checkboxes under the explicit Subtasks heading, as one batch."""
+    if not isinstance(edits, list) or not 1 <= len(edits) <= 50:
+        raise TaskFormatError("subtask_edits must contain 1 to 50 edits")
+
+    def title(value):
+        if not isinstance(value, str) or not value.strip() or value.splitlines() != [value] or '<!--' in value or '-->' in value:
+            raise TaskFormatError("Each subtask title must be nonempty text on one line without comment markers")
+        return value.strip()
+
+    def scan(text):
+        visible, fence, hidden_until = [], '', ''
+        for line in text:
+            stripped = line.strip()
+            if hidden_until:
+                if (hidden_until == '-->' and '-->' in line) or stripped.startswith(hidden_until + ' '):
+                    hidden_until = ''
+            elif match := _FENCE.match(line):
+                if not fence:
+                    fence = match[1]
+                elif match[1][0] == fence[0] and len(match[1]) >= len(fence) and not match[2].strip():
+                    fence = ''
+            elif not fence:
+                if MANAGED_START_RE.match(stripped):
+                    hidden_until = stripped.split(':start', 1)[0] + ':end'
+                    visible.append(line)  # section insertion must stay outside managed content
+                    continue
+                if '<!--' in line and '-->' not in line.split('<!--', 1)[1]:
+                    hidden_until = '-->'
+                elif not stripped.startswith('<!--') and not line.startswith(('    ', '\t')):
+                    visible.append(stripped if stripped.startswith('## ') else line)
+                    continue
+            visible.append('')
+        if fence or hidden_until:
+            raise TaskFormatError("Close the unfinished code block or comment before editing subtasks")
+        return visible
+
+    notes = []
+    for edit in edits:
+        if not isinstance(edit, dict) or edit.get('op') not in ('add', 'remove', 'rename'):
+            raise TaskFormatError("Each subtask edit needs op: add, remove, or rename")
+        op = edit['op']
+        if set(edit) != ({'op', 'title', 'new_title'} if op == 'rename' else {'op', 'title'}):
+            raise TaskFormatError("Each subtask edit needs a title; only rename also takes new_title")
+        name = title(edit['title'])
+        lines = body.split('\n')
+        visible = scan(lines)
+        if sum(line.lower() == '## subtasks' for line in visible) > 1:
+            raise TaskFormatError("Multiple Subtasks sections; clarify which list to edit")
+        bounds = _section_bounds(visible, 'Subtasks')
+        items = [] if bounds is None else [(i, m) for i in range(bounds[0] + 1, bounds[1])
+                                           if (m := _SUBTASK_LINE.fullmatch(visible[i]))]
+        matches = [(i, m) for i, m in items if m[2] == name]
+        if len(matches) > 1:
+            raise TaskFormatError(f"More than one subtask is titled {name!r}; no changes were saved")
+        if op == 'add':
+            if matches:
+                continue
+            if bounds is None:
+                target = _section_bounds(visible, 'Log')
+                at = target[0] if target else len(lines)
+                lines[at:at] = ['## Subtasks', '', f'- [ ] {name}', ''] if target else ['', '## Subtasks', '', f'- [ ] {name}', '']
+            else:
+                start, at = bounds
+                while at > start + 1 and not lines[at - 1].strip():
+                    at -= 1
+                empty_after = [''] if at < len(lines) and lines[at].strip() else []
+                lines[at:at] = ([''] if at == start + 1 else []) + [f'- [ ] {name}'] + empty_after
+            notes.append(f"Added subtask {name!r}")
+        elif not matches:
+            raise TaskFormatError(f"No subtask titled {name!r}; use its exact current title")
+        elif op == 'remove':
+            del lines[matches[0][0]]
+            notes.append(f"Removed subtask {name!r}")
+        else:
+            new = title(edit['new_title'])
+            if new == name:
+                continue
+            if any(m[2] == new for _, m in items):
+                raise TaskFormatError(f"A subtask titled {new!r} already exists")
+            i, m = matches[0]
+            lines[i] = m[1] + new
+            notes.append(f"Renamed subtask {name!r} to {new!r}")
+        body = '\n'.join(lines)
+    return body, notes
+
+
 def upsert_block(body: str, start_marker: str, end_marker: str, block: str, *, top: bool = False) -> str:
     """Replace or insert one managed block (fail closed on malformed markers)."""
     starts, ends = body.count(start_marker), body.count(end_marker)
