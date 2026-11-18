@@ -60,7 +60,7 @@ JOBS: dict[str, dict[str, Any]] = {
         "missing": "pass",
         "deliver": "origin",
         "why": ("Gives hand-made tasks their permanent ID and pushes task commits that could not be pushed earlier. "
-                "Messages this chat only when something changes or a new problem appears."),
+                "Messages this chat only when a problem appears or clears; routine runs stay silent."),
         "cost": "Free: a script, no model.",
     },
 }

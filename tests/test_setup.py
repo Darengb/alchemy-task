@@ -191,11 +191,30 @@ def test_maintenance_reports_push_failure_once(home, settings, data_dir, workspa
     assert precheck.maintenance(str(data_dir), settings=settings) == ""  # same failure: silent
     os.rename(tmp_path / "away.git", tmp_path / "remote.git")
     fixed = precheck.maintenance(str(data_dir), settings=settings)
-    assert "Pushed task changes" in fixed
+    assert "Pushed task changes" in fixed  # announced because the failure was reported
     assert precheck.maintenance(str(data_dir), settings=settings) == ""
     broken = dataclasses.replace(settings, workspace_root=str(tmp_path / "gone"))
     assert "hourly check failed" in precheck.maintenance(str(data_dir), settings=broken)
     assert precheck.maintenance(str(data_dir), settings=broken) == ""
+
+
+def test_maintenance_routine_push_is_silent(home, settings, data_dir, workspace, tmp_path):
+    from alchemy_task.core import precheck
+    from alchemy_task.core.store import TaskStore
+    from alchemy_task.core.gitops import GitDelivery
+    precheck.maintenance(str(data_dir), settings=settings)  # baseline (assigns the fixture's missing ID)
+    os_path = tmp_path / "remote.git"
+    doc = TaskStore(settings, data_dir).create(title="Water the plants", area="home", due="2026-12-01", research=False)
+    store = TaskStore(settings, data_dir)
+    git = GitDelivery(settings, data_dir)
+    import os
+    os.rename(os_path, tmp_path / "away.git")
+    git.deliver([store.rel(doc.path)], "x")  # commit lands, push waits
+    os.rename(tmp_path / "away.git", os_path)
+    # the hourly retry pushes it, and says nothing (the failure happened between two quiet runs)
+    assert git.status().get("needs_push")
+    assert precheck.maintenance(str(data_dir), settings=settings) == ""
+    assert not git.status().get("needs_push")
 
 
 def test_remote_not_replaced_without_permission(home, workspace, data_dir):
