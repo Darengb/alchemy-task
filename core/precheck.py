@@ -2,7 +2,8 @@
 
 - ``research_wake``: free pre-check for the research sweep (``wakeAgent``).
 - ``maintenance``: validator (assign missing IDs) plus push retry. Prints only
-  when something changed or a new problem appeared, so quiet runs are silent.
+  when a problem appears or clears; routine successes (IDs assigned, a waiting
+  push that went through) stay silent.
 """
 from __future__ import annotations
 
@@ -47,12 +48,19 @@ def research_wake(settings: Settings | None = None, data_dir: str = "") -> dict[
 
 
 def maintenance(data_dir: str, settings: Settings | None = None) -> str:
-    """Assign missing IDs, retry unpushed commits. Returns text to deliver, or "" when nothing changed.
+    """Assign missing IDs, retry unpushed commits. Returns text to deliver, or "" when there is nothing to report.
+
+    Routine successes are silent: users found an hourly "pushed task changes" message noise. A waiting
+    push is announced only when an earlier run reported it failing.
 
     Every reportable condition (file problems, push state, errors) goes into one digest; a message is
     sent only when that digest changes, so a lasting problem is reported once, and again when it clears.
     """
     data = Path(data_dir)
+    marker = data / "maintenance-state.sha"
+    saved = marker.read_text().split() if marker.exists() else []
+    previous = saved[0] if saved else ""
+    push_failed_before = "push-failed" in saved[1:]  # only a push that failed earlier is worth announcing
     lines: list[str] = []
     condition: dict[str, Any] = {}
     try:
@@ -63,13 +71,13 @@ def maintenance(data_dir: str, settings: Settings | None = None) -> str:
         report = validator.validate(store, apply=True)
         git = GitDelivery(s, data)
         if report["changed_paths"]:
-            receipt = git.deliver(report["changed_paths"], "task: assign missing task IDs")
-            lines.append(f"Assigned IDs to {len(report['changed_paths'])} task(s).")
+            git.deliver(report["changed_paths"], "task: assign missing task IDs")
         push_state = "ok"
         if s.git_transport != "none" and git.status().get("needs_push"):
             r = git.retry()
             if r.get("pushed"):
-                lines.append("Pushed task changes that were waiting.")
+                if push_failed_before:
+                    lines.append("Pushed task changes that were waiting.")
             else:
                 err = str(r.get("error") or r.get("state") or "")
                 import re
@@ -83,12 +91,13 @@ def maintenance(data_dir: str, settings: Settings | None = None) -> str:
         condition = {"error": f"{exc.__class__.__name__}: {str(exc)[:120]}"}
         summary = ""
     digest = hashlib.sha256(json.dumps(condition, sort_keys=True, default=str).encode()).hexdigest()
-    marker = data / "maintenance-state.sha"
     (data / "maintenance-problems.sha").unlink(missing_ok=True)  # pre-0.1 marker name
-    previous = marker.read_text().strip() if marker.exists() else ""
-    if digest != previous:
+    # a failed hourly check says nothing about the push, so keep the earlier push state
+    push_failed = push_failed_before if "error" in condition else condition.get("push", "ok") != "ok"
+    if digest != previous or push_failed != push_failed_before:
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(digest)
+        marker.write_text(digest + (" push-failed" if push_failed else ""))
+    if digest != previous:
         if "error" in condition:
             lines.append(f"The hourly check failed: {condition['error']}. Run /task status.")
         else:
