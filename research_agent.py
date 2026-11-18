@@ -324,8 +324,8 @@ def launch(rt: Runtime, ref: str, *, origin_session: str = "") -> dict[str, Any]
         run_id = rs.claim(doc.fm, model_key(rt.settings))
         tf.atomic_write(doc.path, tf.render(doc.fm, doc.body, seq_offset=doc.seq_offset,
                                             keep_blank=doc.blank_keys).encode(), expect=doc.raw)
-    fields = {k: tf.norm_date(doc.fm.get(k)) or doc.fm.get(k) for k in ("area", "status", "priority", "due",
-                                                                       "scheduled", "project", "estimate")}
+    fields = {k: doc.fm.get(k) for k in ("summary", "area", "status", "priority", "project", "estimate")}
+    fields.update({k: tf.norm_date(doc.fm.get(k)) for k in ("due", "scheduled")})
     targets = rs.fill_targets(doc.fm, doc.body)  # sections blank (or research-owned) at launch
     goal, context = rs.goal_text(run_id=run_id, title=doc.title, fields=fields, body=rs.strip_managed(doc.body),
                                  linked=_linked_notes(rt, doc.body), today=rt.settings.today(), targets=targets)
@@ -659,18 +659,43 @@ def recover(rt: Runtime, *, limit: int = 3, wait_seconds: float = 300) -> dict[s
                                                                **({"error": result.get("error")} if
                                                                   not result.get("started") else {})})
         if result.get("started"):
-            started[-1]["handle"] = result["handle"]
-    deadline = time.time() + max(0.0, wait_seconds)
-    for item in started:
-        remaining = deadline - time.time()
-        if remaining <= 0:
-            break
-        try:
-            rt.ctx.subagent_lifecycle.wait(item.pop("handle"), timeout_seconds=remaining)
-        except Exception:  # noqa: BLE001 - outcome is recorded by submit or subagent_stop
-            pass
+            started[-1].update(handle=result["handle"], run_id=result["run_id"], path=doc.path)
+    deadline = time.monotonic() + max(0.0, wait_seconds)
+    waiting = started.copy()
+    while waiting and time.monotonic() < deadline:
+        for item in waiting.copy():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            task_id, handle, run_id = item["task_id"], item["handle"], item["run_id"]
+            try:
+                result = rt.ctx.subagent_lifecycle.wait(handle, timeout_seconds=min(1.0, remaining))
+                try:
+                    current = tf.parse_file(item["path"], rt=False)
+                except FileNotFoundError:  # the task can be renamed or moved while research runs
+                    current = store.resolve(task_id)
+                    item["path"] = current.path
+                st = (rs.state(current.fm) or {}) if current.task_id == task_id else {}
+                if (st.get("status"), st.get("run_id"), st.get("requested_reason")) == ("pending", run_id, RESTART_REASON):
+                    # Only the owning agent turn can cancel. Never wait for an interrupt to take effect:
+                    # the old claim is already invalid, and a new worker can read the saved task now.
+                    try:
+                        rt.ctx.subagent_lifecycle.cancel(handle, reason=RESTART_REASON)
+                    except Exception:  # noqa: BLE001 - the old result remains fenced
+                        pass
+                    replacement = launch(rt, task_id)
+                    if replacement.get("started"):
+                        item.update(handle=replacement["handle"], run_id=replacement["run_id"])
+                        continue
+                elif getattr(result, "timed_out", False):
+                    continue
+            except Exception:  # noqa: BLE001 - submit, subagent_stop and later sweeps recover failures
+                pass
+            waiting.remove(item)
     for item in started:
         item.pop("handle", None)
+        item.pop("run_id", None)
+        item.pop("path", None)
         try:
             doc = store.resolve(item["task_id"])
             item["research"] = (rs.state(tf.parse_file(doc.path, rt=False).fm) or {}).get("status")
@@ -945,21 +970,26 @@ class ResearchBusy(rs.ResearchError):
     """Research for this task is already queued or running."""
 
 
-def queue_research(rt: Runtime, ref: str, log: str = "Research requested.") -> tuple[Any, Path]:
+RESTART_REASON = "restart with latest task context"
+
+
+def queue_research(rt: Runtime, ref: str, log: str = "Research requested.", *, restart: bool = False) -> tuple[Any, Path]:
     """Mark a task as waiting for research without launching a worker (the research sweep starts it).
 
-    For callers with no agent turn, such as the dashboard: workers can only launch inside one. Refuses
-    tasks already queued or running (``ResearchBusy``) and tasks that cannot be researched."""
+    For callers with no agent turn, such as the dashboard. An explicit restart replaces a running
+    claim under the task lock, so its results can no longer write to the task."""
     store = rt.store()
     doc = store.resolve(ref)
     with task_lock(rt.data_dir, doc.task_id, doc.path):
         doc = tf.parse_file(doc.path)
         why = rs.eligibility(doc.fm)
-        if why in ("eligible", "running"):
+        state = rs.state(doc.fm) or {}
+        replacing = restart and state.get("status") == "running"
+        if why in ("eligible", "running") and not replacing:
             raise ResearchBusy("research is already queued or running for this task")
         if why in ("closed", "unsupported", "no_id", "unknown"):
             raise rs.ResearchError(f"cannot research this task ({why}); reopen it or fix it first")
-        rs.request(doc.fm, "user asked in the Tasks view")
+        rs.request(doc.fm, RESTART_REASON if replacing else "user asked in the Tasks view", restart=replacing)
         body = tf.append_log(doc.body, log, rt.settings.today())
         tf.atomic_write(doc.path, tf.render(doc.fm, body, seq_offset=doc.seq_offset,
                                             keep_blank=doc.blank_keys).encode(), expect=doc.raw)

@@ -138,9 +138,20 @@ export function OverdueSection({ tasks, defaultOpen = false }) {
   )
 }
 
+function CreateContext({ summary, setSummary, notes, setNotes, disabled }) {
+  return <div className="at-create-context">
+    <textarea rows={1} aria-label="Summary" placeholder="Summary (optional)" value={summary}
+              disabled={disabled} onChange={(e) => setSummary(e.target.value)} />
+    <textarea rows={2} aria-label="Notes" placeholder="Notes (optional)" value={notes}
+              disabled={disabled} onChange={(e) => setNotes(e.target.value)} />
+  </div>
+}
+
 export function QuickAdd({ date, autoFocus, onDone }) {
   const { actions, meta, prefs } = useApp()
   const [title, setTitle] = React.useState('')
+  const [summary, setSummary] = React.useState('')
+  const [notes, setNotes] = React.useState('')
   const [busy, setBusy] = React.useState(false)
   const [open, setOpen] = React.useState(!!autoFocus)
   const ref = React.useRef(null)
@@ -154,20 +165,28 @@ export function QuickAdd({ date, autoFocus, onDone }) {
   }
   const submit = async () => {
     const t = title.trim()
-    if (!t) { setOpen(false); onDone && onDone(); return }
+    if (!t || busy) return
     setBusy(true)
-    const ok = await actions.create({ title: t, date, area: prefs.area || meta.default_area || undefined })
+    const ok = await actions.create({ title: t, date, area: prefs.area || meta.default_area || undefined,
+                                      summary: summary.trim(), notes: notes.trim() })
     setBusy(false)
-    if (ok) { setTitle(''); if (ref.current) ref.current.focus() }
+    if (ok) { setTitle(''); setSummary(''); setNotes(''); ref.current?.focus() }
   }
+  const close = () => { setTitle(''); setSummary(''); setNotes(''); setOpen(false); onDone?.() }
   return (
-    <form className="at-add-form" data-no-drag="" onSubmit={(e) => { e.preventDefault(); submit() }}>
-      <span className="at-check at-check-md is-ghost" aria-hidden="true" />
-      <input ref={ref} className="at-add-input" value={title} placeholder="New task" disabled={busy}
-             onChange={(e) => setTitle(e.target.value)}
-             onKeyDown={(e) => { if (e.key === 'Escape') { setTitle(''); setOpen(false); onDone && onDone() } }}
-             onBlur={() => { if (!title.trim()) { setOpen(false); onDone && onDone() } }} />
-      {busy ? <Spinner /> : null}
+    <form className="at-add-form" data-no-drag="" onSubmit={(e) => { e.preventDefault(); submit() }}
+          onKeyDown={(e) => { if (e.key === 'Escape' && !busy) { e.preventDefault(); close() } }}>
+      <div className="at-add-row">
+        <span className="at-check at-check-md is-ghost" aria-hidden="true" />
+        <input ref={ref} className="at-add-input" value={title} placeholder="New task" aria-label="New task title"
+               readOnly={busy} onChange={(e) => setTitle(e.target.value)} />
+        {busy ? <Spinner /> : null}
+      </div>
+      <CreateContext {...{ summary, setSummary, notes, setNotes }} disabled={busy} />
+      <div className="at-create-actions">
+        <Button variant="ghost" size="sm" onClick={close} disabled={busy}>Done</Button>
+        <Button type="submit" size="sm" disabled={busy || !title.trim()}>Add task</Button>
+      </div>
     </form>
   )
 }
@@ -535,6 +554,8 @@ export function TasksView({ narrow }) {
  * focus that happens inside the user's gesture.
  */
 function PhoneComposer({ date: initialDate }) {
+  const [summary, setSummary] = React.useState('')
+  const [notes, setNotes] = React.useState('')
   const { actions, meta, prefs, today } = useApp()
   const overlay = useOverlay()
   const [open, setOpen] = React.useState(false)
@@ -566,15 +587,17 @@ function PhoneComposer({ date: initialDate }) {
     overlay.close()
     setOpen(false)
     setTitle('')
+    setSummary('')
+    setNotes('')
     if (input.current) input.current.blur()
   }
   const submit = async () => {
     const t = title.trim()
     if (!t || busy) return
     setBusy(true)
-    const ok = await actions.create({ title: t, date, area: area || undefined })
+    const ok = await actions.create({ title: t, date, area: area || undefined, summary: summary.trim(), notes: notes.trim() })
     setBusy(false)
-    if (ok) { setTitle(''); if (input.current) input.current.focus() }
+    if (ok) { setTitle(''); setSummary(''); setNotes(''); input.current?.focus() }
   }
   const refocus = () => { if (input.current) input.current.focus() }
   const pickDate = (e) => overlay.open(e.currentTarget, (closePop) => (
@@ -602,6 +625,7 @@ function PhoneComposer({ date: initialDate }) {
                  onKeyDown={(e) => { if (e.key === 'Escape') close() }} />
           {busy ? <Spinner /> : null}
         </div>
+        <CreateContext {...{ summary, setSummary, notes, setNotes }} disabled={!open || busy} />
         <div className="at-composer-bar">
           <button type="button" className="at-field" onClick={pickDate} tabIndex={open ? 0 : -1}>
             <Icon name="cal" size={15} /><span>{D.relativeDay(date, today)}</span>

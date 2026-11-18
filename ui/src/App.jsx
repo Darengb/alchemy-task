@@ -121,11 +121,11 @@ function AppInner({ transport, host, initialView, settingsOnly, chat }) {
           })
         }
       },
-      async create({ title, date, area }) {
+      async create({ title, date, area, summary, notes }) {
         try {
-          const res = await api.create({ title, date, area })
+          const res = await api.create({ title, date, area, summary, notes })
           if (res.task) store.put(res.task)
-          toast(res.task && res.task.research === 'pending' ? 'Added. Hermes is researching it.' : 'Added', {
+          toast(res.task?.research === 'pending' ? 'Added. Research is queued.' : 'Added', {
             action: res.task ? { label: 'Open', run: () => setSelectedId(res.task.task_id) } : undefined,
           })
           return true

@@ -187,13 +187,13 @@ def fail_model(fm: Any, run_id: str, error: str, model_key: str) -> bool:
     return True
 
 
-def request(fm: Any, reason: str = "") -> None:
+def request(fm: Any, reason: str = "", *, restart: bool = False) -> None:
     """Queue research explicitly (the user asked for it). Resets attempts."""
     st = state(fm)
     if st is None:
         fm["enrichment"] = {"status": "pending", "attempts": 0, "updated": now_iso()}
         return
-    if str(st.get("status")) == "running" and _age_seconds(st.get("claimed_at")) < STALE_SECONDS:
+    if not restart and str(st.get("status")) == "running" and _age_seconds(st.get("claimed_at")) < STALE_SECONDS:
         raise ResearchError("research is already running for this task")
     st["status"] = "pending"
     st["attempts"] = 0

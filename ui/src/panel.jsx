@@ -70,6 +70,10 @@ export function TaskPanel({ id, narrow, onClose }) {
   // Field changes made while the notes editor is open: save the notes first and close the editor, so the
   // editor never holds text built from an older version of the file.
   const flushRef = React.useRef(null)
+  const summaryInput = React.useRef(null)
+  const summarySave = React.useRef(null)
+  React.useEffect(() => { summarySave.current = null }, [id])
+
   const startEditing = () => {
     if (narrow && mobileEditor.current?.()) setEditing('mobile')
     else setEditing('inline')
@@ -95,7 +99,26 @@ export function TaskPanel({ id, narrow, onClose }) {
     }
   }
 
-  // Body writes always name the revision they were built from (never the store's latest), and run one at a time.
+  // Serialize summary saves. Keep the draft visible on a failed save so the user can retry it.
+  const saveSummary = (summary) => {
+    const previous = summarySave.current
+    const saving = Promise.resolve(previous).then(() => patch({ summary }, {})).finally(() => {
+      if (summarySave.current === saving) summarySave.current = null
+    })
+    summarySave.current = saving
+    return saving
+  }
+  const beforeResearch = async () => {
+    summaryInput.current?.blur()
+    const saving = summarySave.current
+    if (saving && !await saving) return false
+    const draft = summaryInput.current?.value.trim()
+    const saved = (store.getState().byId[id]?.summary || '').trim()
+    if (draft !== undefined && draft !== saved && !await saveSummary(draft)) return false
+    return settle()
+  }
+
+  // Body writes always name the revision they were built from (never the store's latest).
   const saveBody = async (body, baseRevision) => {
     const res = await api.putBody(id, body, baseRevision)
     store.put(res.task)
@@ -258,12 +281,12 @@ export function TaskPanel({ id, narrow, onClose }) {
         ) : null}
       </div>
 
-      <SummaryField value={task.summary || ''} onSave={(summary) => patch({ summary })} />
+      <SummaryField inputRef={summaryInput} value={task.summary || ''} onSave={saveSummary} />
 
       {editing === 'inline' ? (
         <BodyEditor task={task} onSave={saveBody} onDone={() => setEditing(false)} onStale={() => setStale(true)} flushRef={flushRef} />
       ) : task.body === undefined ? <div className="at-panel-loading"><Spinner /></div> : (
-        <BodyView task={task} onEdit={startEditing} onToggle={toggle} />
+        <BodyView task={task} onEdit={startEditing} onToggle={toggle} beforeResearch={beforeResearch} />
       )}
       {(narrow || editing === 'mobile') && editing !== 'inline' && task.body !== undefined ? (
         <BodyEditor key={id} task={task} onSave={saveBody} onDone={() => setEditing(false)} onStale={() => setStale(true)}
@@ -294,7 +317,7 @@ export function TaskPanel({ id, narrow, onClose }) {
 
 // Top of the research section: start, retry or refresh research. Workers only start inside an agent turn,
 // so the button queues research and shows when it starts.
-function ResearchBar({ task }) {
+function ResearchBar({ task, beforeResearch }) {
   const { store, api } = useApp()
   const toast = useToast()
   const [click, setClick] = React.useState(null)
@@ -307,7 +330,8 @@ function ResearchBar({ task }) {
   const start = async () => {
     setClick({ phase: 'sending' })
     try {
-      const res = await api.research(task.task_id)
+      if (!await beforeResearch()) { setClick(null); return }
+      const res = await api.research(task.task_id, b.restart)
       if (res.task) store.put(res.task)
       setClick({ phase: 'done', message: researchStartedMessage(res) })
     } catch (err) {
@@ -317,7 +341,7 @@ function ResearchBar({ task }) {
   }
   return (
     <div className="at-research-bar">
-      <Button size="sm" icon={task.research === 'complete' ? 'refresh' : 'spark'} disabled={b.disabled} onClick={start}>{b.label}</Button>
+      <Button size="sm" icon={b.restart || task.research === 'complete' ? 'refresh' : 'spark'} disabled={b.disabled} onClick={start}>{b.label}</Button>
       {b.note ? <span className="at-research-status"><Icon name="spark" size={14} /> {b.note}</span> : null}
     </div>
   )
@@ -416,9 +440,8 @@ function TitleField({ value, done, onSave, onHold, onLongPress, copied }) {
   )
 }
 
-function SummaryField({ value, onSave }) {
+function SummaryField({ value, onSave, inputRef: ref }) {
   const [v, setV] = React.useState(value)
-  const ref = React.useRef(null)
   React.useEffect(() => setV(value), [value])
   React.useLayoutEffect(() => {
     const el = ref.current
@@ -427,12 +450,12 @@ function SummaryField({ value, onSave }) {
   return (
     <textarea ref={ref} rows={1} className="at-summary-input" value={v} placeholder="Add a short summary"
               aria-label="Summary" onChange={(e) => setV(e.target.value)}
-              onBlur={() => { const t = v.trim(); if (t !== value.trim()) onSave(t) }}
-              onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setV(value); e.currentTarget.blur() } }} />
+              onBlur={(e) => { const t = e.currentTarget.value.trim(); if (t !== value.trim()) onSave(t) }}
+              onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = value; setV(value); e.currentTarget.blur() } }} />
   )
 }
 
-function BodyView({ task, onEdit, onToggle }) {
+function BodyView({ task, onEdit, onToggle, beforeResearch }) {
   const { sections, managed: allManaged } = React.useMemo(() => splitSections(task.body || ''), [task.body])
   // The plugin keeps "Current state" in a managed block; older or hand-made tasks use a heading.
   const stateBlock = allManaged.find((m) => /current-state/.test(m.name))
@@ -463,14 +486,14 @@ function BodyView({ task, onEdit, onToggle }) {
       {before.map((s, i) => <BodySection key={`b${i}`} s={s} render={renderSection} />)}
       {groupManaged(managed).map((m, i) => (
         <Disclosure key={`m${i}`} title={m.title} defaultOpen={m.title === 'Research'} className="at-fold" right={<Icon name="spark" size={13} />}>
-          {m.title === 'Research' && !isDone(task) ? <ResearchBar task={task} /> : null}
+          {m.title === 'Research' && !isDone(task) ? <ResearchBar task={task} beforeResearch={beforeResearch} /> : null}
           <div className="at-md">{renderBlocks(parseBlocks(m.text))}</div>
         </Disclosure>
       ))}
       {/* No research yet: show the Research section with just the button, so research can be started here. */}
       {!isDone(task) && !groupManaged(managed).some((m) => m.title === 'Research') ? (
         <Disclosure title="Research" defaultOpen className="at-fold" right={<Icon name="spark" size={13} />}>
-          <ResearchBar task={task} />
+          <ResearchBar task={task} beforeResearch={beforeResearch} />
         </Disclosure>
       ) : null}
       {after.map((s, i) => <BodySection key={`a${i}`} s={s} render={renderSection} />)}

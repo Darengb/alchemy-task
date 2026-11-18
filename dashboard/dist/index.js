@@ -330,7 +330,7 @@
       putBody: (id, body, expectedRevision) => call("PUT", `/tasks/${enc(id)}/body`, { body, expected_revision: expectedRevision }),
       create: (fields) => call("POST", "/tasks", fields),
       // Queue research (start, retry or refresh); the answer says whether the sweep starts now or later.
-      research: (id) => call("POST", `/tasks/${enc(id)}/research`, {}),
+      research: (id, restart = false) => call("POST", `/tasks/${enc(id)}/research`, restart ? { restart: true } : {}),
       // Send to chat: desktop gets the note back to send in a new chat; other surfaces queue it for the gateway.
       handoff: (id, surface) => call("POST", `/tasks/${enc(id)}/handoff`, { surface }),
       handoffStatus: (handoffId) => call("GET", `/handoffs/${enc(handoffId)}`),
@@ -1043,9 +1043,34 @@
       tasks.map((t) => /* @__PURE__ */ react_dashboard_default.createElement(TaskRow, { key: t.task_id, task: t, from: taskDate(t), showDate: true, selected: selectedId === t.task_id }))
     );
   }
+  function CreateContext({ summary, setSummary, notes, setNotes, disabled }) {
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-create-context" }, /* @__PURE__ */ react_dashboard_default.createElement(
+      "textarea",
+      {
+        rows: 1,
+        "aria-label": "Summary",
+        placeholder: "Summary (optional)",
+        value: summary,
+        disabled,
+        onChange: (e) => setSummary(e.target.value)
+      }
+    ), /* @__PURE__ */ react_dashboard_default.createElement(
+      "textarea",
+      {
+        rows: 2,
+        "aria-label": "Notes",
+        placeholder: "Notes (optional)",
+        value: notes,
+        disabled,
+        onChange: (e) => setNotes(e.target.value)
+      }
+    ));
+  }
   function QuickAdd({ date, autoFocus, onDone }) {
     const { actions, meta, prefs } = useApp();
     const [title, setTitle] = react_dashboard_default.useState("");
+    const [summary, setSummary] = react_dashboard_default.useState("");
+    const [notes, setNotes] = react_dashboard_default.useState("");
     const [busy, setBusy] = react_dashboard_default.useState(false);
     const [open, setOpen] = react_dashboard_default.useState(!!autoFocus);
     const ref = react_dashboard_default.useRef(null);
@@ -1057,46 +1082,61 @@
     }
     const submit = async () => {
       const t = title.trim();
-      if (!t) {
-        setOpen(false);
-        onDone && onDone();
-        return;
-      }
+      if (!t || busy) return;
       setBusy(true);
-      const ok = await actions.create({ title: t, date, area: prefs.area || meta.default_area || void 0 });
+      const ok = await actions.create({
+        title: t,
+        date,
+        area: prefs.area || meta.default_area || void 0,
+        summary: summary.trim(),
+        notes: notes.trim()
+      });
       setBusy(false);
       if (ok) {
         setTitle("");
-        if (ref.current) ref.current.focus();
+        setSummary("");
+        setNotes("");
+        ref.current?.focus();
       }
     };
-    return /* @__PURE__ */ react_dashboard_default.createElement("form", { className: "at-add-form", "data-no-drag": "", onSubmit: (e) => {
-      e.preventDefault();
-      submit();
-    } }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-check at-check-md is-ghost", "aria-hidden": "true" }), /* @__PURE__ */ react_dashboard_default.createElement(
-      "input",
+    const close = () => {
+      setTitle("");
+      setSummary("");
+      setNotes("");
+      setOpen(false);
+      onDone?.();
+    };
+    return /* @__PURE__ */ react_dashboard_default.createElement(
+      "form",
       {
-        ref,
-        className: "at-add-input",
-        value: title,
-        placeholder: "New task",
-        disabled: busy,
-        onChange: (e) => setTitle(e.target.value),
-        onKeyDown: (e) => {
-          if (e.key === "Escape") {
-            setTitle("");
-            setOpen(false);
-            onDone && onDone();
-          }
+        className: "at-add-form",
+        "data-no-drag": "",
+        onSubmit: (e) => {
+          e.preventDefault();
+          submit();
         },
-        onBlur: () => {
-          if (!title.trim()) {
-            setOpen(false);
-            onDone && onDone();
+        onKeyDown: (e) => {
+          if (e.key === "Escape" && !busy) {
+            e.preventDefault();
+            close();
           }
         }
-      }
-    ), busy ? /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null) : null);
+      },
+      /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-add-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-check at-check-md is-ghost", "aria-hidden": "true" }), /* @__PURE__ */ react_dashboard_default.createElement(
+        "input",
+        {
+          ref,
+          className: "at-add-input",
+          value: title,
+          placeholder: "New task",
+          "aria-label": "New task title",
+          readOnly: busy,
+          onChange: (e) => setTitle(e.target.value)
+        }
+      ), busy ? /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null) : null),
+      /* @__PURE__ */ react_dashboard_default.createElement(CreateContext, { ...{ summary, setSummary, notes, setNotes }, disabled: busy }),
+      /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-create-actions" }, /* @__PURE__ */ react_dashboard_default.createElement(Button, { variant: "ghost", size: "sm", onClick: close, disabled: busy }, "Done"), /* @__PURE__ */ react_dashboard_default.createElement(Button, { type: "submit", size: "sm", disabled: busy || !title.trim() }, "Add task"))
+    );
   }
   function MonthView({ anchor, narrow }) {
     const { today, selectedId } = useApp();
@@ -1435,6 +1475,8 @@
     ), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-filter", prefs.area && "is-on"), onClick: areaMenu }, prefs.area ? /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: prefs.area }) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", null, prefs.area || "All areas"), /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "chevD", size: 14 })), narrow ? null : /* @__PURE__ */ react_dashboard_default.createElement(Button, { variant: "primary", size: "sm", icon: "plus", onClick: addMenu }, "Add"))), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-viewport" }, view === "month" ? /* @__PURE__ */ react_dashboard_default.createElement(MonthView, { anchor: a, narrow }) : null, view === "week" ? /* @__PURE__ */ react_dashboard_default.createElement(WeekView, { anchor: a, narrow, onStep: step }) : null, view === "day" && narrow ? /* @__PURE__ */ react_dashboard_default.createElement(DayScroll, { anchor: a, length: scrollLen, onReachEnd: growScroll }) : null, view === "day" && !narrow ? /* @__PURE__ */ react_dashboard_default.createElement(DayView, { anchor: a }) : null), narrow ? /* @__PURE__ */ react_dashboard_default.createElement(PhoneComposer, { date: view === "day" ? a : today }) : null);
   }
   function PhoneComposer({ date: initialDate }) {
+    const [summary, setSummary] = react_dashboard_default.useState("");
+    const [notes, setNotes] = react_dashboard_default.useState("");
     const { actions, meta, prefs, today } = useApp();
     const overlay = useOverlay();
     const [open, setOpen] = react_dashboard_default.useState(false);
@@ -1469,17 +1511,21 @@
       overlay.close();
       setOpen(false);
       setTitle("");
+      setSummary("");
+      setNotes("");
       if (input.current) input.current.blur();
     };
     const submit = async () => {
       const t = title.trim();
       if (!t || busy) return;
       setBusy(true);
-      const ok = await actions.create({ title: t, date, area: area || void 0 });
+      const ok = await actions.create({ title: t, date, area: area || void 0, summary: summary.trim(), notes: notes.trim() });
       setBusy(false);
       if (ok) {
         setTitle("");
-        if (input.current) input.current.focus();
+        setSummary("");
+        setNotes("");
+        input.current?.focus();
       }
     };
     const refocus = () => {
@@ -1526,6 +1572,7 @@
           }
         }
       ), busy ? /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null) : null),
+      /* @__PURE__ */ react_dashboard_default.createElement(CreateContext, { ...{ summary, setSummary, notes, setNotes }, disabled: !open || busy }),
       /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-composer-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickDate, tabIndex: open ? 0 : -1 }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "cal", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(date, today))), (meta.areas || []).length ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickArea, tabIndex: open ? 0 : -1 }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, area || "No area")) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(Button, { variant: "ghost", size: "sm", onClick: close, tabIndex: open ? 0 : -1 }, "Done"), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "submit", className: "at-composer-send", "aria-label": "Add task", disabled: !title.trim() || busy, tabIndex: open ? 0 : -1 }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "arrowR", size: 18, strokeWidth: 2.2 })))
     ));
   }
@@ -1816,11 +1863,12 @@
   }
 
   // ui/src/lib/research.js
-  var BUSY = /* @__PURE__ */ new Set(["pending", "running", "promoted"]);
+  var BUSY = /* @__PURE__ */ new Set(["pending", "promoted"]);
   var RESEARCHING = "Hermes is researching this task. Findings will appear here.";
   function researchButton(status, click = null) {
     const s = String(status || "none").toLowerCase();
     if (click && click.phase === "sending") return { label: "Queued", disabled: true, note: null };
+    if (s === "running") return { label: "Restart with latest context", disabled: false, note: RESEARCHING, restart: true };
     const label = s === "complete" ? "Refresh research" : "Start research";
     if (click && click.phase === "done") return { label: "Queued", disabled: true, note: click.message || null };
     if (BUSY.has(s)) return { label, disabled: true, note: RESEARCHING };
@@ -1912,6 +1960,11 @@
       return () => window.removeEventListener("keydown", key);
     }, [onClose, editing]);
     const flushRef = react_dashboard_default.useRef(null);
+    const summaryInput = react_dashboard_default.useRef(null);
+    const summarySave = react_dashboard_default.useRef(null);
+    react_dashboard_default.useEffect(() => {
+      summarySave.current = null;
+    }, [id]);
     const startEditing = () => {
       if (narrow && mobileEditor.current?.()) setEditing("mobile");
       else setEditing("inline");
@@ -1935,6 +1988,23 @@
         if (err.code === "stale_revision" || err.code === "retry") setStale(true);
         toast(describeError(err), { tone: "error" });
       }
+    };
+    const saveSummary = (summary) => {
+      const previous = summarySave.current;
+      const saving = Promise.resolve(previous).then(() => patch({ summary }, {})).finally(() => {
+        if (summarySave.current === saving) summarySave.current = null;
+      });
+      summarySave.current = saving;
+      return saving;
+    };
+    const beforeResearch = async () => {
+      summaryInput.current?.blur();
+      const saving = summarySave.current;
+      if (saving && !await saving) return false;
+      const draft = summaryInput.current?.value.trim();
+      const saved = (store.getState().byId[id]?.summary || "").trim();
+      if (draft !== void 0 && draft !== saved && !await saveSummary(draft)) return false;
+      return settle();
     };
     const saveBody = async (body, baseRevision) => {
       const res = await api.putBody(id, body, baseRevision);
@@ -2082,7 +2152,7 @@
         onLongPress: copyForChat,
         copied
       }
-    )), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-fields" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field", date && date < today && !isDone(task) && "is-late"), onClick: pickDate }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "cal", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, date ? relativeDay(date, today) : "No date")), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickArea }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: task.area }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, task.area || "No area")), task.status === "done" ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-field at-status is-static", "data-s": task.status }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, "Done")) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field at-status", "data-s": task.status || "open", onClick: pickStatus }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, cancelled ? "Cancelled" : (STATUSES.find(([v]) => v === task.status) || [0, "Open"])[1])), separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickDue }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(task.due, today))) : null), /* @__PURE__ */ react_dashboard_default.createElement(SummaryField, { value: task.summary || "", onSave: (summary) => patch({ summary }) }), editing === "inline" ? /* @__PURE__ */ react_dashboard_default.createElement(BodyEditor, { task, onSave: saveBody, onDone: () => setEditing(false), onStale: () => setStale(true), flushRef }) : task.body === void 0 ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-loading" }, /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null)) : /* @__PURE__ */ react_dashboard_default.createElement(BodyView, { task, onEdit: startEditing, onToggle: toggle }), (narrow || editing === "mobile") && editing !== "inline" && task.body !== void 0 ? /* @__PURE__ */ react_dashboard_default.createElement(
+    )), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-fields" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field", date && date < today && !isDone(task) && "is-late"), onClick: pickDate }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "cal", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, date ? relativeDay(date, today) : "No date")), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickArea }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: task.area }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, task.area || "No area")), task.status === "done" ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-field at-status is-static", "data-s": task.status }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, "Done")) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field at-status", "data-s": task.status || "open", onClick: pickStatus }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, cancelled ? "Cancelled" : (STATUSES.find(([v]) => v === task.status) || [0, "Open"])[1])), separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickDue }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(task.due, today))) : null), /* @__PURE__ */ react_dashboard_default.createElement(SummaryField, { inputRef: summaryInput, value: task.summary || "", onSave: saveSummary }), editing === "inline" ? /* @__PURE__ */ react_dashboard_default.createElement(BodyEditor, { task, onSave: saveBody, onDone: () => setEditing(false), onStale: () => setStale(true), flushRef }) : task.body === void 0 ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-loading" }, /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null)) : /* @__PURE__ */ react_dashboard_default.createElement(BodyView, { task, onEdit: startEditing, onToggle: toggle, beforeResearch }), (narrow || editing === "mobile") && editing !== "inline" && task.body !== void 0 ? /* @__PURE__ */ react_dashboard_default.createElement(
       BodyEditor,
       {
         key: id,
@@ -2096,7 +2166,7 @@
       }
     ) : null, /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "More", className: "at-more" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-more-grid" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Priority"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field is-plain", (task.priority === "high" || task.priority === "urgent") && "is-high"), onClick: pickPriority }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-prio-glyph", "data-p": task.priority || "normal" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, (task.priority || "normal").replace(/^\w/, (c) => c.toUpperCase())))), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due date"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field is-plain", onClick: pickDue }, shortDate(task.due, today)) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-link", onClick: pickDue }, "Set a separate due date")), task.completed ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Completed"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, shortDate(task.completed, today))) : null, task.project ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Project"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono" }, String(task.project).replace(/^\[\[|\]\]$/g, "").split("/").slice(-2, -1)[0] || task.project)) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "File"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono at-break" }, task.path))));
   }
-  function ResearchBar({ task }) {
+  function ResearchBar({ task, beforeResearch }) {
     const { store, api } = useApp();
     const toast = useToast();
     const [click, setClick] = react_dashboard_default.useState(null);
@@ -2108,7 +2178,11 @@
     const start = async () => {
       setClick({ phase: "sending" });
       try {
-        const res = await api.research(task.task_id);
+        if (!await beforeResearch()) {
+          setClick(null);
+          return;
+        }
+        const res = await api.research(task.task_id, b.restart);
         if (res.task) store.put(res.task);
         setClick({ phase: "done", message: researchStartedMessage(res) });
       } catch (err) {
@@ -2116,7 +2190,7 @@
         toast(err.code === "research_busy" ? "Research is already queued or running." : describeError(err), { tone: "error" });
       }
     };
-    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-research-bar" }, /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", icon: task.research === "complete" ? "refresh" : "spark", disabled: b.disabled, onClick: start }, b.label), b.note ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-research-status" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "spark", size: 14 }), " ", b.note) : null);
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-research-bar" }, /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", icon: b.restart || task.research === "complete" ? "refresh" : "spark", disabled: b.disabled, onClick: start }, b.label), b.note ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-research-status" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "spark", size: 14 }), " ", b.note) : null);
   }
   function PanelShell({ narrow, locked, onClose, actions, footer, children }) {
     const ref = react_dashboard_default.useRef(null);
@@ -2232,9 +2306,8 @@
       }
     ), copied ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-copied", role: "status" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "check", size: 13, strokeWidth: 2.4 }), "Copied") : null);
   }
-  function SummaryField({ value, onSave }) {
+  function SummaryField({ value, onSave, inputRef: ref }) {
     const [v, setV] = react_dashboard_default.useState(value);
-    const ref = react_dashboard_default.useRef(null);
     react_dashboard_default.useEffect(() => setV(value), [value]);
     react_dashboard_default.useLayoutEffect(() => {
       const el = ref.current;
@@ -2253,13 +2326,14 @@
         placeholder: "Add a short summary",
         "aria-label": "Summary",
         onChange: (e) => setV(e.target.value),
-        onBlur: () => {
-          const t = v.trim();
+        onBlur: (e) => {
+          const t = e.currentTarget.value.trim();
           if (t !== value.trim()) onSave(t);
         },
         onKeyDown: (e) => {
           if (e.key === "Escape") {
             e.preventDefault();
+            e.currentTarget.value = value;
             setV(value);
             e.currentTarget.blur();
           }
@@ -2267,7 +2341,7 @@
       }
     );
   }
-  function BodyView({ task, onEdit, onToggle }) {
+  function BodyView({ task, onEdit, onToggle, beforeResearch }) {
     const { sections, managed: allManaged } = react_dashboard_default.useMemo(() => splitSections(task.body || ""), [task.body]);
     const stateBlock = allManaged.find((m) => /current-state/.test(m.name));
     const managed = allManaged.filter((m) => m !== stateBlock);
@@ -2278,7 +2352,7 @@
     const after = logAt >= 0 ? rest.slice(logAt) : [];
     const renderSection = (s) => renderBlocks(parseBlocks(s.text), { onToggle: (line, checked) => onToggle(s.start + line, checked) });
     const hasContent = sections.some((s) => s.text.trim());
-    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-body" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-body-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-body-label" }, "Notes"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", icon: "edit", onClick: onEdit }, "Edit")), state && state.text.trim() ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-state" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-state-label" }, "Current state"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, state.managed ? renderBlocks(parseBlocks(state.text)) : renderSection(state))) : null, !hasContent && !managed.length ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-empty-notes", onClick: onEdit }, "Add notes") : null, before.map((s, i) => /* @__PURE__ */ react_dashboard_default.createElement(BodySection, { key: `b${i}`, s, render: renderSection })), groupManaged(managed).map((m, i) => /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { key: `m${i}`, title: m.title, defaultOpen: m.title === "Research", className: "at-fold", right: /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "spark", size: 13 }) }, m.title === "Research" && !isDone(task) ? /* @__PURE__ */ react_dashboard_default.createElement(ResearchBar, { task }) : null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, renderBlocks(parseBlocks(m.text))))), !isDone(task) && !groupManaged(managed).some((m) => m.title === "Research") ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Research", defaultOpen: true, className: "at-fold", right: /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "spark", size: 13 }) }, /* @__PURE__ */ react_dashboard_default.createElement(ResearchBar, { task })) : null, after.map((s, i) => /* @__PURE__ */ react_dashboard_default.createElement(BodySection, { key: `a${i}`, s, render: renderSection })));
+    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-body" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-body-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-body-label" }, "Notes"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", icon: "edit", onClick: onEdit }, "Edit")), state && state.text.trim() ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-state" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-state-label" }, "Current state"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, state.managed ? renderBlocks(parseBlocks(state.text)) : renderSection(state))) : null, !hasContent && !managed.length ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-empty-notes", onClick: onEdit }, "Add notes") : null, before.map((s, i) => /* @__PURE__ */ react_dashboard_default.createElement(BodySection, { key: `b${i}`, s, render: renderSection })), groupManaged(managed).map((m, i) => /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { key: `m${i}`, title: m.title, defaultOpen: m.title === "Research", className: "at-fold", right: /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "spark", size: 13 }) }, m.title === "Research" && !isDone(task) ? /* @__PURE__ */ react_dashboard_default.createElement(ResearchBar, { task, beforeResearch }) : null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, renderBlocks(parseBlocks(m.text))))), !isDone(task) && !groupManaged(managed).some((m) => m.title === "Research") ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Research", defaultOpen: true, className: "at-fold", right: /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "spark", size: 13 }) }, /* @__PURE__ */ react_dashboard_default.createElement(ResearchBar, { task, beforeResearch })) : null, after.map((s, i) => /* @__PURE__ */ react_dashboard_default.createElement(BodySection, { key: `a${i}`, s, render: renderSection })));
   }
   function BodySection({ s, render }) {
     return s.folded ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: s.title, className: "at-fold" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, render(s))) : /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-section" }, s.title && !/^notes$/i.test(s.title) ? /* @__PURE__ */ react_dashboard_default.createElement("h3", { className: "at-section-title" }, s.title) : null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, render(s)));
@@ -3260,11 +3334,11 @@
             });
           }
         },
-        async create({ title, date, area }) {
+        async create({ title, date, area, summary, notes }) {
           try {
-            const res = await api.create({ title, date, area });
+            const res = await api.create({ title, date, area, summary, notes });
             if (res.task) store.put(res.task);
-            toast(res.task && res.task.research === "pending" ? "Added. Hermes is researching it." : "Added", {
+            toast(res.task?.research === "pending" ? "Added. Research is queued." : "Added", {
               action: res.task ? { label: "Open", run: () => setSelectedId(res.task.task_id) } : void 0
             });
             return true;

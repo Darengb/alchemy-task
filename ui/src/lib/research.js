@@ -1,7 +1,7 @@
 // The research button at the top of a task's research section. Research workers only start inside an
 // agent turn, so the button queues research; the server says whether the sweep starts now or later.
 
-const BUSY = new Set(['pending', 'running', 'promoted'])
+const BUSY = new Set(['pending', 'promoted'])
 export const RESEARCHING = 'Hermes is researching this task. Findings will appear here.'
 
 /** Label, disabled flag and status line for a research state. ``click`` is the button's local state:
@@ -9,6 +9,7 @@ export const RESEARCHING = 'Hermes is researching this task. Findings will appea
 export function researchButton(status, click = null) {
   const s = String(status || 'none').toLowerCase()
   if (click && click.phase === 'sending') return { label: 'Queued', disabled: true, note: null }
+  if (s === 'running') return { label: 'Restart with latest context', disabled: false, note: RESEARCHING, restart: true }
   const label = s === 'complete' ? 'Refresh research' : 'Start research'
   if (click && click.phase === 'done') return { label: 'Queued', disabled: true, note: click.message || null }
   if (BUSY.has(s)) return { label, disabled: true, note: RESEARCHING }

@@ -70,7 +70,7 @@ export function makeTransport(send) {
       call('PUT', `/tasks/${enc(id)}/body`, { body, expected_revision: expectedRevision }),
     create: (fields) => call('POST', '/tasks', fields),
     // Queue research (start, retry or refresh); the answer says whether the sweep starts now or later.
-    research: (id) => call('POST', `/tasks/${enc(id)}/research`, {}),
+    research: (id, restart = false) => call('POST', `/tasks/${enc(id)}/research`, restart ? { restart: true } : {}),
     // Send to chat: desktop gets the note back to send in a new chat; other surfaces queue it for the gateway.
     handoff: (id, surface) => call('POST', `/tasks/${enc(id)}/handoff`, { surface }),
     handoffStatus: (handoffId) => call('GET', `/handoffs/${enc(handoffId)}`),
