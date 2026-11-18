@@ -126,7 +126,7 @@ saved by the plugin:
 | Job | When | What it does | Cost |
 |---|---|---|---|
 | Research sweep | every 30 minutes | Researches tasks whose research could not start or stopped early | Free when nothing waits (a script checks first) |
-| Task file check and push retry | hourly | Gives hand-made tasks an ID, pushes commits that failed to push, tells you about new file problems | Free (script, no model) |
+| Task file check and push retry | hourly | Gives hand-made tasks an ID, pushes commits that failed to push, tells you only about problems | Free (script, no model) |
 
 Each job's small loader script is copied into `$HERMES_HOME/scripts/` (cron only runs scripts from there).
 
@@ -316,7 +316,7 @@ Setup fills them in for you.
 - **Research sweep:** every 30 minutes. A script checks first, and the agent wakes only when a task is
   waiting for research.
 - **Task file check and push retry:** hourly. It's a script with no model. It gives hand-made tasks an ID,
-  retries failed pushes, and messages the setup chat only when something changes.
+  retries failed pushes, and messages the setup chat only when a problem appears or clears. Routine runs stay silent.
 - **Discovery:** one job per discovery stream you set up. It runs one agent turn on your model per run.
 - **Run now:** the dashboard's "Start research" and "Run now" buttons, and asking in chat to run a discovery
   stream now, run the matching job immediately.
