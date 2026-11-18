@@ -1143,7 +1143,7 @@ function QuickAdd({ date, autoFocus, onDone }) {
       }
     ), busy ? /* @__PURE__ */ React4.createElement(Spinner, null) : null),
     /* @__PURE__ */ React4.createElement(CreateContext, { ...{ summary, setSummary, notes, setNotes }, disabled: busy }),
-    /* @__PURE__ */ React4.createElement("div", { className: "at-create-actions" }, /* @__PURE__ */ React4.createElement(Button, { variant: "ghost", size: "sm", onClick: close, disabled: busy }, "Done"), /* @__PURE__ */ React4.createElement(Button, { type: "submit", size: "sm", disabled: busy || !title.trim() }, "Add task"))
+    /* @__PURE__ */ React4.createElement("div", { className: "at-create-actions" }, /* @__PURE__ */ React4.createElement(Button, { variant: "ghost", size: "sm", onClick: close, disabled: busy }, "Cancel"), /* @__PURE__ */ React4.createElement(Button, { variant: "primary", type: "submit", size: "sm", disabled: busy || !title.trim() }, "Add task"))
   );
 }
 function MonthView({ anchor, narrow }) {
@@ -1581,7 +1581,7 @@ function PhoneComposer({ date: initialDate }) {
       }
     ), busy ? /* @__PURE__ */ React4.createElement(Spinner, null) : null),
     /* @__PURE__ */ React4.createElement(CreateContext, { ...{ summary, setSummary, notes, setNotes }, disabled: !open || busy }),
-    /* @__PURE__ */ React4.createElement("div", { className: "at-composer-bar" }, /* @__PURE__ */ React4.createElement("button", { type: "button", className: "at-field", onClick: pickDate, tabIndex: open ? 0 : -1 }, /* @__PURE__ */ React4.createElement(Icon, { name: "cal", size: 15 }), /* @__PURE__ */ React4.createElement("span", null, relativeDay(date, today))), (meta.areas || []).length ? /* @__PURE__ */ React4.createElement("button", { type: "button", className: "at-field", onClick: pickArea, tabIndex: open ? 0 : -1 }, /* @__PURE__ */ React4.createElement(AreaDot, { area }), /* @__PURE__ */ React4.createElement("span", null, area || "No area")) : null, /* @__PURE__ */ React4.createElement("span", { className: "at-flex" }), /* @__PURE__ */ React4.createElement(Button, { variant: "ghost", size: "sm", onClick: close, tabIndex: open ? 0 : -1 }, "Done"), /* @__PURE__ */ React4.createElement("button", { type: "submit", className: "at-composer-send", "aria-label": "Add task", disabled: !title.trim() || busy, tabIndex: open ? 0 : -1 }, /* @__PURE__ */ React4.createElement(Icon, { name: "arrowR", size: 18, strokeWidth: 2.2 })))
+    /* @__PURE__ */ React4.createElement("div", { className: "at-composer-bar" }, /* @__PURE__ */ React4.createElement("button", { type: "button", className: "at-field", onClick: pickDate, tabIndex: open ? 0 : -1 }, /* @__PURE__ */ React4.createElement(Icon, { name: "cal", size: 15 }), /* @__PURE__ */ React4.createElement("span", null, relativeDay(date, today))), (meta.areas || []).length ? /* @__PURE__ */ React4.createElement("button", { type: "button", className: "at-field", onClick: pickArea, tabIndex: open ? 0 : -1 }, /* @__PURE__ */ React4.createElement(AreaDot, { area }), /* @__PURE__ */ React4.createElement("span", null, area || "No area")) : null, /* @__PURE__ */ React4.createElement("span", { className: "at-flex" }), /* @__PURE__ */ React4.createElement(Button, { variant: "ghost", size: "sm", onClick: close, tabIndex: open ? 0 : -1 }, "Cancel"), /* @__PURE__ */ React4.createElement("button", { type: "submit", className: "at-composer-send", "aria-label": "Add task", disabled: !title.trim() || busy, tabIndex: open ? 0 : -1 }, /* @__PURE__ */ React4.createElement(Icon, { name: "arrowR", size: 18, strokeWidth: 2.2 })))
   ));
 }
 

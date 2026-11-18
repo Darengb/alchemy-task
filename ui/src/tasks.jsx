@@ -183,8 +183,8 @@ export function QuickAdd({ date, autoFocus, onDone }) {
       </div>
       <CreateContext {...{ summary, setSummary, notes, setNotes }} disabled={busy} />
       <div className="at-create-actions">
-        <Button variant="ghost" size="sm" onClick={close} disabled={busy}>Done</Button>
-        <Button type="submit" size="sm" disabled={busy || !title.trim()}>Add task</Button>
+        <Button variant="ghost" size="sm" onClick={close} disabled={busy}>Cancel</Button>
+        <Button variant="primary" type="submit" size="sm" disabled={busy || !title.trim()}>Add task</Button>
       </div>
     </form>
   )
@@ -635,7 +635,7 @@ function PhoneComposer({ date: initialDate }) {
             </button>
           ) : null}
           <span className="at-flex" />
-          <Button variant="ghost" size="sm" onClick={close} tabIndex={open ? 0 : -1}>Done</Button>
+          <Button variant="ghost" size="sm" onClick={close} tabIndex={open ? 0 : -1}>Cancel</Button>
           <button type="submit" className="at-composer-send" aria-label="Add task" disabled={!title.trim() || busy} tabIndex={open ? 0 : -1}>
             <Icon name="arrowR" size={18} strokeWidth={2.2} />
           </button>
