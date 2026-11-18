@@ -61,9 +61,9 @@ export function createMockBackend({ today = nyToday() } = {}) {
     }],
     ['POST', /^\/tasks\/([^/]+)\/complete$/, (q, [id]) => { const t = find(id); t.status = 'done'; t.completed = today; log(t, 'Marked done.'); bump(t); return { ok: true, task: full(t) } }],
     ['POST', /^\/tasks\/([^/]+)\/reopen$/, (q, [id]) => { const t = find(id); t.status = 'open'; t.completed = null; log(t, 'Reopened.'); bump(t); return { ok: true, task: full(t) } }],
-    ['POST', /^\/tasks\/([^/]+)\/research$/, (q, [id]) => {
+    ['POST', /^\/tasks\/([^/]+)\/research$/, (q, [id], body) => {
       const t = find(id)
-      if (t.research === 'pending' || t.research === 'running') throw new HttpError(409, 'research_busy', 'Research is already queued or running')
+      if (t.research === 'pending' || (t.research === 'running' && !body.restart)) throw new HttpError(409, 'research_busy', 'Research is already queued or running')
       t.research = 'pending'; log(t, 'Research requested in the Tasks view.'); bump(t)
       return { ok: true, queued: true, starts: 'within 30 minutes', message: 'Queued, starts within 30 minutes', task: full(t) }
     }],
@@ -77,8 +77,8 @@ export function createMockBackend({ today = nyToday() } = {}) {
     ['POST', /^\/tasks$/, (q, m, body) => {
       if (!body.title) throw new HttpError(400, 'title', 'A task needs a title.')
       const t = { task_id: crypto.randomUUID(), title: body.title, area: body.area || db.settings.tasks.default_area, status: 'open', priority: 'normal',
-        due: body.date || today, scheduled: body.date || today, research: 'pending', summary: null,
-        body: `\n## Notes\n\nAdded from the Tasks view.\n\n## Log\n\n- ${today}: Created from the Tasks view.\n`, path: `areas/${body.area || 'work'}/tasks/new.md`, revision: `r${rev++}` }
+        due: body.date || today, scheduled: body.date || today, research: 'pending', summary: body.summary || null,
+        body: `\n## Notes\n\n${body.notes || ''}\n\n## Log\n\n- ${today}: Created from the Tasks view.\n`, path: `areas/${body.area || 'work'}/tasks/new.md`, revision: `r${rev++}` }
       db.tasks.push(t)
       setTimeout(() => { t.research = 'complete'; bump(t) }, 8000)
       return { ok: true, task: full(t) }

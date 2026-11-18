@@ -233,23 +233,21 @@ async def create(request: Request):
         store = rt.store()
         day = _date(body.get("date") or rt.settings.today(), "date")
         area = _area_ok(rt, str(body.get("area") or "").strip().lower())
+        for field in ("summary", "notes"):
+            if field in body and not isinstance(body[field], str):
+                raise UIError("invalid_request", f"{field} must be text")
         try:
-            doc = store.create(title=title, area=area, due=day, summary=str(body.get("summary") or ""),
+            doc = store.create(title=title, area=area, due=day, summary=body.get("summary", ""), notes=body.get("notes", ""),
                                source="Tasks view", confirm_new=True)
         except NeedsInput as exc:
             if exc.kind == "area":
                 raise UIError("needs_area", "Pick an area first.") from exc
             raise
         receipt = _deliver(rt, [store.rel(doc.path)], f"task: create {doc.title[:72]}")
-        research = (doc.fm.get("enrichment") or {}).get("status")
-        if research == "pending":
-            try:
-                from .. import research_agent
-                research_agent.on_task_created(rt, doc, "")
-            except Exception:  # noqa: BLE001 - the research sweep picks up pending tasks later
-                pass
+        if (doc.fm.get("enrichment") or {}).get("status") == "pending":
+            _start_sweep(rt)
         return {"ok": True, "task": _row(store, tf.parse_file(doc.path), body=True), "git": receipt}
-    return await handle(request, run, {"title", "date", "area", "summary"})
+    return await handle(request, run, {"title", "date", "area", "summary", "notes"})
 
 
 # ------------------------------------------------------------------ research button
@@ -322,14 +320,18 @@ def _start_sweep(rt: Any) -> str:
 async def research(request: Request, task_id: str):
     """Queue research for a task (start, retry or refresh). Workers only launch inside an agent turn, so
     this marks the task waiting and starts the research sweep job now when one is set up."""
-    def run(_: dict[str, Any]) -> dict[str, Any]:
+    def run(body: dict[str, Any]) -> dict[str, Any]:
         from .. import research_agent as ra
         from ..core import research as rs
+        restart = body.get("restart", False)
+        if not isinstance(restart, bool):
+            raise UIError("invalid_request", "restart must be true or false")
         rt = runtime()
         store = rt.store()
-        doc = _doc(store, task_id)
+        _doc(store, task_id)
         try:
-            new, path = ra.queue_research(rt, doc.task_id, "Research requested in the Tasks view.")
+            log = "Requested fresh research with the latest task context." if restart else "Research requested in the Tasks view."
+            new, path = ra.queue_research(rt, task_id, log, restart=restart)
         except ra.ResearchBusy as exc:
             raise UIError("research_busy", "Research is already queued or running for this task.", 409) from exc
         except rs.ResearchError as exc:
@@ -338,7 +340,7 @@ async def research(request: Request, task_id: str):
         when = _start_sweep(rt)
         return {"ok": True, "queued": True, "starts": SWEEP_WHEN[when], "message": SWEEP_STARTS[when],
                 "task": _row(store, new, body=True), "git": receipt}
-    return await handle(request, run, set())
+    return await handle(request, run, {"restart"})
 
 
 # ------------------------------------------------------------------ send to chat

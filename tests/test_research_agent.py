@@ -154,6 +154,30 @@ def test_launch_failure_leaves_task_queued_and_recover_runs_queue(ctx, settings,
     assert result["queued"] == 1 and len(result["started"]) == 1
 
 
+def test_sweep_replaces_running_worker_without_waiting_for_it_to_finish(ctx, settings, data_dir, monkeypatch):
+    from types import SimpleNamespace
+
+    rt = runtime.Runtime()
+    doc = create(settings, data_dir)
+    calls = []
+    def wait(handle, timeout_seconds):
+        if handle["subagent_id"] == "sa-1":
+            rt.store().update(doc.task_id, {"summary": "2026-11-18: Latest checkout instructions", "notes_append": "Use cohort B."})
+            ra.queue_research(rt, doc.task_id, restart=True)
+            return SimpleNamespace(timed_out=True)
+        return SimpleNamespace(timed_out=False)
+    monkeypatch.setattr(ctx.subagent_lifecycle, "wait", wait)
+    monkeypatch.setattr(ctx.subagent_lifecycle, "cancel", lambda handle, **_: calls.append(handle["subagent_id"]), raising=False)
+
+    ra.recover(rt, wait_seconds=20)
+
+    assert calls == ["sa-1"]
+    first, replacement = ctx.subagent_lifecycle.launched
+    assert "Latest checkout instructions" not in first.context
+    assert "summary: 2026-11-18: Latest checkout instructions" in replacement.context.splitlines()
+    assert "Use cohort B." in replacement.context
+
+
 def test_capabilities_and_skill_tools(ctx):
     caps = json.loads(ra.t_capabilities({}))
     assert caps["ok"] and [t["toolset"] for t in caps["toolsets"]] == ["web"]

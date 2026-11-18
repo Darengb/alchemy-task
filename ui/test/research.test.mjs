@@ -16,11 +16,20 @@ test('Refresh research when it is complete', () => {
   assert.deepEqual(researchButton('complete'), { label: 'Refresh research', disabled: false, note: null })
 })
 
-test('pending or running shows the status line and a disabled button', () => {
-  for (const s of ['pending', 'running', 'promoted']) {
+test('pending or promoted shows the status line and a disabled button', () => {
+  for (const s of ['pending', 'promoted']) {
     const b = researchButton(s)
     assert.equal(b.disabled, true, s)
     assert.match(b.note, /researching this task/)
+  }
+})
+
+test('running research can be restarted even if it was started from this panel', () => {
+  for (const click of [null, { phase: 'done', message: 'Starting now' }]) {
+    const b = researchButton('running', click)
+    assert.equal(b.label, 'Restart with latest context')
+    assert.equal(b.disabled, false)
+    assert.equal(b.restart, true)
   }
 })
 

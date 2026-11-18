@@ -338,12 +338,23 @@
 .at-add .at-icon { width: 20px; }
 .at-add:hover { background: var(--at-hover); color: var(--at-accent-text); }
 .at-add-form {
-  display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: var(--at-r);
+  display: grid; gap: 8px; padding: 10px; border-radius: var(--at-r);
   background: var(--at-inset); box-shadow: inset 0 0 0 1px rgba(110, 120, 255, .5), 0 0 20px rgba(60, 70, 255, .15);
 }
-.at-add-input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; font-size: 14px; padding: 2px 0; }
-.at-add-input::placeholder { color: var(--at-faint); }
 .at-pop-add { padding: 8px; }
+.at-add-row { position: relative; }
+.at-add-row > .at-spinner { position: absolute; right: 9px; top: 50%; translate: 0 -50%; pointer-events: none; }
+.at-add-input[readonly] { padding-right: 32px; }
+.at-create-context { min-height: 0; display: grid; gap: 6px; }
+.at-add-input, .at-create-context textarea {
+  display: block; box-sizing: border-box; width: 100%; min-width: 0;
+  padding: 7px 9px; border: 1px solid var(--at-line); border-radius: var(--at-r);
+  background: var(--at-inset); color: var(--at-fg); font: inherit;
+}
+.at-create-context textarea { resize: vertical; }
+.at-add-input::placeholder, .at-create-context textarea::placeholder { color: var(--at-faint); }
+.at-add-input:focus, .at-create-context textarea:focus { outline: 1px solid var(--at-accent-text); outline-offset: -1px; }
+.at-create-actions { display: flex; justify-content: flex-end; gap: 6px; }
 
 /* disclosure */
 .at-disc { border-radius: var(--at-r); }
@@ -1093,6 +1104,7 @@ html:has(.at-mobile-editor[open]) { overflow: hidden; }
   transition: opacity .18s var(--at-ease), transform .22s var(--at-ease);
 }
 .at-composer.is-open { opacity: 1; transform: none; pointer-events: auto; }
+.at-composer .at-create-context textarea { font-size: 16px; resize: none; }
 .at-composer-row {
   display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px;
   background: var(--at-inset); box-shadow: inset 0 0 0 1px rgba(110, 120, 255, .5), 0 0 20px rgba(60, 70, 255, .15);

@@ -307,6 +307,46 @@ def test_research_button_queues_a_never_researched_task_and_starts_the_sweep(rcl
     assert "Research requested in the Tasks view." in tf.parse_file(_task_path(c, t["task_id"])).body
 
 
+def test_dashboard_creation_saves_context_before_research(client, ctx, monkeypatch):
+    ctx.set_config("research_by_default", True)
+    seen = []
+    def sweep(rt):
+        seen.extend(task for task in rt.store().scan().tasks if task.title == "Check the rollout")
+        return "now"
+    monkeypatch.setattr(tasks_api, "_start_sweep", sweep)
+    out = client.post("/tasks", json={"title": "Check the rollout", "area": "work",
+                                      "summary": "Review the mobile rollout.", "notes": "Use the October cohort.\nCheck iOS first."})
+    assert out.status_code == 200, out.json()
+    assert len(seen) == 1
+    assert seen[0].fm["enrichment"]["status"] == "pending"
+    assert seen[0].fm["summary"] == "Review the mobile rollout."
+    assert "Use the October cohort.\nCheck iOS first." in seen[0].body
+
+
+def test_restart_fences_the_old_result_before_sweep(rclient):
+    from alchemy_task import research_agent as ra
+    from alchemy_task.core import research as rs
+
+    client, c = rclient
+    c.state.set("jobs", {"research-sweep": {"job_id": "sweep1"}})
+    t = make_task(client)
+    task_id = t["task_id"]
+    path = _task_path(c, task_id)
+    _set_research(path, {"status": "running", "attempts": 1, "run_id": "old", "claimed_at": rs.now_iso()})
+    current = client.get(f"/tasks/{task_id}").json()["task"]
+    updated = client.patch(f"/tasks/{task_id}", json={"summary": "Use the latest brief", "expected_revision": current["revision"]})
+    assert updated.status_code == 200, updated.json()
+
+    out = client.post(f"/tasks/{task_id}/research", json={"restart": True})
+    assert out.status_code == 200, out.json()
+    assert c.runs == ["sweep1"]
+    assert out.json()["task"]["summary"] == "Use the latest brief"
+    assert out.json()["task"]["research"] == "pending"
+    assert ra._finish_failure(runtime.Runtime(c), task_id, "old", "late failure") is None
+    duplicate = client.post(f"/tasks/{task_id}/research", json={"restart": True})
+    assert duplicate.status_code == 409
+
+
 def test_research_button_refreshes_complete_and_retries_skipped_or_failed(rclient):
     client, c = rclient  # no sweep job registered: queue only, the next sweep starts it
     for status in ("complete", "skipped", "failed"):
