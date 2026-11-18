@@ -1122,13 +1122,13 @@
           }
         }
       },
-      /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-add-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-check at-check-md is-ghost", "aria-hidden": "true" }), /* @__PURE__ */ react_dashboard_default.createElement(
+      /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-add-row" }, /* @__PURE__ */ react_dashboard_default.createElement(
         "input",
         {
           ref,
           className: "at-add-input",
           value: title,
-          placeholder: "New task",
+          placeholder: "Title",
           "aria-label": "New task title",
           readOnly: busy,
           onChange: (e) => setTitle(e.target.value)

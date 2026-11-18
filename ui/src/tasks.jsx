@@ -177,8 +177,7 @@ export function QuickAdd({ date, autoFocus, onDone }) {
     <form className="at-add-form" data-no-drag="" onSubmit={(e) => { e.preventDefault(); submit() }}
           onKeyDown={(e) => { if (e.key === 'Escape' && !busy) { e.preventDefault(); close() } }}>
       <div className="at-add-row">
-        <span className="at-check at-check-md is-ghost" aria-hidden="true" />
-        <input ref={ref} className="at-add-input" value={title} placeholder="New task" aria-label="New task title"
+        <input ref={ref} className="at-add-input" value={title} placeholder="Title" aria-label="New task title"
                readOnly={busy} onChange={(e) => setTitle(e.target.value)} />
         {busy ? <Spinner /> : null}
       </div>

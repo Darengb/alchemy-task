@@ -983,37 +983,33 @@
   background: var(--at-inset);
   box-shadow: inset 0 0 0 1px rgba(110, 120, 255, .5), 0 0 20px rgba(60, 70, 255, .15);
 }
-.at-add-input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  outline: none;
-  font-size: 14px;
-  padding: 2px 0;
-}
-.at-add-input::placeholder {
-  color: var(--at-faint);
-}
 .at-pop-add {
   padding: 8px;
 }
 .at-add-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+  position: relative;
+}
+.at-add-row > .at-spinner {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  translate: 0 -50%;
+  pointer-events: none;
+}
+.at-add-input[readonly] {
+  padding-right: 32px;
 }
 .at-create-context {
   min-height: 0;
   display: grid;
   gap: 6px;
 }
+.at-add-input,
 .at-create-context textarea {
   display: block;
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  resize: vertical;
   padding: 7px 9px;
   border: 1px solid var(--at-line);
   border-radius: var(--at-r);
@@ -1021,9 +1017,14 @@
   color: var(--at-fg);
   font: inherit;
 }
+.at-create-context textarea {
+  resize: vertical;
+}
+.at-add-input::placeholder,
 .at-create-context textarea::placeholder {
   color: var(--at-faint);
 }
+.at-add-input:focus,
 .at-create-context textarea:focus {
   outline: 1px solid var(--at-accent-text);
   outline-offset: -1px;
