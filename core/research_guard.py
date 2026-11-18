@@ -30,6 +30,31 @@ READ_VERBS = ("get", "list", "read", "search", "query", "fetch", "describe", "fi
               "retrieve", "show", "count", "info", "browse", "inspect", "summarize", "summarise", "preview")
 _PREFIX_BLOCKED = ("browser", "kanban", "ha_")
 
+_WRITE_WORDS = frozenset({
+    "create", "update", "delete", "remove", "send", "post", "set", "put", "write", "add", "edit", "move", "call",
+    "run", "exec", "execute", "publish", "upload", "invite", "approve", "cancel", "archive", "merge", "push",
+    "submit", "reply", "forward", "trigger", "start", "stop", "toggle", "enable", "disable", "assign", "close",
+    "open", "reset", "pay", "charge"})
+# Extra words for the looser prefixed-name rule only: verbs that change state, run code or manage access. Exact
+# words, no stemming: plurals and past participles in read tools are usually nouns or filters (LIST_LABELS,
+# GET_CLOSED_ISSUES), while a write tool names its verb in the base form (ADD_LABEL, MOVE_TO_TRASH).
+_PREFIX_WRITE_WORDS = _WRITE_WORDS | frozenset({
+    "manage", "modify", "mark", "trash", "react", "save", "rename", "share", "grant", "revoke", "install",
+    "deploy", "restart", "kill", "patch", "insert", "upsert", "replace", "clear", "purge", "import", "sync",
+    "connect", "authorize", "schedule", "bash", "workbench", "proxy", "batch", "multi", "unsubscribe", "mute",
+    "snooze", "join", "leave", "kick", "ban", "transfer", "accept", "decline", "respond", "notify", "remote"})
+
+
+# Action words that are almost never nouns in a read tool's name; they block on every path.
+_ALWAYS_WRITE_WORDS = frozenset({
+    "delete", "remove", "send", "execute", "exec", "trash", "purge", "kill", "reply", "forward", "publish",
+    "upload", "merge", "push", "pay", "charge", "revoke", "grant", "deploy", "install", "bash", "workbench",
+    "proxy", "unsubscribe"})
+
+
+def _is_write_word(word: str) -> bool:
+    return word in _PREFIX_WRITE_WORDS
+
 
 def is_write_like(tool_name: Any) -> bool:
     """True for tool names a read-only research child must not call. Never raises."""
@@ -48,17 +73,21 @@ def is_write_like(tool_name: Any) -> bool:
             app = parts[1].lower() if len(parts) >= 3 else ""
             if app and len(words) > 1 and words[0].lower() == app:
                 words = words[1:]  # connector tools often repeat the app name: GMAIL_FETCH_EMAILS
-            first = words[0].lower() if words else ""
+            low_words = [w.lower() for w in words]
+            # A read verb never excuses an unambiguous action word anywhere in the name (get_and_delete).
+            if _ALWAYS_WRITE_WORDS.intersection(low_words):
+                return True
+            first = low_words[0] if low_words else ""
             if first in READ_VERBS:
                 return False
             # noun-first read tools such as notion-search or catalog_search: allowed only when the LAST word is a
             # read verb and no write word appears anywhere in the name.
-            low_words = [w.lower() for w in words]
-            write_words = {"create", "update", "delete", "remove", "send", "post", "set", "put", "write", "add",
-                           "edit", "move", "call", "run", "exec", "execute", "publish", "upload", "invite", "approve",
-                           "cancel", "archive", "merge", "push", "submit", "reply", "forward", "trigger", "start",
-                           "stop", "toggle", "enable", "disable", "assign", "close", "open", "reset", "pay", "charge"}
-            if low_words and low_words[-1] in READ_VERBS and not write_words.intersection(low_words):
+            if low_words and low_words[-1] in READ_VERBS and not any(_is_write_word(w) for w in low_words):
+                return False
+            # prefixed read tools such as GMAIL_FETCH_EMAILS on a server named "composio", or
+            # MICROSOFT_TEAMS_CHATS_GET_ALL_MESSAGES: leading non-verb words (app names) are skipped up to the first
+            # read verb, but only when no write word (from a wider list, inflections included) appears anywhere.
+            if any(w in READ_VERBS for w in low_words[1:]) and not any(_is_write_word(w) for w in low_words):
                 return False
             return True
         return False

@@ -373,7 +373,10 @@ def clean_summary(text: Any) -> str:
     s = re.sub(r"\[\[([^\]|]+)\|([^\]]+)\]\]", r"\2", s)
     s = re.sub(r"\[\[([^\]]+)\]\]", lambda m: m.group(1).split("/")[-1], s)
     s = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)
-    s = re.sub(r"[*_`]+", "", s).strip()
+    s = re.sub(r"[*`]+", "", s)
+    # Underscores are Markdown emphasis only at word edges (_x_, __x__); inside words (GMAIL_FETCH_EMAILS,
+    # snake_case) they are part of the text and stay.
+    s = re.sub(r"(?<![A-Za-z0-9])_+|_+(?![A-Za-z0-9])", "", s).strip()
     if len(s) > SUMMARY_MAX:
         cut = s[:SUMMARY_MAX]
         s = cut[: cut.rfind(" ")].rstrip(",;:") + "…" if " " in cut else cut + "…"
