@@ -9,16 +9,23 @@ export function createTaskStore(api) {
   const listeners = new Set()
   const pending = new Map() // task_id -> number of changes in flight
   const loaded = new Map() // range key -> { from, to }
+  // A fetch that started before a task was last written can answer after it with the older file. Each
+  // fetch notes when it started; rows it returns for a task written since are ignored, so a slow list
+  // refresh never rolls back an autosave (which made the editor say the task changed somewhere else).
+  let clock = 0
+  const written = new Map() // task_id -> clock when the newest server copy arrived from a write
+  const markWritten = (id) => { if (id) written.set(id, ++clock) }
 
   const emit = () => { state = { ...state, version: state.version + 1 }; listeners.forEach((l) => l()) }
   const set = (patch) => { state = { ...state, ...patch }; emit() }
 
-  function upsert(tasks, coveredFn) {
+  function upsert(tasks, coveredFn, startedAt = Infinity) {
     const byId = { ...state.byId }
     const seen = new Set()
+    const newer = (id) => (written.get(id) || 0) > startedAt
     for (const t of tasks) {
       seen.add(t.task_id)
-      if (pending.has(t.task_id)) continue
+      if (pending.has(t.task_id) || newer(t.task_id)) continue
       const prev = byId[t.task_id] || {}
       // List rows carry no body; keep a body loaded earlier unless the file changed since.
       const body = t.body !== undefined ? t.body : (prev.revision === t.revision ? prev.body : undefined)
@@ -26,7 +33,7 @@ export function createTaskStore(api) {
     }
     if (coveredFn) {
       for (const [id, t] of Object.entries(byId)) {
-        if (!seen.has(id) && !pending.has(id) && coveredFn(t)) delete byId[id]
+        if (!seen.has(id) && !pending.has(id) && !newer(id) && coveredFn(t)) delete byId[id]
       }
     }
     state = { ...state, byId }
@@ -44,18 +51,20 @@ export function createTaskStore(api) {
 
     async loadRange(from, to) {
       loaded.set(`${from}:${to}`, { from, to })
+      const startedAt = ++clock
       const res = await track(api.tasks(from, to))
       if (res.today) state = { ...state, today: res.today }
-      upsert(res.tasks || [], (t) => { const d = taskDate(t); return d && d >= from && d <= to })
+      upsert(res.tasks || [], (t) => { const d = taskDate(t); return d && d >= from && d <= to }, startedAt)
       set({ error: null })
       return res
     },
 
     async loadOverdue() {
+      const startedAt = ++clock
       const res = await track(api.overdue())
       const today = res.today || state.today
       if (res.today) state = { ...state, today: res.today }
-      upsert(res.tasks || [], (t) => { const d = taskDate(t); return t.status !== 'done' && t.status !== 'cancelled' && d && d < today })
+      upsert(res.tasks || [], (t) => { const d = taskDate(t); return t.status !== 'done' && t.status !== 'cancelled' && d && d < today }, startedAt)
       set({ error: null })
       return res
     },
@@ -71,13 +80,15 @@ export function createTaskStore(api) {
     },
 
     async loadTask(id) {
+      const startedAt = ++clock
       const res = await api.task(id)
-      upsert([res.task])
+      upsert([res.task], null, startedAt)
       emit()
-      return res.task
+      return state.byId[id] || res.task
     },
 
-    put(task) { upsert([task]); emit() },
+    /** Take a task the server returned from a write: it is the newest copy, whatever reads are still out. */
+    put(task) { upsert([task]); if (task) markWritten(task.task_id); emit() },
 
     /** Apply a local change now, run the server call, then take the server's version (or roll back). */
     async mutate(id, localPatch, run) {
@@ -91,7 +102,7 @@ export function createTaskStore(api) {
         const res = await run()
         const left = (pending.get(id) || 1) - 1
         if (left) pending.set(id, left); else pending.delete(id)
-        if (res && res.task) { upsert([res.task]); emit() }
+        if (res && res.task) { upsert([res.task]); markWritten(res.task.task_id); emit() }
         return res
       } catch (err) {
         const left = (pending.get(id) || 1) - 1
