@@ -383,6 +383,11 @@
     const listeners = /* @__PURE__ */ new Set();
     const pending = /* @__PURE__ */ new Map();
     const loaded = /* @__PURE__ */ new Map();
+    let clock = 0;
+    const written = /* @__PURE__ */ new Map();
+    const markWritten = (id) => {
+      if (id) written.set(id, ++clock);
+    };
     const emit = () => {
       state = { ...state, version: state.version + 1 };
       listeners.forEach((l) => l());
@@ -391,19 +396,20 @@
       state = { ...state, ...patch };
       emit();
     };
-    function upsert(tasks, coveredFn) {
+    function upsert(tasks, coveredFn, startedAt = Infinity) {
       const byId = { ...state.byId };
       const seen = /* @__PURE__ */ new Set();
+      const newer = (id) => (written.get(id) || 0) > startedAt;
       for (const t of tasks) {
         seen.add(t.task_id);
-        if (pending.has(t.task_id)) continue;
+        if (pending.has(t.task_id) || newer(t.task_id)) continue;
         const prev = byId[t.task_id] || {};
         const body = t.body !== void 0 ? t.body : prev.revision === t.revision ? prev.body : void 0;
         byId[t.task_id] = { ...prev, ...t, body };
       }
       if (coveredFn) {
         for (const [id, t] of Object.entries(byId)) {
-          if (!seen.has(id) && !pending.has(id) && coveredFn(t)) delete byId[id];
+          if (!seen.has(id) && !pending.has(id) && !newer(id) && coveredFn(t)) delete byId[id];
         }
       }
       state = { ...state, byId };
@@ -427,23 +433,25 @@
       },
       async loadRange(from, to) {
         loaded.set(`${from}:${to}`, { from, to });
+        const startedAt = ++clock;
         const res = await track(api.tasks(from, to));
         if (res.today) state = { ...state, today: res.today };
         upsert(res.tasks || [], (t) => {
           const d = taskDate(t);
           return d && d >= from && d <= to;
-        });
+        }, startedAt);
         set({ error: null });
         return res;
       },
       async loadOverdue() {
+        const startedAt = ++clock;
         const res = await track(api.overdue());
         const today = res.today || state.today;
         if (res.today) state = { ...state, today: res.today };
         upsert(res.tasks || [], (t) => {
           const d = taskDate(t);
           return t.status !== "done" && t.status !== "cancelled" && d && d < today;
-        });
+        }, startedAt);
         set({ error: null });
         return res;
       },
@@ -457,13 +465,16 @@
         }
       },
       async loadTask(id) {
+        const startedAt = ++clock;
         const res = await api.task(id);
-        upsert([res.task]);
+        upsert([res.task], null, startedAt);
         emit();
-        return res.task;
+        return state.byId[id] || res.task;
       },
+      /** Take a task the server returned from a write: it is the newest copy, whatever reads are still out. */
       put(task) {
         upsert([task]);
+        if (task) markWritten(task.task_id);
         emit();
       },
       /** Apply a local change now, run the server call, then take the server's version (or roll back). */
@@ -481,6 +492,7 @@
           else pending.delete(id);
           if (res && res.task) {
             upsert([res.task]);
+            markWritten(res.task.task_id);
             emit();
           }
           return res;
