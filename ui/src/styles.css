@@ -668,6 +668,20 @@ html.at-dragging { -webkit-user-select: none; user-select: none; }
 .at-editor:focus { border-color: rgba(110, 120, 255, .7); box-shadow: 0 0 0 3px rgba(60, 70, 255, .2); }
 .at-editor-hint { margin-top: 8px; font-family: var(--at-mono); font-size: 10.5px; letter-spacing: .04em; color: var(--at-faint); }
 
+/* The top-layer dialog covers the task sheet. Only the text area scrolls. */
+html:has(.at-mobile-editor[open]) { overflow: hidden; }
+.at-mobile-editor {
+  position: fixed; inset: 0 0 auto; margin: 0; width: 100%; height: 100dvh;
+  max-width: none; max-height: none; border: 0; padding: max(12px, env(safe-area-inset-top)) 16px 10px;
+  overflow: hidden; overscroll-behavior: none; background: var(--at-canvas-deep); color: var(--at-fg);
+}
+.at-mobile-editor::backdrop { background: var(--at-canvas-deep); }
+.at-mobile-editor > .at-body { height: 100%; display: flex; flex-direction: column; padding: 0; }
+.at-mobile-editor .at-body-bar { flex: none; flex-wrap: wrap; }
+.at-mobile-editor .at-body-bar .at-btn { min-height: 44px; }
+.at-mobile-editor .at-editor { flex: 1 1 0; min-height: 0; resize: none; font-size: 16px; overscroll-behavior: contain; }
+.at-mobile-editor .at-editor-hint { flex: none; }
+
 /* markdown */
 .at-md { font-size: 14px; line-height: 1.65; color: var(--at-fg2); overflow-wrap: anywhere; }
 .at-md p { margin: 0 0 9px; }

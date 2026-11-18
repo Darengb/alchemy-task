@@ -28,6 +28,7 @@ export function TaskPanel({ id, narrow, onClose }) {
   const task = useStore(store, sel)
   const [loadError, setLoadError] = React.useState(null)
   const [editing, setEditing] = React.useState(false)
+  const mobileEditor = React.useRef(null)
   const [stale, setStale] = React.useState(false)
   // The "Copied" tooltip under the title stays until the next tap, click or key press anywhere.
   const [copied, setCopied] = React.useState(false)
@@ -69,6 +70,10 @@ export function TaskPanel({ id, narrow, onClose }) {
   // Field changes made while the notes editor is open: save the notes first and close the editor, so the
   // editor never holds text built from an older version of the file.
   const flushRef = React.useRef(null)
+  const startEditing = () => {
+    if (narrow && mobileEditor.current?.()) setEditing('mobile')
+    else setEditing('inline')
+  }
   const settle = async () => {
     if (!editing || !flushRef.current) return true
     const ok = await flushRef.current()
@@ -209,7 +214,7 @@ export function TaskPanel({ id, narrow, onClose }) {
   }
 
   return (
-    <PanelShell narrow={narrow} onClose={onClose} footer={isDone(task) ? null : (
+    <PanelShell narrow={narrow} locked={editing === 'mobile'} onClose={onClose} footer={isDone(task) ? null : (
       <button type="button" className={cx('at-cta', sending && 'is-busy')} onClick={sendToChat} disabled={sending}>
         <Icon name="chat" size={19} strokeWidth={2} /><span>{sending ? 'Starting…' : 'Start in chat'}</span>
       </button>
@@ -255,11 +260,15 @@ export function TaskPanel({ id, narrow, onClose }) {
 
       <SummaryField value={task.summary || ''} onSave={(summary) => patch({ summary })} />
 
-      {editing ? (
+      {editing === 'inline' ? (
         <BodyEditor task={task} onSave={saveBody} onDone={() => setEditing(false)} onStale={() => setStale(true)} flushRef={flushRef} />
       ) : task.body === undefined ? <div className="at-panel-loading"><Spinner /></div> : (
-        <BodyView task={task} onEdit={() => setEditing(true)} onToggle={toggle} />
+        <BodyView task={task} onEdit={startEditing} onToggle={toggle} />
       )}
+      {(narrow || editing === 'mobile') && editing !== 'inline' && task.body !== undefined ? (
+        <BodyEditor key={id} task={task} onSave={saveBody} onDone={() => setEditing(false)} onStale={() => setStale(true)}
+                    flushRef={flushRef} openRef={mobileEditor} active={editing === 'mobile'} />
+      ) : null}
 
       <Disclosure title="More" className="at-more">
         <div className="at-more-grid">
@@ -314,9 +323,9 @@ function ResearchBar({ task }) {
   )
 }
 
-function PanelShell({ narrow, onClose, actions, footer, children }) {
+function PanelShell({ narrow, locked, onClose, actions, footer, children }) {
   const ref = React.useRef(null)
-  useSheetDismiss(ref, narrow, onClose)
+  useSheetDismiss(ref, narrow && !locked, onClose)
   return (
     <aside ref={ref} className={cx('at-panel', narrow ? 'is-sheet' : 'is-side')} aria-label="Task">
       <div className="at-panel-bar">
@@ -482,9 +491,9 @@ function BodySection({ s, render }) {
   )
 }
 
-function BodyEditor({ task, onSave, onDone, onStale, flushRef }) {
+function BodyEditor({ task, onSave, onDone, onStale, flushRef, openRef, active = true }) {
   const toast = useToast()
-  const parts = React.useMemo(() => extractManaged(task.body || ''), []) // eslint-disable-line react-hooks/exhaustive-deps
+  const [parts, setParts] = React.useState(() => extractManaged(task.body || ''))
   const baseRev = React.useRef(task.revision) // the file version this editor's text was built from
   const inFlight = React.useRef(Promise.resolve(true))
   const [text, setText] = React.useState(parts.editable)
@@ -493,6 +502,48 @@ function BodyEditor({ task, onSave, onDone, onStale, flushRef }) {
   const saved = React.useRef(parts.editable)
   const timer = React.useRef(null)
   const ref = React.useRef(null)
+  const dialog = React.useRef(null)
+
+  React.useLayoutEffect(() => {
+    if (!openRef) return undefined
+    openRef.current = () => {
+      const el = dialog.current
+      if (typeof el?.showModal !== 'function') return false
+      if (el.open) return true
+      const current = extractManaged(task.body || '')
+      setParts(current)
+      baseRev.current = task.revision
+      latest.current = saved.current = current.editable
+      setText(current.editable)
+      setStatus('saved')
+      // Focus an already mounted textarea within the original iOS tap.
+      ref.current.setAttribute('autofocus', '')
+      el.showModal()
+      ref.current.focus({ preventScroll: true })
+      return true
+    }
+    return () => { openRef.current = null }
+  }, [openRef, task.body, task.revision])
+
+  React.useLayoutEffect(() => {
+    if (!openRef || !active || !dialog.current) return undefined
+    const el = dialog.current
+    const vv = window.visualViewport
+    const fit = () => {
+      el.style.top = `${vv?.offsetTop || 0}px`
+      el.style.height = `${vv?.height || window.innerHeight}px`
+    }
+    fit()
+    vv?.addEventListener('resize', fit)
+    vv?.addEventListener('scroll', fit)
+    window.addEventListener('resize', fit)
+    return () => {
+      vv?.removeEventListener('resize', fit)
+      vv?.removeEventListener('scroll', fit)
+      window.removeEventListener('resize', fit)
+      if (el.open) el.close()
+    }
+  }, [openRef, active])
 
   const save = React.useCallback(() => {
     clearTimeout(timer.current)
@@ -517,13 +568,13 @@ function BodyEditor({ task, onSave, onDone, onStale, flushRef }) {
     return inFlight.current
   }, [onSave, onStale, toast, parts])
   React.useEffect(() => {
-    if (!flushRef) return undefined
+    if (!flushRef || !active) return undefined
     flushRef.current = save
     return () => { flushRef.current = null }
-  }, [flushRef, save])
+  }, [flushRef, active, save])
   const changedElsewhere = task.revision && baseRev.current && task.revision !== baseRev.current && status !== 'saving'
 
-  React.useEffect(() => { if (ref.current) ref.current.focus() }, [])
+  React.useEffect(() => { if (!openRef) ref.current?.focus() }, [openRef])
   React.useEffect(() => () => clearTimeout(timer.current), [])
 
   const change = (v) => {
@@ -534,7 +585,7 @@ function BodyEditor({ task, onSave, onDone, onStale, flushRef }) {
     timer.current = setTimeout(save, 1500)
   }
   const done = async () => { if (await save()) onDone() }
-  return (
+  const content = (
     <div className="at-body is-editing">
       <div className="at-body-bar">
         <span className="at-body-label">Notes</span>
@@ -550,7 +601,7 @@ function BodyEditor({ task, onSave, onDone, onStale, flushRef }) {
         <div className="at-banner at-tone-late"><Icon name="alert" size={15} />
           <span className="at-flex">This task changed while you were editing. Your text is kept here and will not overwrite it. Copy what you need, then choose Discard changes to see the latest version.</span></div>
       ) : null}
-      <textarea ref={ref} className="at-editor" value={text} spellCheck
+      <textarea ref={ref} className="at-editor" aria-label="Task notes" value={text} spellCheck
                 onChange={(e) => change(e.target.value)}
                 onKeyDown={(e) => {
                   if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); save() }
@@ -559,4 +610,8 @@ function BodyEditor({ task, onSave, onDone, onStale, flushRef }) {
       <div className="at-editor-hint">Markdown. Saves as you type.{parts.top.length + parts.bottom.length ? ' Research added by Hermes is kept as it is.' : ''}</div>
     </div>
   )
+  return openRef ? (
+    <dialog ref={dialog} className="at-mobile-editor" aria-label="Edit task notes"
+            onCancel={(e) => { e.preventDefault(); done() }}>{content}</dialog>
+  ) : content
 }
