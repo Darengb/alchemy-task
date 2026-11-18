@@ -1851,6 +1851,7 @@
     const task = useStore(store, sel);
     const [loadError, setLoadError] = react_dashboard_default.useState(null);
     const [editing, setEditing] = react_dashboard_default.useState(false);
+    const mobileEditor = react_dashboard_default.useRef(null);
     const [stale, setStale] = react_dashboard_default.useState(false);
     const [copied, setCopied] = react_dashboard_default.useState(false);
     react_dashboard_default.useEffect(() => {
@@ -1899,6 +1900,10 @@
       return () => window.removeEventListener("keydown", key);
     }, [onClose, editing]);
     const flushRef = react_dashboard_default.useRef(null);
+    const startEditing = () => {
+      if (narrow && mobileEditor.current?.()) setEditing("mobile");
+      else setEditing("inline");
+    };
     const settle = async () => {
       if (!editing || !flushRef.current) return true;
       const ok = await flushRef.current();
@@ -2046,7 +2051,7 @@
         setSending(false);
       }
     };
-    return /* @__PURE__ */ react_dashboard_default.createElement(PanelShell, { narrow, onClose, footer: isDone(task) ? null : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-cta", sending && "is-busy"), onClick: sendToChat, disabled: sending }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "chat", size: 19, strokeWidth: 2 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, sending ? "Starting\u2026" : "Start in chat")), actions: /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, task.loading ? /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null) : null, /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "clipboard", label: "Copy title and ID for chat", onClick: copyForChat }), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Reload", onClick: load })) }, stale ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-banner at-tone-late" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, "This task changed somewhere else."), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", onClick: load }, "Reload")) : null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-titlerow" }, /* @__PURE__ */ react_dashboard_default.createElement(
+    return /* @__PURE__ */ react_dashboard_default.createElement(PanelShell, { narrow, locked: editing === "mobile", onClose, footer: isDone(task) ? null : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-cta", sending && "is-busy"), onClick: sendToChat, disabled: sending }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "chat", size: 19, strokeWidth: 2 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, sending ? "Starting\u2026" : "Start in chat")), actions: /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, task.loading ? /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null) : null, /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "clipboard", label: "Copy title and ID for chat", onClick: copyForChat }), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Reload", onClick: load })) }, stale ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-banner at-tone-late" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, "This task changed somewhere else."), /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", onClick: load }, "Reload")) : null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-titlerow" }, /* @__PURE__ */ react_dashboard_default.createElement(
       Check,
       {
         checked: isDone(task),
@@ -2065,7 +2070,19 @@
         onLongPress: copyForChat,
         copied
       }
-    )), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-fields" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field", date && date < today && !isDone(task) && "is-late"), onClick: pickDate }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "cal", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, date ? relativeDay(date, today) : "No date")), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickArea }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: task.area }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, task.area || "No area")), task.status === "done" ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-field at-status is-static", "data-s": task.status }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, "Done")) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field at-status", "data-s": task.status || "open", onClick: pickStatus }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, cancelled ? "Cancelled" : (STATUSES.find(([v]) => v === task.status) || [0, "Open"])[1])), separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickDue }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(task.due, today))) : null), /* @__PURE__ */ react_dashboard_default.createElement(SummaryField, { value: task.summary || "", onSave: (summary) => patch({ summary }) }), editing ? /* @__PURE__ */ react_dashboard_default.createElement(BodyEditor, { task, onSave: saveBody, onDone: () => setEditing(false), onStale: () => setStale(true), flushRef }) : task.body === void 0 ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-loading" }, /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null)) : /* @__PURE__ */ react_dashboard_default.createElement(BodyView, { task, onEdit: () => setEditing(true), onToggle: toggle }), /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "More", className: "at-more" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-more-grid" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Priority"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field is-plain", (task.priority === "high" || task.priority === "urgent") && "is-high"), onClick: pickPriority }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-prio-glyph", "data-p": task.priority || "normal" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, (task.priority || "normal").replace(/^\w/, (c) => c.toUpperCase())))), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due date"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field is-plain", onClick: pickDue }, shortDate(task.due, today)) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-link", onClick: pickDue }, "Set a separate due date")), task.completed ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Completed"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, shortDate(task.completed, today))) : null, task.project ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Project"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono" }, String(task.project).replace(/^\[\[|\]\]$/g, "").split("/").slice(-2, -1)[0] || task.project)) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "File"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono at-break" }, task.path))));
+    )), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-fields" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field", date && date < today && !isDone(task) && "is-late"), onClick: pickDate }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "cal", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, date ? relativeDay(date, today) : "No date")), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickArea }, /* @__PURE__ */ react_dashboard_default.createElement(AreaDot, { area: task.area }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, task.area || "No area")), task.status === "done" ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-field at-status is-static", "data-s": task.status }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, "Done")) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field at-status", "data-s": task.status || "open", onClick: pickStatus }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-status-dot" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, cancelled ? "Cancelled" : (STATUSES.find(([v]) => v === task.status) || [0, "Open"])[1])), separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field", onClick: pickDue }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(task.due, today))) : null), /* @__PURE__ */ react_dashboard_default.createElement(SummaryField, { value: task.summary || "", onSave: (summary) => patch({ summary }) }), editing === "inline" ? /* @__PURE__ */ react_dashboard_default.createElement(BodyEditor, { task, onSave: saveBody, onDone: () => setEditing(false), onStale: () => setStale(true), flushRef }) : task.body === void 0 ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-loading" }, /* @__PURE__ */ react_dashboard_default.createElement(Spinner, null)) : /* @__PURE__ */ react_dashboard_default.createElement(BodyView, { task, onEdit: startEditing, onToggle: toggle }), (narrow || editing === "mobile") && editing !== "inline" && task.body !== void 0 ? /* @__PURE__ */ react_dashboard_default.createElement(
+      BodyEditor,
+      {
+        key: id,
+        task,
+        onSave: saveBody,
+        onDone: () => setEditing(false),
+        onStale: () => setStale(true),
+        flushRef,
+        openRef: mobileEditor,
+        active: editing === "mobile"
+      }
+    ) : null, /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "More", className: "at-more" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-more-grid" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Priority"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: cx("at-field is-plain", (task.priority === "high" || task.priority === "urgent") && "is-high"), onClick: pickPriority }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-prio-glyph", "data-p": task.priority || "normal" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, (task.priority || "normal").replace(/^\w/, (c) => c.toUpperCase())))), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Due date"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, separateDue ? /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-field is-plain", onClick: pickDue }, shortDate(task.due, today)) : /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-link", onClick: pickDue }, "Set a separate due date")), task.completed ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Completed"), /* @__PURE__ */ react_dashboard_default.createElement("span", null, shortDate(task.completed, today))) : null, task.project ? /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Project"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono" }, String(task.project).replace(/^\[\[|\]\]$/g, "").split("/").slice(-2, -1)[0] || task.project)) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "File"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono at-break" }, task.path))));
   }
   function ResearchBar({ task }) {
     const { store, api } = useApp();
@@ -2089,9 +2106,9 @@
     };
     return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-research-bar" }, /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", icon: task.research === "complete" ? "refresh" : "spark", disabled: b.disabled, onClick: start }, b.label), b.note ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-research-status" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "spark", size: 14 }), " ", b.note) : null);
   }
-  function PanelShell({ narrow, onClose, actions, footer, children }) {
+  function PanelShell({ narrow, locked, onClose, actions, footer, children }) {
     const ref = react_dashboard_default.useRef(null);
-    useSheetDismiss(ref, narrow, onClose);
+    useSheetDismiss(ref, narrow && !locked, onClose);
     return /* @__PURE__ */ react_dashboard_default.createElement("aside", { ref, className: cx("at-panel", narrow ? "is-sheet" : "is-side"), "aria-label": "Task" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-bar" }, narrow ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-grabber" }) : null, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), actions, /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "x", label: "Close", onClick: onClose })), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-panel-body at-scroll", footer && "has-foot"), onScroll: markScrolled }, children), footer ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-panel-foot" }, footer) : null);
   }
   function TitleField({ value, done, onSave, onHold, onLongPress, copied }) {
@@ -2254,9 +2271,9 @@
   function BodySection({ s, render }) {
     return s.folded ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: s.title, className: "at-fold" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, render(s))) : /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-section" }, s.title && !/^notes$/i.test(s.title) ? /* @__PURE__ */ react_dashboard_default.createElement("h3", { className: "at-section-title" }, s.title) : null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-md" }, render(s)));
   }
-  function BodyEditor({ task, onSave, onDone, onStale, flushRef }) {
+  function BodyEditor({ task, onSave, onDone, onStale, flushRef, openRef, active = true }) {
     const toast = useToast();
-    const parts = react_dashboard_default.useMemo(() => extractManaged(task.body || ""), []);
+    const [parts, setParts] = react_dashboard_default.useState(() => extractManaged(task.body || ""));
     const baseRev = react_dashboard_default.useRef(task.revision);
     const inFlight = react_dashboard_default.useRef(Promise.resolve(true));
     const [text, setText] = react_dashboard_default.useState(parts.editable);
@@ -2265,6 +2282,47 @@
     const saved = react_dashboard_default.useRef(parts.editable);
     const timer = react_dashboard_default.useRef(null);
     const ref = react_dashboard_default.useRef(null);
+    const dialog = react_dashboard_default.useRef(null);
+    react_dashboard_default.useLayoutEffect(() => {
+      if (!openRef) return void 0;
+      openRef.current = () => {
+        const el = dialog.current;
+        if (typeof el?.showModal !== "function") return false;
+        if (el.open) return true;
+        const current = extractManaged(task.body || "");
+        setParts(current);
+        baseRev.current = task.revision;
+        latest.current = saved.current = current.editable;
+        setText(current.editable);
+        setStatus("saved");
+        ref.current.setAttribute("autofocus", "");
+        el.showModal();
+        ref.current.focus({ preventScroll: true });
+        return true;
+      };
+      return () => {
+        openRef.current = null;
+      };
+    }, [openRef, task.body, task.revision]);
+    react_dashboard_default.useLayoutEffect(() => {
+      if (!openRef || !active || !dialog.current) return void 0;
+      const el = dialog.current;
+      const vv = window.visualViewport;
+      const fit = () => {
+        el.style.top = `${vv?.offsetTop || 0}px`;
+        el.style.height = `${vv?.height || window.innerHeight}px`;
+      };
+      fit();
+      vv?.addEventListener("resize", fit);
+      vv?.addEventListener("scroll", fit);
+      window.addEventListener("resize", fit);
+      return () => {
+        vv?.removeEventListener("resize", fit);
+        vv?.removeEventListener("scroll", fit);
+        window.removeEventListener("resize", fit);
+        if (el.open) el.close();
+      };
+    }, [openRef, active]);
     const save = react_dashboard_default.useCallback(() => {
       clearTimeout(timer.current);
       inFlight.current = inFlight.current.then(async () => {
@@ -2290,16 +2348,16 @@
       return inFlight.current;
     }, [onSave, onStale, toast, parts]);
     react_dashboard_default.useEffect(() => {
-      if (!flushRef) return void 0;
+      if (!flushRef || !active) return void 0;
       flushRef.current = save;
       return () => {
         flushRef.current = null;
       };
-    }, [flushRef, save]);
+    }, [flushRef, active, save]);
     const changedElsewhere = task.revision && baseRev.current && task.revision !== baseRev.current && status !== "saving";
     react_dashboard_default.useEffect(() => {
-      if (ref.current) ref.current.focus();
-    }, []);
+      if (!openRef) ref.current?.focus();
+    }, [openRef]);
     react_dashboard_default.useEffect(() => () => clearTimeout(timer.current), []);
     const change = (v) => {
       setText(v);
@@ -2311,11 +2369,12 @@
     const done = async () => {
       if (await save()) onDone();
     };
-    return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-body is-editing" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-body-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-body-label" }, "Notes"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx("at-save", `is-${status}`) }, status === "saving" ? "Saving\u2026" : status === "saved" ? "Saved" : status === "error" ? "Not saved" : "Editing"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), status === "error" ? /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", onClick: onDone }, "Discard changes") : null, status === "error" && !changedElsewhere ? /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", onClick: save }, "Retry") : null, /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "primary", onClick: done }, "Done")), changedElsewhere ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-banner at-tone-late" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, "This task changed while you were editing. Your text is kept here and will not overwrite it. Copy what you need, then choose Discard changes to see the latest version.")) : null, /* @__PURE__ */ react_dashboard_default.createElement(
+    const content = /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-body is-editing" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-body-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-body-label" }, "Notes"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx("at-save", `is-${status}`) }, status === "saving" ? "Saving\u2026" : status === "saved" ? "Saved" : status === "error" ? "Not saved" : "Editing"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), status === "error" ? /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "ghost", onClick: onDone }, "Discard changes") : null, status === "error" && !changedElsewhere ? /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", onClick: save }, "Retry") : null, /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", variant: "primary", onClick: done }, "Done")), changedElsewhere ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-banner at-tone-late" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 15 }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, "This task changed while you were editing. Your text is kept here and will not overwrite it. Copy what you need, then choose Discard changes to see the latest version.")) : null, /* @__PURE__ */ react_dashboard_default.createElement(
       "textarea",
       {
         ref,
         className: "at-editor",
+        "aria-label": "Task notes",
         value: text,
         spellCheck: true,
         onChange: (e) => change(e.target.value),
@@ -2331,6 +2390,19 @@
         }
       }
     ), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-editor-hint" }, "Markdown. Saves as you type.", parts.top.length + parts.bottom.length ? " Research added by Hermes is kept as it is." : ""));
+    return openRef ? /* @__PURE__ */ react_dashboard_default.createElement(
+      "dialog",
+      {
+        ref: dialog,
+        className: "at-mobile-editor",
+        "aria-label": "Edit task notes",
+        onCancel: (e) => {
+          e.preventDefault();
+          done();
+        }
+      },
+      content
+    ) : content;
   }
 
   // ui/src/lib/discovery.js
