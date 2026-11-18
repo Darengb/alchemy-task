@@ -22,6 +22,20 @@ def configure(integration):
                     'response_fields': {k: k for k in ['account_key', 'scope', 'start', 'end', 'items', 'next_cursor', 'pagination_exhausted']}}}, user_approved=True)
 
 
+def test_agent_run_history_returns_saved_results_without_writes(settings, data_dir, tmp_path):
+    from test_discovery_dashboard import fixture_service
+    integration, _, run, _, proposal = fixture_service(tmp_path, settings, data_dir)
+    ledger_path = integration.store.run_dir(run) / 'ledger.json'
+    with integration.store._lock(integration.store._run_lock_name(run)):
+        ledger = integration.store.get_run(run)
+        ledger['pending_operations'] = ['finalization_projection']
+        integration.store._save(run, ledger)
+    before = ledger_path.read_bytes()
+    for record in (integration.backend(run, session_id='parent'), integration.backend(session_id='parent')['runs'][0]):
+        assert record['proposals'][0]['proposal_id'] == proposal['proposal_id']
+        assert ledger_path.read_bytes() == before
+
+
 def test_start_resume_same_frozen_window_and_real_reader_before_context_freeze(settings, data_dir, tmp_path):
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     configure(integration)

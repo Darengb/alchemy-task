@@ -7,9 +7,11 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+import os
 import re
 import hashlib
 import sqlite3
+import time
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from .runtime import Runtime
@@ -39,6 +41,8 @@ WITHHELD_TITLE = 'Follow-up (title withheld; see source)'
 # local day. The stream's own job (every 30 minutes behind a free wake check) runs it; no job is created.
 FOLLOW_UPS_PER_DAY = 2
 FOLLOW_UP_STATE = 'discovery_follow_ups'
+FINALIZATION_PROJECTION = 'finalization_projection'
+RUN_RETENTION_DAYS = 60
 # approvals.owner_only is a planned follow-up (per-platform enrollment). v1 refuses to turn it
 # on; the gated enrollment/authorization code below stays for that follow-up.
 OWNER_ONLY_AVAILABLE = False
@@ -732,13 +736,27 @@ class DiscoveryIntegration:
         refusal = self._actor_refusal(session_id, current)
         if refusal: raise UserError(refusal + '; any chat of this profile or the stream\'s own scheduled job can start/resume a stream')
         self._retain_legacy(current['name'])
+        cutoff = time.time() - RUN_RETENTION_DAYS * 86400
         for old in self._all_runs():
-            if old['config'].get('stream_name', old['stream']) == current['name'] and old.get('review'):
-                self.reconcile_endstate(old['run_id'])
+            if old['config'].get('stream_name', old['stream']) != current['name'] or not old.get('review'):
+                continue
+            run_id = old['run_id']
+            pending = old.get('pending_operations') or ()
+            if FINALIZATION_PROJECTION in pending:
+                self.reconcile_endstate(run_id)
+            elif pending:
+                # Receipts and reply windows can change since finalization. Refresh
+                # only age-eligible retention metadata, never the old source queue.
+                try:
+                    old_enough = (self.store.run_dir(run_id) / 'ledger.json').stat().st_mtime < cutoff
+                except FileNotFoundError:
+                    continue  # another stream's retention pass removed it
+                if old_enough:
+                    self.reconcile_endstate(run_id, retention_only=True)
         # Production retention: closed runs older than 60 days (well past the
         # seven-day reply window) become readable tombstones. prune() itself
         # keeps open, unresolved, referenced and pending-delivery runs.
-        self.store.prune(days=60)
+        self.store.prune(days=RUN_RETENTION_DAYS)
         with self.store._lock('start:' + current['name']):
             execution = self._scheduled_identity(current)
             woke = self._mark_scheduled_start(current, execution) if execution and _lineage is None else ''
@@ -1493,11 +1511,12 @@ class DiscoveryIntegration:
                 'final_text': digest['text'], 'digest_sha256': digest['sha256'],
                 'instruction': 'Return final_text exactly to the host. Do not send an alternate post; native host owns delivery and retries.'}
 
-    def reconcile_endstate(self, run_id):
+    def reconcile_endstate(self, run_id, *, retention_only=False):
         """Replay downstream projections from durable facts, never receipt claims."""
         ledger = self.store.get_run(run_id)
         if not ledger.get('review'): return {'state': 'open'}
-        self._settle_backlog(run_id, ledger['review']['joined'])
+        if not retention_only:
+            self._settle_backlog(run_id, ledger['review']['joined'])
         data = self.digest._load()
         delivery = data['delivery'].get(run_id, {})
         pending = [] if delivery.get('state') == 'delivered' and delivery.get('verified_sha256') == data['digests'][run_id]['sha256'] and delivery.get('readback') else ['digest_delivery']
@@ -1526,7 +1545,14 @@ class DiscoveryIntegration:
                     candidate['state'] = decisions[candidate['candidate_id']]; changed = True
             current['pending_operations'] = pending
             # An unchanged ledger is not rewritten: its mtime is the retention age.
-            if changed: self.store._save(run_id, current)
+            if changed:
+                if retention_only:
+                    path = self.store.run_dir(run_id) / 'ledger.json'
+                    times = path.stat()
+                    self.store._save(run_id, current)
+                    os.utime(path, ns=(times.st_atime_ns, times.st_mtime_ns))
+                else:
+                    self.store._save(run_id, current)
         return {'state': 'pending' if pending else 'resolved', 'pending_operations': pending}
 
     def _native_delivery_closed(self, run_id, ledger, data, delivery):
@@ -1696,7 +1722,7 @@ class DiscoveryIntegration:
                                      blocked=conflicts, label=stream.get('label', ''), review_namespace=run_id if ledger.get('lineage', {}).get('operation') else '', deferred=join.get('deferred', []),
                                      queued_count=queued, follow_up_started=follow_up, **reason)
         with self.store._lock(self.store._run_lock_name(run_id)):
-            pending = self.store.get_run(run_id); pending['pending_operations'] = ['finalization_projection']; self.store._save(run_id, pending)
+            pending = self.store.get_run(run_id); pending['pending_operations'] = [FINALIZATION_PROJECTION]; self.store._save(run_id, pending)
         self.store.save_review(run_id, {'digest': digest, 'conflicts': conflicts, 'joined': join})
         self.reconcile_endstate(run_id)
         return digest
@@ -1851,7 +1877,7 @@ class DiscoveryIntegration:
         if run_id: return project(self.store.get_run(run_id))
         return {'runs': [project(r) for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')} or self._actor_allowed(session_id, read=True)]}
 
-    def project_run(self, ledger, *, reconcile=True):
+    def project_run(self, ledger, *, reconcile=False):
         """Project durable state after the entrypoint has checked its caller."""
         def project(ledger):
             # UI sees full records; child capability tokens/launch capabilities remain internal.

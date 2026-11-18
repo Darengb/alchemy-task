@@ -483,6 +483,44 @@ def test_start_prunes_an_old_settled_run_of_the_stream_it_starts(settings, data_
     assert not store.run_dir(verified).exists() and store.get_run(verified)['pruned_at']
 
 
+def test_start_repairs_only_interrupted_finalization_without_replaying_settled_backlog(settings, data_dir, tmp_path, monkeypatch):
+    from test_discovery_integration import configure, service
+    integration, _, _ = service(settings, data_dir, tmp_path)
+    configure(integration)
+    today = integration.utcnow().date().isoformat()
+    healthy = _closed_work_run(integration, day=today, delivery={'state': 'prepared'})
+    interrupted = _closed_work_run(integration, day=today, delivery={'state': 'prepared'})
+    expired = _closed_work_run(integration, day='2026-01-01', delivery={'state': 'prepared'})
+    store = integration.store
+    with store._lock(store._run_lock_name(interrupted)):
+        ledger = store.get_run(interrupted)
+        ledger['pending_operations'] = ['finalization_projection']
+        store._save(interrupted, ledger)
+    # Simulate a run whose only pending operation was never refreshed after the
+    # reply window ended, without bumping its retention age.
+    import os
+    path = store.run_dir(expired) / 'ledger.json'
+    old = path.stat().st_mtime
+    with store._lock(store._run_lock_name(expired)):
+        ledger = store.get_run(expired)
+        ledger['pending_operations'] = ['digest_delivery']
+        store._save(expired, ledger)
+        os.utime(path, (old, old))
+
+    real_settle = integration._settle_backlog
+    replayed = []
+    def settle(run, join=None):
+        replayed.append(run)
+        return real_settle(run, join)
+    monkeypatch.setattr(integration, '_settle_backlog', settle)
+    new = integration.start('work', session_id='parent')['run_id']
+    assert new not in {healthy, interrupted}
+    assert replayed == [interrupted]
+    assert store.get_run(interrupted)['pending_operations'] == ['digest_delivery']
+    assert store.get_run(healthy)['pending_operations'] == ['digest_delivery']
+    assert store.get_run(expired)['pruned_at']
+
+
 def test_native_origin_runs_are_pruned_only_after_their_reply_window(settings, data_dir, tmp_path):
     import datetime as dt
     from test_discovery_integration import configure, service
