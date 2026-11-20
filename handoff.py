@@ -1,31 +1,29 @@
-"""Send a task to chat: the agent messages the user about it and waits for "go".
-
-Two routes, chosen when the user presses the button (phone or web dashboard):
-
-1. Messaging chat (fast, a few seconds). Used when the messaging gateway is running, the plugin may message
-   the user (``allow_gateway_injection``), and there is a messaging chat to use: the chat that last worked on
-   the task, else the home channel. The request goes into a file queue in the plugin's data folder (the
-   dashboard and the gateway are separate processes); a relay thread in the gateway's process hands it to
-   Hermes with ``ctx.inject_message``, which starts a normal turn in that chat. Messaging sessions also show
-   in the Hermes app.
-2. New session (about a minute). Used otherwise, and as a fallback when the gateway has not taken a queued
-   request within ``FALLBACK_SECONDS``. A one-time scheduled agent job runs the same note; its run is a new
-   session named after the task, in which the user can reply. It needs only Hermes's scheduler, which runs
-   without a messaging gateway. The fallback runs in a background worker (and when the UI asks for the
-   status), so it happens even if the user closes the app right after pressing the button.
+"""Start in chat: the agent messages the user about a task and waits for "go".
 
 On the desktop app the UI opens a new chat and sends the note there itself; this module only builds it.
+
+From the web dashboard (desktop browser or phone) the plugin cannot open a chat on the user's screen, so it
+creates a one-time scheduled agent job that runs the note a few seconds later. Hermes's scheduler delivers
+the agent's reply to the user's chat, the same way it delivers discovery digests, so no extra permission is
+needed. The chat is, in order:
+
+1. the chat the discovery digests for the task's area go to (where the user already reads and answers
+   task messages about that area);
+2. the chat where the user set up the plugin (setup always happens in a chat); its address is saved at
+   setup so pruning that session later does not lose it;
+3. otherwise ``local``: the reply stays in the job's own session, listed under Cron jobs in the app.
+
+The job sets ``attach_to_session`` so Hermes copies the delivered reply into that chat's history; when the
+user answers "go" there, the agent in that chat sees which task it is about.
 
 The note is plain instructions; nothing is blocked. It tells the agent where it came from, to read the task,
 the exact reply to send, and not to start until the user says "go". Wording stays gender-neutral ("the user").
 """
 from __future__ import annotations
 
-import contextvars
 import datetime as dt
 import json
 import os
-import threading
 import time
 import uuid
 from pathlib import Path
@@ -36,21 +34,20 @@ from .runtime import Runtime
 
 PLUGIN = "alchemy-task"
 SURFACES = {"dashboard": "the web dashboard", "phone": "a phone", "desktop": "the desktop app"}
-POLL_SECONDS = 1.0
-FALLBACK_SECONDS = 10  # the gateway has not taken a queued request in this long: start a new session instead
 KEEP_SECONDS = 24 * 3600
-# Sessions that are messaging chats the gateway can reach. App, desktop, CLI, cron and other local sessions
-# are not targets: the app only accepts a message into a chat that is open on screen.
-NOT_CHATS = {"gui", "desktop", "tui", "cli", "acp", "cron", "subagent", "api", "webhook", "batch", "oneshot",
-             "local", ""}
-_lock = threading.Lock()
-_skip_until: dict[str, float] = {}  # request id -> time this process may retry it
+# Session sources Hermes's scheduler cannot deliver to: app, desktop, CLI and other local sessions.
+NOT_CHATS = {"gui", "desktop", "tui", "cli", "acp", "cron", "subagent", "api", "api_server", "webhook", "batch",
+             "oneshot", "local", "tool", "kanban", ""}
+SETUP_CHAT_KEY = "setup_chat"
 
 
 # ------------------------------------------------------------------ the note
 
-def build_text(task: dict[str, Any], surface: str, *, new_session: bool = False) -> str:
-    """The handoff note. ``task`` is a TaskStore.summary() dict; empty fields drop their line."""
+def build_text(task: dict[str, Any], surface: str, *, new_session: bool = False, delivered_to: str = "") -> str:
+    """The handoff note. ``task`` is a TaskStore.summary() dict; empty fields drop their line.
+
+    ``new_session`` is the scheduled-job form: the reply is delivered to ``delivered_to`` (a chat label), or
+    stays in this session when that is empty."""
     where = SURFACES.get(surface, "the Alchemy Task UI")
     task_id = task.get("task_id") or ""
     facts = [f"Task: {task.get('title') or ''}", f"Task ID: {task_id}"]
@@ -66,12 +63,23 @@ def build_text(task: dict[str, Any], surface: str, *, new_session: bool = False)
     state = " ".join(str(task.get("current_state") or "").split())
     if state:
         facts.append(f"Current state: {state[:500]}")
-    origin = ("This message comes from the Alchemy Task plugin, not from the user typing. This is a new chat "
-              "about one task; the user reads your reply here and answers in this chat." if new_session else
-              "This message comes from the Alchemy Task plugin, not from the user typing in this chat.")
+    if not new_session:
+        origin = "This message comes from the Alchemy Task plugin, not from the user typing in this chat."
+    elif delivered_to:
+        origin = ("This message comes from the Alchemy Task plugin, not from the user typing. Your final reply "
+                  f"is delivered to the user's chat ({delivered_to}), and the user answers there.")
+    else:
+        origin = ("This message comes from the Alchemy Task plugin, not from the user typing. This is a new chat "
+                  "about one task; the user reads your reply here and answers in this chat.")
+    shape = ['"[Task title]: [one sentence on where it stands and the next step].',
+             'Want me to start, or talk it through first? Reply **go** to start."']
+    if new_session and delivered_to:
+        # The chat that receives the reply never saw this note: the ID lets its agent find the task.
+        shape[-1] = 'Want me to start, or talk it through first? Reply **go** to start.'
+        shape.append(f'Task ID: {task_id}"')
     return "\n".join([
         "[Alchemy Task handoff]",
-        f'The user pressed "Send to chat" on a task in the Alchemy Task UI ({where}).',
+        f'The user pressed "Start in chat" on a task in the Alchemy Task UI ({where}).',
         origin,
         "Do not start the task or make any changes yet.",
         "",
@@ -81,8 +89,7 @@ def build_text(task: dict[str, Any], surface: str, *, new_session: bool = False)
         *facts,
         "",
         "Reply with exactly this shape, filling in the brackets from the task:",
-        '"[Task title]: [one sentence on where it stands and the next step].',
-        'Want me to start, or talk it through first? Reply **go** to start."',
+        *shape,
         "",
         'If the user replies "go", start the task with task_work_start using the same task ID.',
         "If the user replies with anything else, discuss the task or update it as asked, and start only when "
@@ -92,108 +99,91 @@ def build_text(task: dict[str, Any], surface: str, *, new_session: bool = False)
 
 # ------------------------------------------------------------------ which chat
 
-def remember_chat(rt: Runtime, task_id: str, session_id: str) -> None:
-    """Note that this session worked with this task (any task tool call), newest first."""
-    if not task_id or not session_id:
-        return
-    with _lock:
-        chats = rt.ctx.state.get("task_chats", default={}) or {}
-        seen = [s for s in chats.get(task_id, []) if s != session_id]
-        chats[task_id] = [session_id, *seen][:5]
-        if len(chats) > 500:  # forget the tasks touched longest ago
-            for k in list(chats)[: len(chats) - 500]:
-                chats.pop(k, None)
-        rt.ctx.state.set("task_chats", chats)
-
-
-def _session_row(session_id: str) -> dict[str, Any] | None:
+def _host_origin(session_id: str) -> dict[str, Any] | None:
+    """The messaging chat of a host session (platform, chat id, topic), or None."""
     try:
-        from hermes_state import SessionDB
-        return SessionDB().get_session(session_id)
+        from . import discovery_integration as di
+        return di.host_origin(di._profile_home(), session_id, None)
     except Exception:  # noqa: BLE001
         return None
 
 
-def _chat_target(row: dict[str, Any] | None, reason: str) -> dict[str, Any] | None:
-    """A messaging chat the gateway can inject into (by its routing key), or None."""
-    if not row or not row.get("session_key"):
+def chat_address(session_id: str) -> dict[str, Any] | None:
+    """A scheduler delivery address for a session's chat, or None for app/desktop/local sessions."""
+    origin = _host_origin(session_id) if session_id else None
+    if not origin or str(origin.get("source") or "").lower() in NOT_CHATS or not origin.get("chat_id"):
         return None
-    platform = str(row.get("source") or "").lower()
-    if platform in NOT_CHATS:
-        return None
-    return {"platform": platform, "chat_name": str(row.get("display_name") or row.get("title") or "")[:80],
-            "reason": reason, "last_activity": row.get("last_activity_at") or 0, "session_key": row["session_key"]}
+    platform = str(origin["source"]).lower()
+    deliver = f"{platform}:{origin['chat_id']}" + (f":{origin['thread_id']}" if origin.get("thread_id") else "")
+    return {"deliver": deliver, "platform": platform, "chat_name": str(origin.get("chat_name") or "")[:80]}
 
 
-def _home_targets() -> list[dict[str, Any]]:
-    """Each platform's home channel (set with /sethome), as the newest session in that chat."""
+def remember_setup_chat(rt: Runtime, session_id: str) -> None:
+    """Save the setup chat's address now, while its session exists; a later prune cannot lose it."""
     try:
-        from gateway.config import load_gateway_config  # public plugin module
-        from hermes_state import SessionDB
-        cfg = load_gateway_config()
-        db = SessionDB()
-    except Exception:  # noqa: BLE001
-        return []
-    out = []
-    for platform in cfg.platforms:
-        home = cfg.get_home_channel(platform)
-        if not home or not home.chat_id:
+        address = chat_address(session_id)
+        if address:
+            rt.ctx.state.set(SETUP_CHAT_KEY, {**address, "session": session_id, "saved_at": time.time()})
+    except Exception:  # noqa: BLE001 - setup never fails over this; delivery falls back to the app
+        pass
+
+
+def _explicit(deliver: str) -> dict[str, Any] | None:
+    """A stream's explicit ``platform:chat[:topic]`` target as an address."""
+    parts = deliver.split(":")
+    if len(parts) < 2 or parts[0].lower() in NOT_CHATS or parts[0].lower() in ("origin", "all"):
+        return None
+    return {"deliver": deliver, "platform": parts[0].lower(), "chat_name": ""}
+
+
+def delivery_target(rt: Runtime, area: str = "") -> dict[str, Any] | None:
+    """Where the handoff reply goes: the digest chat of the task's area's discovery stream, else the setup
+    chat, else None (the app). Setup makes one stream per area."""
+    state = rt.ctx.state
+    saved = _setup_chat(state)
+    streams = sorted((s for s in (state.get("streams", default={}) or {}).values()
+                      if area and area in (s.get("areas") or [])),
+                     key=lambda s: float(s.get("created_at") or 0))
+    for stream in streams:
+        if not stream.get("job_id"):
             continue
-        try:
-            sid = db.find_session_by_origin(platform=platform.value, chat_id=str(home.chat_id),
-                                            thread_id=home.thread_id or None)
-        except Exception:  # noqa: BLE001
-            sid = None
-        target = _chat_target(_session_row(sid) if sid else None, "home")
-        if target:
-            target["chat_name"] = target["chat_name"] or home.name or "Home"
-            out.append(target)
-    out.sort(key=lambda t: (t["platform"] != "telegram",))  # Telegram first when several are set up
-    return out
+        deliver = str(stream.get("deliver") or "origin").strip()
+        address = (chat_address(stream.get("origin_session") or "") if deliver == "origin"
+                   else _explicit(deliver))
+        if address:
+            same_chat = saved and saved.get("deliver", "").split(":")[:2] == address["deliver"].split(":")[:2]
+            if not address["chat_name"] and same_chat:
+                address["chat_name"] = saved.get("chat_name") or ""
+            return address
+    return saved
 
 
-def resolve_target(rt: Runtime, task_id: str) -> dict[str, Any] | None:
-    """The messaging chat that last worked on the task, else the home channel, else None."""
-    from . import worksession
-    sessions = list((rt.ctx.state.get("task_chats", default={}) or {}).get(task_id, []))
-    sessions += [sid for sid, link in worksession._links(rt).items() if link.get("task_id") == task_id]
-    recent = [t for t in (_chat_target(_session_row(sid), "task") for sid in dict.fromkeys(sessions)) if t]
-    if recent:
-        return max(recent, key=lambda t: float(t.get("last_activity") or 0))
-    homes = _home_targets()
-    return homes[0] if homes else None
+def _setup_chat(state: Any) -> dict[str, Any] | None:
+    """The saved setup chat; installs set up before it was saved resolve the recorded setup session once."""
+    saved = state.get(SETUP_CHAT_KEY, default=None) or None
+    if saved and saved.get("deliver"):
+        return saved
+    sessions = [r.get("origin_session") for r in (state.get("jobs", default={}) or {}).values()]
+    for sid in sorted({s for s in sessions if s}, reverse=True):
+        address = chat_address(sid)
+        if address:
+            state.set(SETUP_CHAT_KEY, {**address, "session": sid, "saved_at": time.time()})
+            return address
+    return None
 
 
-def injection_allowed() -> bool:
-    try:
-        from hermes_cli.config import load_config_readonly
-        cfg = load_config_readonly() or {}
-    except Exception:  # noqa: BLE001
-        return False
-    entry = ((cfg.get("plugins") or {}).get("entries") or {}).get(PLUGIN) or {}
-    return entry.get("allow_gateway_injection") is True
+PLATFORM_NAMES = {"telegram": "Telegram", "slack": "Slack", "discord": "Discord", "whatsapp": "WhatsApp",
+                  "signal": "Signal", "photon": "iMessage", "matrix": "Matrix", "mattermost": "Mattermost"}
 
 
-def gateway_running() -> bool:
-    """Whether this profile's messaging gateway is running (public ``gateway.status`` check)."""
-    try:
-        from gateway.status import get_running_pid  # public plugin module
-        return get_running_pid() is not None
-    except Exception:  # noqa: BLE001
-        return False
+def label(address: dict[str, Any] | None) -> str:
+    if not address or not address.get("platform"):
+        return ""
+    platform = PLATFORM_NAMES.get(address["platform"], address["platform"].title())
+    return f"{platform} ({address['chat_name']})" if address.get("chat_name") else platform
 
 
-def chat_route(rt: Runtime, task_id: str) -> tuple[dict[str, Any] | None, str]:
-    """The messaging chat for route 1, or (None, why route 2 is used)."""
-    if not gateway_running():
-        return None, "no_gateway"
-    if not injection_allowed():
-        return None, "no_permission"
-    target = resolve_target(rt, task_id)
-    return (target, "") if target else (None, "no_chat")
-
-
-# ------------------------------------------------------------------ queue and records
+# ------------------------------------------------------------------ records
 
 def _queue_dir(rt: Any) -> Path:
     d = Path(rt.data_dir) / "handoffs"
@@ -207,8 +197,9 @@ def _write(path: Path, data: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-def start_session(rt: Runtime, task: dict[str, Any], surface: str) -> dict[str, Any]:
-    """Route 2: a one-time scheduled agent job. Its run is a new session named after the task."""
+def start_session(rt: Runtime, task: dict[str, Any], surface: str,
+                  address: dict[str, Any] | None = None) -> dict[str, Any]:
+    """A one-time scheduled agent job that writes the reply, delivered to ``address`` (else kept local)."""
     from .jobs import parse_job_id, guard_scheduling
     guard_scheduling(rt.ctx)  # scheduled runs never create jobs
     tz = rt.settings.timezone or "UTC"
@@ -218,252 +209,56 @@ def start_session(rt: Runtime, task: dict[str, Any], surface: str) -> dict[str, 
     except Exception:  # noqa: BLE001 - unknown zone: schedule in UTC
         tz, when = "UTC", dt.datetime.utcnow().replace(microsecond=0) + dt.timedelta(seconds=5)
     args = {"action": "create", "name": (task.get("title") or "Task")[:80], "schedule": when.isoformat(),
-            "timezone": tz, "deliver": "local", "repeat": 1,
-            "prompt": build_text(task, surface, new_session=True)}
+            "timezone": tz, "deliver": address["deliver"] if address else "local", "repeat": 1,
+            "prompt": build_text(task, surface, new_session=True, delivered_to=label(address))}
+    if address:
+        args["attach_to_session"] = True  # copy the reply into that chat's history, so "go" has context
     raw = rt.ctx.dispatch_tool("cronjob_manage", args)
     job_id = parse_job_id(raw)
     if not job_id:
         raise NeedsInput("schedule", f"Could not start a chat for this task: {str(raw)[:240]}")
-    return {"job_id": job_id, "scheduled_for": when.isoformat(), "timezone": tz}
+    return {"job_id": job_id, "scheduled_for": when.isoformat(), "timezone": tz, "deliver": args["deliver"]}
 
 
 def request(rt: Runtime, task: dict[str, Any], surface: str) -> dict[str, Any]:
     hid = uuid.uuid4().hex[:16]
+    address = delivery_target(rt, str(task.get("area") or ""))
     rec: dict[str, Any] = {"id": hid, "task_id": task["task_id"], "title": task.get("title") or "",
-                           "surface": surface, "created": time.time()}
-    target, why = chat_route(rt, task["task_id"])
-    if target:
-        rec.update(route="chat", state="pending", target=target, text=build_text(task, surface), task=task)
-    else:
-        rec.update(route="session", state="started", reason=why, session=start_session(rt, task, surface))
-    _write(_queue_dir(rt) / (f"{hid}.json" if target else f"{hid}.done.json"), rec)
-    if target:
-        # Make sure a background worker in this process watches the request, so the fallback happens even if
-        # the user closes the app and the gateway never takes it. It inherits this request's profile.
-        ensure_relay(rt.ctx, Path(rt.data_dir))
+                           "surface": surface, "created": time.time(), "route": "session", "state": "started",
+                           "target": address, "session": start_session(rt, task, surface, address)}
+    d = _queue_dir(rt)
+    _write(d / f"{hid}.done.json", rec)
+    _prune(d, rec["created"])
     return public(rec)
+
+
+def _prune(d: Path, now: float) -> None:
+    for p in d.glob("*.json"):
+        try:
+            if now - p.stat().st_mtime > KEEP_SECONDS:
+                p.unlink()
+        except OSError:
+            pass
 
 
 def public(rec: dict[str, Any]) -> dict[str, Any]:
     t = rec.get("target") or {}
-    out = {"id": rec["id"], "task_id": rec["task_id"], "route": rec.get("route", "chat"), "state": rec["state"],
-           "error": rec.get("error"), "reason": rec.get("reason")}
-    if rec.get("route", "chat") == "chat" or rec.get("fallback"):
-        out["target"] = {"platform": t.get("platform"), "chat_name": t.get("chat_name"), "reason": t.get("reason")}
-    return out
+    return {"id": rec["id"], "task_id": rec["task_id"], "route": rec.get("route", "session"),
+            "state": rec["state"], "error": rec.get("error"), "reason": rec.get("reason"),
+            "target": ({"platform": t.get("platform"), "chat_name": t.get("chat_name"), "label": label(t)}
+                       if t.get("platform") else None)}
 
 
-def _fall_back(rt: Runtime, d: Path, hid: str, now: float) -> dict[str, Any] | None:
-    """Turn a messaging request the gateway has not taken within FALLBACK_SECONDS into a new session.
-    Returns the finished record, or None when it is not due or another process got to it first."""
-    pending = d / f"{hid}.json"
-    try:
-        rec = json.loads(pending.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if now - rec.get("created", now) <= FALLBACK_SECONDS:
-        return None
-    mine = d / f"{hid}.claimed-fallback-{os.getpid()}"
-    try:
-        os.rename(pending, mine)  # the same claim the gateway uses: only one of them ever acts on it
-    except OSError:
-        return None
-    try:
-        session = start_session(rt, rec.get("task") or {"task_id": rec["task_id"], "title": rec["title"]},
-                                rec.get("surface") or "dashboard")
-        rec.update(route="session", state="started", fallback=True, reason="gateway_silent", session=session)
-    except Exception as exc:  # noqa: BLE001 - report it; nothing was sent
-        rec.update(state="failed", error=str(getattr(exc, "message", exc))[:300])
-    _write(d / f"{hid}.done.json", rec)
-    mine.unlink(missing_ok=True)
-    return rec
-
-
-def status(rt: Runtime, hid: str, now: float | None = None) -> dict[str, Any]:
-    """A handoff's state. The background worker normally does the fallback; this does it too when asked first."""
-    now = now or time.time()
+def status(rt: Runtime, hid: str) -> dict[str, Any]:
     if not hid.isalnum():
         raise NeedsInput("not_found", "Unknown handoff")
-    d = _queue_dir(rt)
-    pending = d / f"{hid}.json"
-    if pending.exists():
-        rec = _fall_back(rt, d, hid, now)
-        if rec is not None:
-            return public(rec)
-        if pending.exists():
-            return public(json.loads(pending.read_text(encoding="utf-8")))
-    done = d / f"{hid}.done.json"
-    if done.exists():
-        return public(json.loads(done.read_text(encoding="utf-8")))
-    if any(d.glob(f"{hid}.claimed-*")):
-        return {"id": hid, "route": "chat", "state": "sending"}
+    for name in (f"{hid}.done.json", f"{hid}.json"):  # older installs also queued pending requests
+        p = _queue_dir(rt) / name
+        if p.exists():
+            return public(json.loads(p.read_text(encoding="utf-8")))
     raise NeedsInput("not_found", "Unknown handoff")
 
 
-def fallback_once(rt: Runtime, data_dir: Path, now: float | None = None) -> list[str]:
-    """The background half of the fallback, so it happens even when no screen is asking for the status."""
-    now = now or time.time()
-    d = Path(data_dir) / "handoffs"
-    if not d.is_dir():
-        return []
-    done = []
-    for p in sorted(d.glob("*.json")):
-        if p.name.endswith(".done.json"):
-            continue
-        rec = _fall_back(rt, d, p.stem, now)
-        if rec is not None:
-            done.append(p.stem)
-    return done
-
-
-# ------------------------------------------------------------------ relay (a thread in every process that
-# loads the plugin; only the messaging gateway's own process takes requests, so a classic CLI, a cron worker
-# or the dashboard never receives one)
-
-def in_gateway_process() -> bool:
-    """True in the messaging gateway's process, or in the plugin host it starts (``plugins.isolation: host``).
-
-    The gateway marks its process and its children with ``_HERMES_GATEWAY=1``; Hermes has no public "which
-    host am I in" call yet, so this is a disclosed seam. The lock check covers an in-process gateway."""
-    if os.environ.get("_HERMES_GATEWAY") == "1":
-        return True
-    try:
-        from gateway.status import owns_gateway_runtime_lock  # public plugin module
-        return bool(owns_gateway_runtime_lock())
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def relay_once(rt: Any, now: float | None = None, *, data_dir: Path | None = None) -> list[str]:
-    """Deliver pending messaging requests from the gateway's process. ``rt`` only needs ``ctx`` (and
-    ``data_dir`` when none is passed): the relay thread passes its profile's folder explicitly."""
-    now = now or time.time()
-    if not in_gateway_process():
-        return []
-    d = Path(data_dir) / "handoffs" if data_dir is not None else _queue_dir(rt)
-    if not d.is_dir():
-        return []
-    sent = []
-    for p in sorted(d.glob("*.json")):
-        if p.name.endswith(".done.json"):
-            try:
-                if now - p.stat().st_mtime > KEEP_SECONDS:
-                    p.unlink()
-            except OSError:
-                pass
-            continue
-        hid = p.stem
-        if _skip_until.get(hid, 0) > now:
-            continue
-        claimed = p.with_name(f"{hid}.claimed-{os.getpid()}")
-        try:
-            os.rename(p, claimed)  # only one process wins the claim
-        except OSError:
-            continue
-        try:
-            rec = json.loads(claimed.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            claimed.unlink(missing_ok=True)
-            continue
-        try:
-            ok = bool(rt.ctx.inject_message(rec["text"], role="user", session_key=rec["target"]["session_key"]))
-        except Exception:  # noqa: BLE001 - treat like a refusal
-            ok = False
-        if ok:
-            rec.update(state="sent", sent=now)
-            _write(d / f"{hid}.done.json", rec)
-            claimed.unlink(missing_ok=True)
-            sent.append(hid)
-        else:  # refused: give it back; the dashboard falls back to a new session if this keeps failing
-            _skip_until[hid] = now + 3
-            os.rename(claimed, p)
-    return sent
-
-
-class _RelayRuntime:
-    """What the relay needs: the plugin context."""
-    def __init__(self, ctx: Any) -> None:
-        self.ctx = ctx
-
-
-def _loop(ctx: Any, data_dir: Path, stop: threading.Event) -> None:
-    """Runs in the context captured when it was started (see ensure_relay), so Hermes's notion of the current
-    profile is the plugin's own: a job it schedules lands in this profile. Only the gateway's process delivers
-    to messaging chats; any process may do the fallback, because the claim lets only one act on a request."""
-    relay_rt = _RelayRuntime(ctx)
-    while not stop.wait(POLL_SECONDS):
-        try:
-            if in_gateway_process():
-                relay_once(relay_rt, data_dir=data_dir)
-            folder = Path(data_dir) / "handoffs"
-            if folder.is_dir() and any(not p.name.endswith(".done.json") for p in folder.glob("*.json")):
-                fallback_once(Runtime(ctx, data_dir=Path(data_dir)), data_dir)
-        except Exception:  # noqa: BLE001 - keep relaying
-            pass
-
-
-_relays: dict[str, tuple[threading.Thread, threading.Event]] = {}
-
-
-def ensure_relay(ctx: Any, data_dir: Path) -> None:
-    """One relay thread per profile folder. ``data_dir`` is captured when the plugin loads, while Hermes has
-    the plugin's profile selected; a thread started later would otherwise see the launch profile's home."""
-    if os.environ.get("ALCHEMY_TASK_NO_RELAY"):
-        return
-    key = str(Path(data_dir).resolve())
-    with _lock:
-        cur = _relays.get(key)
-        if cur and cur[0].is_alive():
-            return
-        stop = threading.Event()
-        # A new thread starts with an empty context; run it in a copy of the current one, which carries the
-        # profile Hermes selected while loading the plugin.
-        loaded = contextvars.copy_context()
-        t = threading.Thread(target=loaded.run, args=(_loop, ctx, Path(data_dir), stop),
-                             name="alchemy-task-handoff-relay", daemon=True)
-        _relays[key] = (t, stop)
-        t.start()
-
-
-def stop_relay() -> None:
-    with _lock:
-        for _t, stop in _relays.values():
-            stop.set()
-        _relays.clear()
-
-
-# ------------------------------------------------------------------ hooks
-
-def post_tool_call(tool_name: str = "", args: Any = None, result: Any = None, session_id: str = "", **_: Any) -> None:
-    if not session_id or not str(tool_name).startswith("task_"):
-        return
-    try:
-        from .core import taskfile as tf
-        task_id = ""
-        if isinstance(args, dict):
-            for key in ("task_id", "task"):
-                if tf.valid_task_id(str(args.get(key) or "")):
-                    task_id = str(args[key])
-                    break
-        if not task_id and isinstance(result, str) and '"task_id"' in result:
-            data = json.loads(result)
-            task = data.get("task") if isinstance(data, dict) else None
-            task_id = str((task or {}).get("task_id") or "")
-        if task_id and tf.valid_task_id(task_id):
-            remember_chat(Runtime(), task_id, session_id)
-    except Exception:  # noqa: BLE001
-        pass
-
-
 def register(ctx: Any) -> None:
-    ctx.register_hook("post_tool_call", post_tool_call)
-    try:
-        data_dir = Path(ctx.state.data_dir)
-        (data_dir / "handoffs").mkdir(parents=True, exist_ok=True)
-        ensure_relay(ctx, data_dir)
-    except Exception:  # noqa: BLE001 - without a relay, requests fall back to a new session
-        pass
-    try:
-        ctx.on_unload(stop_relay)
-    except Exception:  # noqa: BLE001
-        pass
+    """Nothing runs in the background any more; kept so the plugin's register order is unchanged."""
+    return None
