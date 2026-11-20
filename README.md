@@ -217,7 +217,7 @@ Setup fills them in for you.
   - research runs in progress, plus a one-hour cache of which tools you have (names only)
   - which chat created each task and which chats worked on it, with a short digest of the last exchange
   - notes waiting to be shown in a chat
-  - Reminders mappings and the queue of Start in chat requests
+  - Reminders mappings and a 24-hour record of Start in chat requests
   - discovery runs (see below)
 
 **Commands it runs**
@@ -300,16 +300,15 @@ Setup fills them in for you.
 **Start in chat (button in the dashboard, desktop app or phone)**
 
 - **What it does:** the button asks your agent to message you about a task and wait for your "go".
-- **Into an existing chat:** only if all three are true:
-  - your messaging gateway is running
-  - you have given the plugin Hermes's `allow_gateway_injection` permission (it is off unless you turn it on)
-  - there is a messaging chat to use: the last one that worked on the task, else your home channel
+- **Desktop app:** opens a new chat and sends the request there.
+- **Web dashboard and phone:** creates a one-time scheduled agent job that writes the message a few seconds
+  later. Hermes's scheduler delivers it the same way it delivers discovery digests, so no extra permission is
+  needed. It goes to:
+  - the chat where the discovery digest for the task's area posts, if that area has discovery
+  - otherwise the chat where you set up the plugin (its address is saved at setup)
+  - otherwise, when setup happened in the Hermes app, the job's own session, listed under Cron jobs
 
-  The plugin then posts the request into that chat as a message, and your agent answers there. To pick the
-  chat, it reads Hermes's session records and your gateway's home-channel settings.
-- **Otherwise:** it creates a one-time scheduled agent job that starts a new chat about the task a few
-  seconds later.
-- **Background thread:** a thread checks the request queue every second.
+  The message is also copied into that chat's history, so replying "go" there starts the task.
 
 **Scheduled jobs (created only after you approve them)**
 
@@ -320,7 +319,7 @@ Setup fills them in for you.
 - **Discovery:** one job per discovery stream you set up. It runs one agent turn on your model per run.
 - **Run now:** the dashboard's "Start research" and "Run now" buttons, and asking in chat to run a discovery
   stream now, run the matching job immediately.
-- **Start in chat:** may create a one-time job (see above).
+- **Start in chat:** from the web dashboard or phone, creates a one-time job (see above).
 - **Removal:** `/task teardown` removes the jobs and their scripts.
 
 **Discovery**

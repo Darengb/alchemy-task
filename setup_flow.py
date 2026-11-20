@@ -332,6 +332,8 @@ def jobs_create(rt: Runtime, *, user_approved: bool, session_id: str = "") -> di
     tz = _timezone_state(rt)
     if tz["likely_unset"]:
         raise SetupError("confirm the user's timezone first (it is unset or UTC), so schedules run at their local time")
+    from .handoff import remember_setup_chat
+    remember_setup_chat(rt, session_id)  # Start in chat replies go here when there is no digest chat
     scripts = _hermes_home() / "scripts"
     registry = rt.ctx.state.get("jobs", default={}) or {}
     known_ids = {r.get("job_id") for r in registry.values()}

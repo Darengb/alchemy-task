@@ -88,10 +88,10 @@ export function createMockBackend({ today = nyToday() } = {}) {
       const t = find(id)
       const text = `[Alchemy Task handoff]\nThe user pressed "Send to chat" on a task (demo).\nTask: ${t.title}\nTask ID: ${t.task_id}`
       if (body.surface === 'desktop') return { ok: true, mode: 'desktop', text }
-      const h = { id: `h${rev++}`, task_id: t.task_id, route: 'chat', state: 'pending', target: { platform: 'telegram', chat_name: 'Home', reason: 'home' } }
+      const h = { id: `h${rev++}`, task_id: t.task_id, route: 'session', state: 'started',
+        target: { platform: 'telegram', chat_name: 'Hermes Group', label: 'Telegram (Hermes Group)' } }
       db.handoffs = db.handoffs || {}
       db.handoffs[h.id] = h
-      setTimeout(() => { h.state = 'sent' }, 1200)
       return { ok: true, mode: 'chat', handoff: clone(h) }
     }],
     ['GET', /^\/handoffs\/([^/]+)$/, (q, [hid]) => ({ ok: true, handoff: clone(db.handoffs[hid]) })],

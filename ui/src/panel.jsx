@@ -11,13 +11,6 @@ import { isDone } from './tasks.jsx'
 import { researchButton, researchStartedMessage } from './lib/research.js'
 
 const PRIORITIES = ['urgent', 'high', 'normal', 'low']
-const PLATFORMS = { gui: 'the Hermes app', desktop: 'Hermes Desktop', tui: 'the terminal', telegram: 'Telegram', discord: 'Discord', slack: 'Slack', whatsapp: 'WhatsApp', signal: 'Signal',
-  photon: 'iMessage', bluebubbles: 'iMessage', matrix: 'Matrix', teams: 'Teams', email: 'email', sms: 'SMS' }
-// "Telegram" for the home channel; "Telegram (Ops team)" for a named chat that worked on the task.
-const chatLabel = (t) => {
-  const app = PLATFORMS[(t && t.platform) || ''] || ((t && t.platform) ? t.platform[0].toUpperCase() + t.platform.slice(1) : 'chat')
-  return t && t.reason === 'task' && t.chat_name ? `${app} (${t.chat_name})` : app
-}
 const STATUSES = [['open', 'Open'], ['in-progress', 'In progress'], ['waiting', 'Waiting']]
 
 export function TaskPanel({ id, narrow, onClose }) {
@@ -205,32 +198,15 @@ export function TaskPanel({ id, narrow, onClose }) {
         if (!(await chat.startChat(res.text))) toast('Could not open a new chat. Update Hermes Desktop and try again.', { tone: 'error' })
         return
       }
-      // Route 1 (a messaging chat) answers in seconds; route 2 (a new session) through the scheduler in about
-      // a minute. A messaging handoff the gateway does not take within ~10 s becomes a new session.
-      const newChat = 'Starting a new chat for this task. Hermes will message you there in about a minute.'
-      const res = await api.handoff(id, narrow ? 'phone' : 'dashboard')
-      const h = res.handoff
-      if (h.route === 'session') { toast(newChat, { duration: 7000 }); return }
-      const where = chatLabel(h.target)
-      toast(`Sending to ${where}…`)
-      for (let i = 0; i < 30; i++) {
-        await new Promise((r) => setTimeout(r, 1000))
-        const st = (await api.handoffStatus(h.id)).handoff
-        if (st.state === 'sent') { toast(`Sent. Hermes will message you on ${where}.`); return }
-        if (st.route === 'session' && st.state === 'started') {
-          toast(`${where} did not respond, so Hermes is starting a new chat instead. It will message you there in about a minute.`,
-            { duration: 8000 })
-          return
-        }
-        if (st.state === 'failed') { toast(st.error || 'Could not send it to chat.', { tone: 'error' }); return }
-      }
-      toast('Still sending. Hermes will message you when it picks this up.', { tone: 'error' })
+      // A one-time scheduled job writes the reply in about a minute; Hermes delivers it to the user's chat
+      // (the digest or setup chat), or keeps it in the app under Cron jobs when there is none.
+      const h = (await api.handoff(id, narrow ? 'phone' : 'dashboard')).handoff
+      const where = h.target && h.target.label
+      toast(where ? `Hermes will message you on ${where} in about a minute.`
+        : `Hermes will reply in about a minute. Find it in the app under Cron jobs, named after this task.`,
+        { duration: 8000 })
     } catch (err) {
-      if (err.code === 'permission') {
-        const cmd = 'hermes config set plugins.entries.alchemy-task.allow_gateway_injection true'
-        toast('Alchemy Task needs permission to message you in chat. Ask Hermes to allow it, or run the command.',
-          { tone: 'error', duration: 12000, action: { label: 'Copy command', run: () => copyText(cmd) } })
-      } else toast(describeError(err), { tone: 'error', duration: 9000 })
+      toast(describeError(err), { tone: 'error', duration: 9000 })
     } finally {
       setSending(false)
     }
