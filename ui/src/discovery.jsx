@@ -327,7 +327,9 @@ function RunCard({ run, filter, reload }) {
   const proposals = run.proposals || []
   const visible = filter === 'waiting' ? proposals.filter((p) => p.state === 'pending') : proposals
   const outcomes = (run.outcomes || []).filter((o) => o.status !== 'noop')
-  const attention = [...(run.conflicts || []).map((c) => ({ ...c, kind: 'conflict' })), ...(run.failures || [])]
+  // Only what is lost unless the user acts; moved and not-proposed items sit quietly in run details.
+  const attention = [...(run.conflicts || []).map((c) => ({ ...c, kind: 'conflict' })), ...(run.attention || run.failures || [])]
+  const quiet = [...(run.moved || []).map((m) => ({ ...m, label: 'Next run' })), ...(run.not_proposed || []).map((m) => ({ ...m, label: 'Not proposed' }))]
   const test = run.mode && run.mode !== 'production'
   return (
     <article className="at-run">
@@ -360,7 +362,7 @@ function RunCard({ run, filter, reload }) {
               <Icon name="alert" size={14} />
               <div>
                 <div className="at-attn-title">{a.title || (a.kind === 'conflict' ? 'Several tasks match one item' : 'Research follow-up')}</div>
-                <div className="at-muted">{a.kind === 'conflict' ? 'Nothing was changed. Ask Hermes which task this belongs to.' : a.reason}</div>
+                <div className="at-muted">{a.kind === 'conflict' ? 'Nothing was changed. Ask Hermes which task this belongs to.' : (a.text || a.reason)}</div>
               </div>
             </div>
           ))}
@@ -373,6 +375,12 @@ function RunCard({ run, filter, reload }) {
               <span className={cx('at-statusdot', c.status === 'complete' ? 'is-ok' : 'is-late')} />
               <span className="at-flex">{c.source_key || c.source || 'Source'}</span>
               <span className="at-muted">{c.status === 'complete' ? 'Checked' : c.status || 'Unknown'}</span>
+            </div>
+          ))}
+          {quiet.map((q, i) => (
+            <div key={'q' + i} className="at-detail-row is-note">
+              <span className="at-muted">{q.label}</span>
+              <span className="at-flex">{q.title || 'Research item'}<span className="at-detail-note">{q.text}</span></span>
             </div>
           ))}
           {filteredRows(run.coverage).map((f, i) => (

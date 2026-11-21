@@ -3081,6 +3081,17 @@ html:has(.at-mobile-editor[open]) {
   letter-spacing: .1em;
   text-transform: uppercase;
 }
+.at-detail-row.is-note {
+  align-items: baseline;
+}
+.at-detail-row.is-note > .at-muted {
+  flex: none;
+}
+.at-detail-note {
+  display: block;
+  color: var(--at-muted);
+  font-size: .92em;
+}
 .at-emptystate {
   max-width: 460px;
   margin: 0 auto;

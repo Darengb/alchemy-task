@@ -171,6 +171,9 @@ Three bundles: Starter, Classic and Collector. Use the new lifestyle photos.
         { unit_id: 'u6', title: 'Review the new tin supplier quote', task_id: byTitle('Review the new tin').task_id, status: 'complete' },
       ],
       conflicts: [], failures: [], delivery: { state: 'host_pending' },
+      attention: [{ title: 'Test results', group: 'attention', text: "The email's four image attachments can't be read here; open it to check them." }],
+      moved: [{ title: '#ops: can we move the vendor call?', group: 'moved', text: 'Research ran out of time. It continues in the next run.' }],
+      not_proposed: [{ title: 'Confirm the Alaska shipping copy', group: 'not_proposed', text: 'Covered by another item.' }],
     },
     {
       run_id: 'run-home-yesterday', stream: 'home', day: d(-1), time: `${d(-1)}T23:00:00Z`, status: 'complete', mode: 'production',
