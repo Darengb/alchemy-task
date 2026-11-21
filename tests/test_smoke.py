@@ -172,3 +172,17 @@ def test_research_children_cannot_write_or_read_credentials():
     assert not is_write_like("mcp__gmail__list_messages") and not is_write_like("read_file")
     assert refuse_file_read("read_file", {"path": "/home/u/.hermes/.env"})
     assert refuse_file_read("read_file", {"path": "/home/u/project/README.md"}) is None
+
+
+def test_only_lost_items_raise_an_alarm():
+    from alchemy_task.core.attention import ATTENTION, MOVED, NOT_PROPOSED, classify
+    group = lambda **f: classify(f)["group"]  # noqa: E731
+    assert group(reason="not finished within this run's research time: no callback") == MOVED
+    assert group(reason="lifecycle terminal FAILED", retry_pending=True) == MOVED
+    assert group(reason="The sole action duplicates accepted w_" + "a" * 20 + ".") == NOT_PROPOSED
+    assert group(reason="not reviewed in this run") == NOT_PROPOSED
+    assert group(kind="covered", reason="Same ask as M6.") == NOT_PROPOSED
+    assert group(reason="lifecycle terminal FAILED", retry_pending=False) == ATTENTION
+    assert group(reason="could not be matched to your tasks: bad file") == ATTENTION
+    unreadable = classify({"reason": "The email's four image attachments can't be read here; open it to check them."})
+    assert unreadable["group"] == ATTENTION and "image" in unreadable["text"]

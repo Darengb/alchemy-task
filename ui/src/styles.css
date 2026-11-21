@@ -879,6 +879,9 @@ html:has(.at-mobile-editor[open]) { overflow: hidden; }
 .at-details { padding: 4px 12px 8px; display: flex; flex-direction: column; gap: 9px; font-size: 13px; }
 .at-detail-row { display: flex; align-items: center; gap: 10px; }
 .at-detail-row > .at-muted { font-family: var(--at-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; }
+.at-detail-row.is-note { align-items: baseline; }
+.at-detail-row.is-note > .at-muted { flex: none; }
+.at-detail-note { display: block; color: var(--at-muted); font-size: .92em; }
 
 .at-emptystate { max-width: 460px; margin: 0 auto; padding: 80px 24px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; }
 .at-emptystate.is-full { flex: 1; justify-content: center; }

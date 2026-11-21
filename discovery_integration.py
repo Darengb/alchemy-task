@@ -27,6 +27,7 @@ from .discovery_sources import (SourceAdapter, collect_attested, inline_primary,
 from .discovery_runner import DiscoveryRunner, RunnerPolicy, make_tool_handlers, make_hooks, CHECKLIST, BINDING_KEYS
 from .discovery_conversion import DiscoveryConversion, order_semantic_targets
 from .discovery_digest import DiscoveryDigest, coverage_degraded
+from .core import attention as _attention
 
 
 def _pick(value, path):
@@ -1300,6 +1301,41 @@ class DiscoveryIntegration:
         except Exception:  # noqa: BLE001 - a pruned run owns nothing
             return ''
 
+    def _with_retry(self, failures, ledger):
+        """Mark each failure with whether a later run researches it again (from the source backlog)."""
+        run_id = ledger['run_id']
+        info = ledger['resources'].get('backlog-selection')
+        selection = {}
+        if info:
+            try:
+                selection = {e['candidate_id']: e for e in json.loads((self.store.run_dir(run_id) / 'resources' / info['sha256']).read_text())}
+            except (OSError, ValueError, KeyError, TypeError):
+                selection = {}
+        occurrences = {c.get('occurrence_id'): c for c in ledger['candidates'] if c.get('occurrence_id')}
+        states, out = {}, []
+        for f in failures:
+            f = dict(f)
+            if not f.get('title') and f.get('occurrence_id') in occurrences:
+                f['title'] = occurrences[f['occurrence_id']].get('title', '')
+            cid = f.get('candidate_id') or f.get('cid') or (occurrences.get(f.get('occurrence_id')) or {}).get('candidate_id')
+            entry = selection.get(cid)
+            if entry and 'retry_pending' not in f:
+                key = entry['source_key']
+                if key not in states:
+                    try:
+                        states[key] = {x['backlog_id']: x for x in self.store.source_state(ledger['stream'], key)['backlog']}
+                    except (UserError, OSError, ValueError, KeyError, TypeError):
+                        states[key] = {}
+                current = states[key].get(entry['backlog_id'])
+                if current:
+                    owner = (current.get('lineage') or {}).get('run_id')
+                    status = current.get('status')
+                    f['retry_pending'] = (status in {'queued', 'selected', 'deferred'}
+                                          or (status == 'blocked' and int(current.get('retries') or 0) < 1)
+                                          or (bool(owner) and owner != run_id and status == 'accepted'))
+            out.append(f)
+        return out
+
     def _settle_backlog(self, run_id, join=None):
         ledger = self.store.get_run(run_id)
         info = ledger['resources'].get('backlog-selection')
@@ -1315,8 +1351,12 @@ class DiscoveryIntegration:
             elif join:
                 attempts = sorted((a for a in ledger['attempts'].values() if a['candidate_id'] == cid), key=lambda a: a['ordinal'])
                 # Cut off by the research time box is not a failure: it always goes to the next run.
-                timed_out = bool(attempts) and str((attempts[-1].get('rejection') or {}).get('reason') or '').startswith(TIME_BOX_REASON)
+                last_reason = str((attempts[-1].get('rejection') or {}).get('reason') or '') if attempts else ''
+                timed_out = last_reason.startswith(TIME_BOX_REASON)
                 state = 'deferred' if (not attempts or timed_out) else 'blocked'
+                # Sent back only because it repeats another item: researching it again cannot help.
+                if attempts and _attention.classify({'reason': last_reason[len(TIME_BOX_REASON):] if timed_out else last_reason})['group'] == _attention.NOT_PROPOSED:
+                    state = 'resolved'
             else: state = 'selected'
             # A later run may already own this backlog item (it retried a deferred or blocked item);
             # replaying an older run must never take it back. An earlier run's claim never blocks this one.
@@ -1350,6 +1390,21 @@ class DiscoveryIntegration:
             candidate = self.store.get_candidate(run_id, unit_id)
             record = {'run_id': run_id, 'unit_id': unit_id, 'kind': 'failed', 'failure': reason[:500],
                       'request': request or {'decision': 'failed'}, 'targets': [], 'title': candidate.get('title', 'Research follow-up')}
+            atomic_json(path, record)
+            return record
+
+    def _record_covered(self, run_id, unit_id, *, reason, covered_by=''):
+        """A unit that repeats another item (in this run or a still-open proposal): not proposed, nothing written."""
+        path = self._decision_path(run_id, unit_id)
+        with self.store._lock('decision:' + run_id + ':' + unit_id):
+            old = read_json(path)
+            if old and old.get('kind') not in {'failed', 'covered'}:
+                raise UserError('post-join decision is immutable')
+            self.conversion.joined(run_id, unit_id)  # a wrong run or unit is the caller's mistake and is refused
+            candidate = self.store.get_candidate(run_id, unit_id)
+            record = {'run_id': run_id, 'unit_id': unit_id, 'kind': 'covered', 'targets': [],
+                      'request': {'decision': 'covered', 'reason': str(reason)[:500], 'covered_by': str(covered_by or '')[:200]},
+                      'title': candidate.get('title', 'Research follow-up')}
             atomic_json(path, record)
             return record
 
@@ -1584,11 +1639,14 @@ class DiscoveryIntegration:
         self.store.get_candidate(run_id, unit_id)
         return self.store.run_dir(run_id) / 'decisions' / (unit_id + '.json')
 
-    def record_decision(self, run_id, unit_id, *, decision, reason, session_id, target_task_id='', expected_revision='', useful_delta=False):
+    def record_decision(self, run_id, unit_id, *, decision, reason, session_id, target_task_id='', expected_revision='', useful_delta=False,
+                        covered_by=''):
         self.runner._parent(run_id, session_id)
-        if not reason or decision not in {'propose', 'auto', 'noop', 'conflict'}:
+        if not reason or decision not in {'propose', 'auto', 'noop', 'conflict', 'covered'}:
             raise UserError('substantive post-join decision required')
         path = self._decision_path(run_id, unit_id)
+        if decision == 'covered':
+            return self._record_covered(run_id, unit_id, reason=reason, covered_by=covered_by)
         with self.store._lock('decision:' + run_id + ':' + unit_id):
             old = read_json(path)
             request = {'decision': decision, 'reason': reason, 'target_task_id': target_task_id,
@@ -1672,6 +1730,10 @@ class DiscoveryIntegration:
             if not decision:
                 # One unreviewed unit never blocks the digest: it goes under Needs attention, nothing is written.
                 decision = self._record_unit_failure(run_id, candidate['candidate_id'], 'not reviewed in this run')
+            if decision.get('kind') == 'covered':
+                unit_failures.append({'unit_id': candidate['candidate_id'], 'title': decision.get('title') or candidate['title'],
+                                      'kind': 'covered', 'reason': decision['request'].get('reason') or 'covered by another item'})
+                continue
             if decision.get('kind') == 'failed':
                 unit_failures.append({'unit_id': candidate['candidate_id'], 'title': decision.get('title') or candidate['title'],
                                       'reason': decision.get('failure') or 'could not be matched to your tasks'})
@@ -1718,7 +1780,7 @@ class DiscoveryIntegration:
         reason = {'queued_reason': why} if _accepts(type(self.digest).prepare, 'queued_reason') else {}
         if stream.get('relist_repeats') and _accepts(type(self.digest).prepare, 'relist'): reason['relist'] = True
         digest = self.digest.prepare(run_id, stream=ledger['config'].get('stream_name', ledger['stream']), day=ledger['business_date'], origin=origin,
-                                     items=items, failures=[{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + unit_failures + supplement_failures], coverage=coverage, outcomes=outcomes,
+                                     items=items, failures=self._with_retry([{**f, 'title': next((c['title'] for c in ledger['candidates'] if c['candidate_id'] == f.get('candidate_id', f.get('cid', f.get('unit_id')))), f.get('title', 'Research follow-up'))} for f in join['failures'] + unit_failures + supplement_failures], ledger), coverage=coverage, outcomes=outcomes,
                                      blocked=conflicts, label=stream.get('label', ''), review_namespace=run_id if ledger.get('lineage', {}).get('operation') else '', deferred=join.get('deferred', []),
                                      queued_count=queued, follow_up_started=follow_up, **reason)
         with self.store._lock(self.store._run_lock_name(run_id)):
@@ -1909,12 +1971,22 @@ class DiscoveryIntegration:
         for failure in data['digests'].get(result['run_id'], {}).get('failures', []):
             # Finalization adds a display title to join failures. Count that
             # same failure once while preserving its original diagnostic fields.
-            key = {k: v for k, v in failure.items() if k != 'title'}
-            prior = next((f for f in result['failures'] if {k: v for k, v in f.items() if k != 'title'} == key), None)
+            extra = {'title', 'retry_pending'}
+            key = {k: v for k, v in failure.items() if k not in extra}
+            prior = next((f for f in result['failures'] if {k: v for k, v in f.items() if k not in extra} == key), None)
             if prior is None:
                 result['failures'].append(copy.deepcopy(failure))
-            elif 'title' not in prior and 'title' in failure:
-                prior['title'] = failure['title']
+            else:
+                for k in extra:
+                    if k not in prior and k in failure: prior[k] = failure[k]
+        # Only what is lost unless the user acts is an alarm; the rest is quiet run detail.
+        result['failures'] = self._with_retry(result['failures'], ledger)
+        attention, moved, not_proposed = _attention.sort_failures(result['failures'])
+        for d in result['deferred']:
+            cap = 'cap' in str(d.get('reason') or '').lower()
+            moved.append({**d, 'group': _attention.MOVED, 'text': 'Waiting for the daily research limit. It continues in the next run.' if cap
+                          else 'Not started before research time ran out. It continues in the next run.'})
+        result['attention'], result['moved'], result['not_proposed'] = attention, moved, not_proposed
         receipts = {r['unit_id']: r for r in result['conversions']}
         proposals = []
         today = self.utcnow().astimezone(ZoneInfo(result['timezone'] or self.rt.settings.timezone)).date().isoformat()
@@ -1941,8 +2013,8 @@ class DiscoveryIntegration:
                 if receipt.get('applied_at'): outcome['applied_at'] = receipt['applied_at']
         result['summary'] = {state: sum(p['state'] == state for p in proposals) for state in ('pending', 'approved', 'complete', 'dismissed')}
         result['summary'].update(auto_updated=sum(o['status'] in {'local_verified', 'git_pending', 'phone_pending', 'complete'} for o in result['outcomes']),
-                                 conflicts=len(result['conflicts']), failures=len(result['failures']), deferred=len(result['deferred']))
-        result['degraded'] = bool(result['failures'] or any(coverage_degraded(c) for c in result['coverage']))
+                                 conflicts=len(result['conflicts']), failures=len(result['attention']), deferred=len(result['deferred']))
+        result['degraded'] = bool(result['attention'] or any(coverage_degraded(c) for c in result['coverage']))
         return result
 
 
@@ -1973,7 +2045,7 @@ SCHEMAS = {
  'discovery_context': _schema('discovery_context', 'Freeze collected source inventory, ALL-status task bodies, installed full skills, full rubric and approved context before research.', {**RUN, 'context': OBJ}, ['run_id']),
  'discovery_match': _schema('discovery_match', 'Post-join typed exact matching and all semantic target options; returns full body resources, no mutation.', {**RUN, 'unit_id': STR}, ['run_id', 'unit_id']),
  'discovery_digest': _schema('discovery_digest', 'Prepare/read immutable review digest after all match decisions. Preparation is not delivery proof.', {**RUN, 'action': {'type': 'string', 'enum': ['prepare', 'get', 'delivery', 'send']}}, ['run_id']),
- 'discovery_decision': _schema('discovery_decision', 'Parent post-join disposition. Unique exact requires useful delta auto or byte-preserving noop; semantic/new remains proposal; several exact matches are a propose (numbered choice for the user), never auto/noop. conflict is accepted only for compatibility.', {**RUN, 'unit_id': STR, 'decision': {'type': 'string', 'enum': ['propose', 'auto', 'noop', 'conflict']}, 'reason': STR, 'target_task_id': STR, 'expected_revision': STR, 'useful_delta': BOOL}, ['run_id', 'unit_id', 'decision', 'reason']),
+ 'discovery_decision': _schema('discovery_decision', 'Parent post-join disposition. Unique exact requires useful delta auto or byte-preserving noop; semantic/new remains proposal; several exact matches are a propose (numbered choice for the user), never auto/noop. covered: the unit only repeats another item (an accepted unit in this run, or a still-open proposal); name it in covered_by. It is not proposed and is listed quietly in run details. conflict is accepted only for compatibility.', {**RUN, 'unit_id': STR, 'decision': {'type': 'string', 'enum': ['propose', 'auto', 'noop', 'conflict', 'covered']}, 'reason': STR, 'target_task_id': STR, 'expected_revision': STR, 'useful_delta': BOOL, 'covered_by': STR}, ['run_id', 'unit_id', 'decision', 'reason']),
  'discovery_conversion_recover': _schema('discovery_conversion_recover', 'Inspect/resume exact conversion, or explicitly revise/cancel/bind_manual an unwritten plan with CAS and user approval. Any chat of this profile; approvals.owner_only applies when enabled.', {**RUN, 'unit_id': STR, 'action': {'type': 'string', 'enum': ['resume', 'inspect', 'revise', 'cancel', 'bind_manual']}, 'expected_plan_revision': STR, 'target_task_id': STR, 'expected_revision': STR, 'edits': OBJ, 'reason': STR, 'user_approved': BOOL}, ['run_id', 'unit_id']),
  'discovery_link_audit': _schema('discovery_link_audit', 'Read-only dry-run audit of task links written by discovery conversions visible to this chat: latest occurrence per task/dossier, one marker pair and the expected revision line; optional workspace-relative legacy dossier folders are listed. Never writes or repairs.', {'legacy_roots': {'type': 'array', 'items': STR}}),
  'discovery_runs': _schema('discovery_runs', 'Backend API: list full run records or get exact run including research, proposals, conflicts, recovery and delivery.', {'run_id': STR}),

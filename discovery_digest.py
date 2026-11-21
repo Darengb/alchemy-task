@@ -13,6 +13,7 @@ from .core.discovery_state import DiscoveryStore, atomic_json, read_json
 from .core.discovery_identity import UserError, canonical_source_id
 from urllib.parse import urlsplit, parse_qs
 from .core.digest_text import digest_field, first_sentence
+from .core import attention as _attention
 
 
 def _suggested_date(value):
@@ -25,40 +26,17 @@ def _suggested_date(value):
 
 
 def _failure_status(failure):
-    # Project operational diagnostics only; semantic/user context remains useful.
-    reason = str(failure.get('reason') or 'Research needs attention')
-    lifecycle = re.fullmatch(r'\s*lifecycle terminal ([A-Za-z_]+)\s*', reason)
-    if lifecycle:
-        return _LIFECYCLE.get(lifecycle.group(1).upper(), 'research stopped before it finished')
-    if reason.startswith('could not be matched to your tasks'):
-        return 'could not be matched to your tasks'
-    if reason.startswith("not finished within this run's research time"):
-        return 'research did not finish in time; it is queued for the next run'
-    if re.search(r'(?:Error:|Exception:|Traceback|fatal:|areas/[^\s]+/tasks/|(?:^|\s)/[^\s]+|[a-f0-9]{8}-[a-f0-9-]{27,})', reason):
-        return 'could not be completed in this run; it is queued for the next run'
-    # Internal research-review wording (field names, candidate ids, repair instructions) is not for the user.
-    if re.search(r'\b[a-z]+_[a-z_]+\b|\bc_[0-9a-f]{20}\b|\b(?:Repair|payload|bundle|workstream|schema)\b', reason):
-        return 'research needs another pass; it is queued for the next run'
-    # Drop a repeated "Needs attention: <title>:" prefix and never cut a word in half.
-    title = str(failure.get('title') or '')
-    reason = re.sub(r'^\s*(?:Needs attention:\s*)?' + (re.escape(title) + r'\s*:\s*' if title else ''), '', reason, flags=re.I) or reason
-    text = first_sentence(reason)
-    if len(text) > 160:
-        text = text[:160].rsplit(' ', 1)[0].rstrip(' ,;:') + '...'
-    return text
+    """Plain words for one unfinished item (shared with the dashboard)."""
+    return _attention.classify(failure)['text']
 
 
 def failure_queued(failure):
-    """A failure the next run researches again (time box, another pass): counted, not listed."""
-    return _failure_status(failure).endswith('it is queued for the next run')
+    """A failure the next run researches again: counted, not listed."""
+    return _attention.classify(failure)['group'] == _attention.MOVED
 
 
 WRITTEN_STATES = {'local_verified', 'git_pending', 'phone_pending', 'complete'}
-# Plain words for research child lifecycle ends; both attempts were used when a failure reaches the digest.
-_LIFECYCLE = {'INTERRUPTED': 'research was interrupted before it finished',
-              'TIMEOUT': 'research timed out before it finished', 'TIMED_OUT': 'research timed out before it finished',
-              'FAILED': 'research failed before it finished', 'ERROR': 'research failed before it finished',
-              'CANCELLED': 'research was cancelled before it finished', 'CANCELED': 'research was cancelled before it finished'}
+
 
 
 def already_current(item):
@@ -196,7 +174,8 @@ def render_digest(run, *, stream, day, numbered, already, failures, coverage, ou
     # Items the next run researches again are one "Still researching" line, not attention.
     queued = len(deferred) + sum(1 for f in failures if failure_queued(f))
     queued = queued_count or queued
-    attention_failures = [f for f in failures if not failure_queued(f)]
+    # Covered or deliberately left-out items stay in the record and the dashboard's run details only.
+    attention_failures = [f for f in failures if _attention.classify(f)['group'] == _attention.ATTENTION]
     source_problems = [(s, _source_problem(s)) for s in coverage]
     source_problems = [(s, p) for s, p in source_problems if p]
     attention = len(attention_failures) + len(source_problems)
@@ -244,7 +223,7 @@ def render_digest(run, *, stream, day, numbered, already, failures, coverage, ou
     if not numbered:
         # Deferred or blocked work is not "nothing new": only a complete check with
         # nothing left says no follow-ups were found.
-        degraded = bool(failures or any(coverage_degraded(s) for s in coverage))
+        degraded = bool(attention_failures or any(coverage_degraded(s) for s in coverage))
         quiet = not degraded and not outcomes and not deferred and not blocked and not already and not queued and not still_open
         lines += ['No new follow-ups found.' if quiet else 'No new proposals to review.', '']
     footer = []
