@@ -558,6 +558,12 @@
             "status_only"
           ]
         },
+        "suggested_due": {
+          "description": "Optional. The date this task should be done, as YYYY-MM-DD, only when the source states or clearly implies one (\"Monday\", \"by Nov 23\", \"end of next week\"). Resolve relative words against the message's own date and the user's timezone, and pick the day the user's step belongs on (for example the day after a merge when the step is verifying it). Omit when the source gives no timing.",
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "maxLength": 10
+        },
         "existing_task_already_current": {
           "description": "Optional. Set true only when a task you nominated in existing_task_candidates already records this work's current state and next step, so nothing would be added to it. The digest then lists the item once under Already in your tasks instead of offering it as a proposal. Omit or set false otherwise.",
           "type": "boolean"

@@ -15,6 +15,15 @@ from urllib.parse import urlsplit, parse_qs
 from .core.digest_text import digest_field, first_sentence
 
 
+def _suggested_date(value):
+    """'Monday, November 23' for a valid research date; '' otherwise."""
+    try:
+        day = dt.date.fromisoformat(str(value or ''))
+    except ValueError:
+        return ''
+    return day.strftime('%A, %B ') + str(day.day)
+
+
 def _failure_status(failure):
     # Project operational diagnostics only; semantic/user context remains useful.
     reason = str(failure.get('reason') or 'Research needs attention')
@@ -221,6 +230,8 @@ def render_digest(run, *, stream, day, numbered, already, failures, coverage, ou
             if addition: lines += ['**Proposed addition:** ' + addition, '']
         action = digest_field(item, 'digest_next_action')
         if action: lines += ['**Next action:** ' + action, '']
+        suggested = _suggested_date(item.get('suggested_due'))
+        if suggested: lines += ['**Suggested date:** ' + suggested, '']
         if item.get('subtasks'): lines += [*subtask_lines(item['subtasks']), '']
         if item.get('not_proposed_line'): lines += [str(item['not_proposed_line']), '']
         if semantic:

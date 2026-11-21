@@ -141,6 +141,17 @@ class RunnerPolicy:
             raise UserError('per-call budget must exceed the PENDING window so launches settle inside the call')
 
 
+def _today_line(timezone, epoch):
+    """The user's current date, so research can turn "Monday" into an exact suggested_due."""
+    from zoneinfo import ZoneInfo
+    try:
+        zone = ZoneInfo(str(timezone or 'UTC'))
+    except (KeyError, ValueError, OSError):
+        zone, timezone = dt.timezone.utc, 'UTC'
+    day = dt.datetime.fromtimestamp(epoch, zone).date()
+    return 'Today for the user is %s, %s (%s).' % (day.strftime('%A'), day.isoformat(), timezone or 'UTC')
+
+
 # Short user-facing digest fields; the long fields stay the full research for the agent and dossier.
 DIGEST_FIELD_INSTRUCTIONS = (
     'For each workstream also write digest_current_state (what is happening and what is still open), digest_next_action '
@@ -149,7 +160,9 @@ DIGEST_FIELD_INSTRUCTIONS = (
     'Set existing_task_already_current true only when a task you nominated already records this work\'s current state and next step, '
     'so nothing would be added to it. '
     'List existing_task_candidates most likely destination first and give each a confidence (high, medium or low). '
-    'Set recommended_task_path to one candidate path only when that task is clearly the right destination; omit it otherwise.')
+    'Set recommended_task_path to one candidate path only when that task is clearly the right destination; omit it otherwise. '
+    'When the source states or clearly implies when the user\'s step should happen (a weekday, a date, "after the Monday merge"), '
+    'set suggested_due to that day as YYYY-MM-DD, resolving relative words against the message date; omit it when there is no timing.')
 
 # One workstream per action: steps of the same action are subtasks; separate actions are separate workstreams.
 GROUPING_INSTRUCTIONS = (
@@ -420,6 +433,7 @@ class DiscoveryRunner:
                 'Use action_key/action_anchor only when an action registry resource is provided. When you split a thread into several workstreams, give each the message-level id of its decisive message from the source body. ' + SHARED_MESSAGE_INSTRUCTIONS + ' '
                 + DIGEST_FIELD_INSTRUCTIONS + ' You must call discovery_research_submit before finishing.'}
         base_len = len(data['instructions'])
+        data['instructions'] += ' ' + _today_line(ledger.get('config', {}).get('timezone'), self.clock.time())
         if '"context_only"' in self.store._source_body_text(run, ledger, attempt['candidate_id']):
             data['instructions'] += FILTERED_MESSAGE_INSTRUCTIONS
         from .core.discovery_research import previous_research

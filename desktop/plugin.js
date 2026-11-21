@@ -2782,7 +2782,7 @@ function ProposalCard({ p, run, reload, readOnly }) {
   const recommended = targets.find((x) => x.recommended);
   const [target, setTarget] = React7.useState(targets.length === 1 ? targets[0].task_id : recommended ? recommended.task_id : null);
   const streamAreas = (meta.streams || {})[run.stream] || [];
-  const [date, setDate] = React7.useState(p.due || p.due_hint || today);
+  const [date, setDate] = React7.useState(p.due || p.suggested_due || p.due_hint || today);
   const [area, setArea] = React7.useState(p.area || (streamAreas.length === 1 ? streamAreas[0] : meta.default_area) || "");
   const [busy, setBusy] = React7.useState(null);
   const [gone, setGone] = React7.useState(false);

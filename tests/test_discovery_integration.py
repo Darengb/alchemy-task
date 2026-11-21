@@ -167,6 +167,39 @@ def test_approval_batch_preflight_rejects_invalid_second_edit_without_task_write
     assert len(rt.store().scan().tasks) == before
 
 
+def test_create_without_a_date_uses_the_research_suggested_due(settings, data_dir, tmp_path):
+    from test_discovery_state import setup, prepare, read_all
+    from test_discovery_schema import bundle
+    integration, rt, ctx = service(settings, data_dir, tmp_path)
+    store, run, items = setup(data_dir, count=2)
+    with store._lock(store._run_lock_name(run)):
+        ledger = store.get_run(run); ledger['origin'] = {'session_id': 'parent'}; store._save(run, ledger)
+    for index, item in enumerate(items):
+        a = prepare(store, run, item['candidate_id'])
+        b = bundle(); b['candidate_id'] = item['candidate_id']; b['workstreams'][0]['exact_source_ids'][0]['message_ts'] = f'171.{index+2}'
+        b['workstreams'][0]['title'] = f'Independent action {index}'
+        if index == 0: b['workstreams'][0]['suggested_due'] = '2030-01-07'
+        receipt = store.spool_payload(run, a['token'], b)
+        store.observe_terminal(run, a['token'], state='SUCCEEDED', receipt={'state': 'SUCCEEDED'})
+        read_all(store, run, receipt['resource'], 'parent')
+        store.accept_attempt(run, a['token'], payload_sha256=receipt['payload_sha256'], assessment={'accepted': True, 'reason': 'Distinct substantive action fully verified.'}, reader='parent')
+    store.put_resource(run, 'join-record', {'joined': True, 'accepted': [x['candidate_id'] for x in items], 'failures': []})
+    for c in store.get_run(run)['candidates']:
+        if c.get('parent_candidate_id'): integration.record_decision(run, c['candidate_id'], decision='propose', reason='Independent untracked ask.', session_id='parent')
+    digest = integration.finalize(run, session_id='parent')
+    dated = next(p for p in digest['items'] if p.get('suggested_due'))
+    undated = next(p for p in digest['items'] if not p.get('suggested_due'))
+    assert dated['suggested_due'] == '2030-01-07' and '**Suggested date:** Monday, January 7' in digest['text']
+    before = len(rt.store().scan().tasks)
+    # No date from the user: the research date is used. The undated item still needs a date or undated.
+    with pytest.raises(UserError, match='due date'):
+        integration.decide({'approve': [str(undated['number'])], 'day': '2030-01-01', 'edits': {str(undated['number']): {'area': 'work'}}}, session_id='parent', today='2030-01-02')
+    result = integration.decide({'approve': [str(dated['number'])], 'day': '2030-01-01', 'edits': {str(dated['number']): {'area': 'work'}}}, session_id='parent', today='2030-01-02')
+    assert len(rt.store().scan().tasks) == before + 1
+    task = next(t for t in rt.store().scan().tasks if t.task_id == result['results'][0]['task_id'])
+    assert str(task.fm['due']) == '2030-01-07' and str(task.fm['scheduled']) == '2030-01-07'
+
+
 def test_stream_names_with_spaces_preserve_public_identity(settings, data_dir, tmp_path):
     integration, rt, ctx = service(settings, data_dir, tmp_path)
     config = configure(integration)

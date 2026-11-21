@@ -77,7 +77,10 @@ def test_already_current_matches_are_listed_once_without_a_proposal(tmp_path):
     bundle['workstreams'][0].update(existing_task_already_current=True, digest_current_state='State.', digest_next_action='Next.', digest_addition='New.')
     unit = research.validate_bundle(bundle, bundle['candidate_id'], ['slack:T1:C1:171.1'])[0][1]
     assert unit['existing_task_already_current'] is True and unit['digest_next_action'] == 'Next.'
-    for bad in ({'existing_task_already_current': 'yes'}, {'digest_current_state': 'x' * 301}):
+    bundle['workstreams'][0]['suggested_due'] = '2026-11-23'
+    assert research.validate_bundle(bundle, bundle['candidate_id'], ['slack:T1:C1:171.1'])[0][1]['suggested_due'] == '2026-11-23'
+    for bad in ({'existing_task_already_current': 'yes'}, {'digest_current_state': 'x' * 301},
+                {'suggested_due': 'Monday'}, {'suggested_due': '2026-02-30'}, {'suggested_due': '2026-11-23T10:00'}):
         broken = json.loads(json.dumps(bundle)); broken['workstreams'][0].update(bad)
         with pytest.raises(research.UserError):
             research.validate_bundle(broken, broken['candidate_id'], ['slack:T1:C1:171.1'])
@@ -111,3 +114,15 @@ def test_needs_attention_reasons_are_plain_words():
     assert _failure_status({'reason': 'Repair represented_candidate_ids direction for c_3975fd960c04173e7f32'}) == 'research needs another pass; it is queued for the next run'
     assert _failure_status({'reason': 'lifecycle terminal INTERRUPTED'}) == 'research was interrupted before it finished'
     assert _failure_status({'reason': 'Source unavailable. More detail here.'}) == 'Source unavailable.'
+
+
+def test_suggested_date_line_and_research_today(tmp_path):
+    from alchemy_task.discovery_runner import _today_line
+    d = DiscoveryDigest(tmp_path).prepare('run1', stream='mbg', day='2026-11-20', origin=ORIGIN, label='M',
+                                          items=[item('u1', kind='new', suggested_due='2026-11-23'), item('u2', kind='new', suggested_due='soon')])
+    first, second = d['text'].split('### M2.')
+    assert '**Suggested date:** Monday, November 23\n' in first
+    assert 'Suggested date' not in second
+    # 11:30 PM Friday in New York is already Saturday in UTC; research sees the user's Friday.
+    assert _today_line('America/New_York', 1795235400) == 'Today for the user is Friday, 2026-11-20 (America/New_York).'
+    assert _today_line('Not/AZone', 0) == 'Today for the user is Thursday, 1970-01-01 (UTC).'
