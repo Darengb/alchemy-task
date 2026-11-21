@@ -1,0 +1,174 @@
+"""Light smoke tests: does the core still work end to end?
+
+Keep this suite small. Test outcomes a user would notice (a task is created, a date
+resolves, a proposal becomes a task), never exact wording, field order or other
+details that change on purpose.
+"""
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from alchemy_task.core import taskfile as tf
+from alchemy_task.core.store import NeedsInput, TaskStore
+from fakes import FakeCtx
+from helpers import FIXTURES
+
+
+def test_plugin_registers_tools_skills_and_hooks(data_dir):
+    import alchemy_task
+    ctx = FakeCtx({}, data_dir)
+    alchemy_task.register(ctx)
+    names = {(a[0] if a else k.get("name")) for n, a, k in ctx.calls if n == "register_tool"}
+    assert {"task_create", "task_update", "task_find", "task_setup", "discovery_start", "discovery_decide"} <= names
+    assert {a[0] for n, a, _ in ctx.calls if n == "register_skill"} == {"tasks", "setup", "discovery"}
+    assert any(n == "register_hook" for n, _, _ in ctx.calls)
+
+
+def test_task_lifecycle(settings, data_dir):
+    store = TaskStore(settings, data_dir)
+    with pytest.raises(NeedsInput):
+        store.create(title="Call the plumber", area="home")  # no date
+    doc = store.create(title="Call the plumber", area="home", due="2026-11-09", research=False)
+    assert doc.fm["due"] == "2026-11-09" and doc.fm["status"] == "open"
+    assert [t.task_id for t in store.find(query="plumber")] == [doc.task_id]
+    done, _, _ = store.update(doc.task_id, {"status": "done"})
+    assert done.fm["status"] == "done" and done.fm["completed"]
+    assert store.find(query="plumber") == []  # closed tasks are hidden by default
+
+
+def test_date_words_and_agenda(settings, data_dir):
+    sunday = "2026-11-08"
+    assert tf.parse_date_words("Friday", sunday) == "2026-11-13"
+    assert tf.parse_date_words("tomorrow", sunday) == "2026-11-09"
+    with pytest.raises(tf.TaskFormatError):
+        tf.parse_date_words("someday", sunday)
+    store = TaskStore(settings, data_dir)
+    store.create(title="Pay the electric bill", area="home", due="2026-11-09", research=False)
+    store.create(title="Call the landlord", area="home", due="2026-11-01", research=False)
+    store.create(title="Plan next quarter", area="work", due="2026-12-15", research=False)
+    titles = {t.title for t, _ in store.agenda("2026-11-09", "2026-11-09", today="2026-11-09")}
+    assert {"Pay the electric bill", "Call the landlord"} <= titles  # due today, and overdue
+    assert "Plan next quarter" not in titles
+
+
+def test_task_tools_through_the_runtime(settings, data_dir):
+    from alchemy_task import runtime, task_tools
+    ctx = FakeCtx({"workspace_root": settings.workspace_root, "timezone": settings.timezone}, data_dir)
+    runtime.bind(ctx)
+    made = json.loads(task_tools.task_create({"title": "Order new filters", "area": "home", "due": "2026-11-20",
+                                              "research": False}))
+    assert made["ok"], made
+    task_id = made["task"]["task_id"]
+    found = json.loads(task_tools.task_find({"query": "filters"}))
+    assert [t["task_id"] for t in found["tasks"]] == [task_id]
+    updated = json.loads(task_tools.task_update({"task": task_id, "due": "2026-11-23"}))
+    assert updated["ok"] and updated["task"]["due"] == "2026-11-23"
+
+
+def test_setup_creates_workspace_and_jobs(tmp_path, data_dir, monkeypatch):
+    from alchemy_task import runtime, setup_flow as sf, task_tools
+    home = tmp_path / "hermes-home"
+    home.mkdir()
+    monkeypatch.setattr(sf, "_hermes_home", lambda: home)
+    monkeypatch.setattr(sf, "_hermes_timezone", lambda: "UTC")
+    monkeypatch.setattr(sf, "_set_hermes_timezone", lambda name: True)
+    ctx = FakeCtx({}, data_dir)
+    runtime.bind(ctx)
+    call = lambda **a: json.loads(task_tools.task_setup(a, session_id="chat"))  # noqa: E731
+    assert call(action="save", timezone="America/New_York")["ok"]
+    ws = tmp_path / "tasks"
+    out = call(action="save", workspace_root=str(ws), create_workspace=True, areas=["work", "home"], default_area="work")
+    assert out["ok"] and (ws / "areas" / "home" / "tasks").is_dir()
+    assert call(action="jobs_create", user_approved=True)["ok"] and ctx.cron
+    assert call(action="status")["receipt"]["jobs"]["ready"]
+
+
+def test_research_bundle_validation():
+    from alchemy_task.core import discovery_research as research
+    bundle = json.loads((FIXTURES / "discovery" / "bundle.json").read_text())
+    sources = ["slack:T1:C1:171.1"]
+    assert research.validate_bundle(bundle, bundle["candidate_id"], sources)
+    bundle["workstreams"][0]["suggested_due"] = "2026-11-23"
+    assert research.validate_bundle(bundle, bundle["candidate_id"], sources)[0][1]["suggested_due"] == "2026-11-23"
+    for bad in ({"title": None}, {"suggested_due": "Monday"}):
+        broken = json.loads(json.dumps(bundle))
+        broken["workstreams"][0].update(bad)
+        with pytest.raises(research.UserError):
+            research.validate_bundle(broken, broken["candidate_id"], sources)
+
+
+def _accepted_run(data_dir, *, suggested_due=None):
+    """One discovery run whose single item has accepted research, as a parent agent would leave it."""
+    import hashlib
+    from alchemy_task.core.discovery_state import DiscoveryStore
+    store = DiscoveryStore(data_dir / "discovery")
+    run = store.init_run(stream="work", business_date="2030-01-01", config={"sources": ["work"], "mode": "production"})
+    item = store.add_candidates(run, [{"title": "Ask", "source_ids": [{"type": "slack", "workspace_id": "T1", "channel_id": "C1",
+                                                                      "thread_root_ts": "171.1", "message_ts": "171.2"}]}])[0]
+    store.freeze_index(run, rubric="Read complete sources.")
+
+    def read_all(name, reader):
+        rev, cursor = store.resource_info(run, name)["sha256"], None
+        while True:
+            page = store.fetch_resource(run, name, revision=rev, reader=reader, cursor=cursor, limit=4000)
+            assert hashlib.sha256(page["content"].encode()).hexdigest() == page["page_sha256"]
+            if not page["has_more"]:
+                return
+            cursor = page["next_cursor"]
+
+    with store._lock(store._run_lock_name(run)):
+        ledger = store.get_run(run)
+        ledger["origin"] = {"session_id": "parent"}
+        store._save(run, ledger)
+    attempt = store.reserve_attempt(run, item["candidate_id"], owner_session="parent", daily_limit=1000)
+    token = attempt["token"]
+    store.record_start(run, parent_session="parent", child_session="child-" + token, subagent_id="sa-" + token)
+    store.bind_attempt(run, token, {"subagent_id": "sa-" + token}, owner_session="parent")
+    for name in attempt["required_resources"]:
+        read_all(name, token)
+    bundle = json.loads((FIXTURES / "discovery" / "bundle.json").read_text())
+    bundle["candidate_id"] = item["candidate_id"]
+    if suggested_due:
+        bundle["workstreams"][0]["suggested_due"] = suggested_due
+    receipt = store.spool_payload(run, token, bundle)
+    store.observe_terminal(run, token, state="SUCCEEDED", receipt={"state": "SUCCEEDED"})
+    read_all(receipt["resource"], "parent")
+    store.accept_attempt(run, token, payload_sha256=receipt["payload_sha256"],
+                         assessment={"accepted": True, "reason": "Complete research."}, reader="parent")
+    store.put_resource(run, "join-record", {"joined": True, "accepted": [item["candidate_id"]], "failures": []})
+    return store, run
+
+
+def test_discovery_proposal_becomes_a_task(settings, data_dir, tmp_path):
+    from alchemy_task import runtime
+    from alchemy_task.discovery_integration import DiscoveryIntegration
+    ctx = FakeCtx({"workspace_root": settings.workspace_root, "timezone": settings.timezone}, data_dir)
+    rt = runtime.Runtime(ctx, settings, data_dir)
+    ctx.state.set("streams", {"work": {"name": "work", "mode": "production", "areas": ["work"], "research_cap": 50,
+                                       "sources": [{"name": "Feed", "scope": ["board"], "method": "reader"}],
+                                       "deliver": "origin", "origin_session": "parent", "label": ""}})
+    store, run = _accepted_run(data_dir, suggested_due="2030-01-07")
+    integration = DiscoveryIntegration(rt, profile_home=tmp_path / "profile")
+    for c in store.get_run(run)["candidates"]:
+        if c.get("parent_candidate_id"):
+            integration.record_decision(run, c["candidate_id"], decision="propose", reason="New action.", session_id="parent")
+    digest = integration.finalize(run, session_id="parent")
+    assert len(digest["items"]) == 1 and digest["text"]
+    before = len(rt.store().scan().tasks)
+    # "1, create" with no date: the task takes the date research found in the source.
+    result = integration.decide({"approve": ["1"], "day": "2030-01-01", "edits": {"1": {"area": "work"}}},
+                                session_id="parent", today="2030-01-02")
+    tasks = rt.store().scan().tasks
+    assert len(tasks) == before + 1
+    task = next(t for t in tasks if t.task_id == result["results"][0]["task_id"])
+    assert str(task.fm["due"]) == "2030-01-07"
+
+
+def test_research_children_cannot_write_or_read_credentials():
+    from alchemy_task.core.research_guard import is_write_like, refuse_file_read
+    assert is_write_like("mcp__gmail__send_email") and is_write_like("write_file") and is_write_like("terminal")
+    assert not is_write_like("mcp__gmail__list_messages") and not is_write_like("read_file")
+    assert refuse_file_read("read_file", {"path": "/home/u/.hermes/.env"})
+    assert refuse_file_read("read_file", {"path": "/home/u/project/README.md"}) is None

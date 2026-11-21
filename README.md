@@ -396,17 +396,18 @@ Setup fills them in for you.
 ## Development
 
 ```bash
-cd tests && python -m pytest -q        # needs pytest and ruamel.yaml (the UI route tests also need fastapi, httpx)
+python -m pytest -c tests/pytest.ini tests -q   # light smoke suite, a few seconds; needs pytest and ruamel.yaml
 hermes plugins validate /path/to/alchemy-task
 ```
 
 The UI source is in `ui/src` (React, shared by both hosts). `node ui/build.mjs` writes the committed bundles
 `dashboard/dist/` and `desktop/plugin.js` (it needs esbuild). `node ui/build.mjs --dev` also builds a preview
 in `ui/dev/` that runs the real UI against an in-memory demo backend; serve that folder and open `index.html`.
-`node --test ui/test/lib.test.mjs` tests the date and Markdown helpers, and `node ui/dev/desktop-smoke.mjs`
-checks that the desktop plugin loads and registers.
+`node ui/dev/desktop-smoke.mjs` checks that the desktop plugin loads and registers.
 
-Tests use synthetic fixtures only.
+The tests are a small smoke suite (`tests/test_smoke.py`) that checks core behaviour still works: registration, task
+create/find/update, dates, setup, research validation, a discovery proposal becoming a task, and the research
+read/write guard. Keep it small and test outcomes, not wording. Tests use synthetic fixtures only.
 
 ## License
 
