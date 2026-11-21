@@ -1,6 +1,7 @@
 """Daily-derived research contract; no optional validation dependency."""
 from __future__ import annotations
 import copy
+import datetime as dt
 import hashlib
 import json
 import re
@@ -17,7 +18,7 @@ RESEARCH_KEYS = {
     "sources_unavailable", "existing_task_candidates", "new_information", "errors",
     "represented_candidate_ids",
 }
-OPTIONAL_RESEARCH_KEYS = {"priority", "existing_task_already_current", "digest_current_state", "digest_next_action", "digest_addition", "recommended_task_path", "subtasks"}
+OPTIONAL_RESEARCH_KEYS = {"priority", "existing_task_already_current", "digest_current_state", "digest_next_action", "digest_addition", "recommended_task_path", "subtasks", "suggested_due"}
 MAX_SUBTASKS, SUBTASK_CHARS = 8, 140
 CONFIDENCES = {"high", "medium", "low"}
 DIGEST_FIELD_CHARS = 300
@@ -85,6 +86,13 @@ def validate_research(payload: Any, cid: str, expected_sources: list[str]) -> di
                 if (not isinstance(value, list) or len(value) > MAX_SUBTASKS
                         or any(type(x) is not str or not x.strip() or len(x) > SUBTASK_CHARS for x in value)):
                     raise UserError(f"subtasks must be up to {MAX_SUBTASKS} short steps of at most {SUBTASK_CHARS} characters")
+            elif key == "suggested_due":
+                value = payload[key]
+                try:
+                    ok = type(value) is str and len(value) == 10 and dt.date.fromisoformat(value).isoformat() == value
+                except ValueError:
+                    ok = False
+                if not ok: raise UserError("suggested_due must be one calendar date as YYYY-MM-DD, or omitted")
             elif key == "recommended_task_path":
                 if type(payload[key]) is not str or len(payload[key]) > MAX_STRING_CHARS: raise UserError(f"{key} must be a task path")
                 canonical_tasknote_relative_path(payload[key])

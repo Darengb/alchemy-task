@@ -2765,7 +2765,7 @@
     const recommended = targets.find((x) => x.recommended);
     const [target, setTarget] = react_dashboard_default.useState(targets.length === 1 ? targets[0].task_id : recommended ? recommended.task_id : null);
     const streamAreas = (meta.streams || {})[run.stream] || [];
-    const [date, setDate] = react_dashboard_default.useState(p.due || p.due_hint || today);
+    const [date, setDate] = react_dashboard_default.useState(p.due || p.suggested_due || p.due_hint || today);
     const [area, setArea] = react_dashboard_default.useState(p.area || (streamAreas.length === 1 ? streamAreas[0] : meta.default_area) || "");
     const [busy, setBusy] = react_dashboard_default.useState(null);
     const [gone, setGone] = react_dashboard_default.useState(false);

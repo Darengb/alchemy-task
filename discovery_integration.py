@@ -1632,7 +1632,7 @@ class DiscoveryIntegration:
                       'targets': targets, 'title': outcome['research']['title'],
                       **{k: outcome['research'].get(k) for k in ('current_understanding', 'substantive_next_action', 'source_links', 'related_context_links', 'new_information', 'sources_unavailable')},
                       # Authored short digest text and the nothing-new flag are optional research fields.
-                      **{k: outcome['research'][k] for k in ('digest_current_state', 'digest_next_action', 'digest_addition', 'existing_task_already_current') if k in outcome['research']},
+                      **{k: outcome['research'][k] for k in ('digest_current_state', 'digest_next_action', 'digest_addition', 'existing_task_already_current', 'suggested_due') if k in outcome['research']},
                       'research_disposition': outcome['research']['disposition'],
                       'uncertainty': outcome['research']['decisions_and_open_questions']['open_questions'],
                       'research_revision': content_revision(outcome['research'])}
@@ -1832,6 +1832,9 @@ class DiscoveryIntegration:
                     raise UserError('semantic proposal requires explicit update or create choice')
                 if kind == 'selection' and choice == 'update' and not edit.get('target_task_id'):
                     raise UserError('this proposal lists several existing tasks and none is recommended; ask which task by number ("update 1", "update 2") and pass that position or target_task_id')
+                # A new task with no date from the user takes the date research found in the source.
+                if choice == 'create' and not edit.get('due') and not edit.get('undated') and proposal.get('suggested_due'):
+                    edit['due'] = proposal['suggested_due']
                 allowed = {'target_task_id', 'expected_revision', 'area', 'title', 'due', 'undated', 'scope_notes', 'priority', 'scheduled', 'execution_method', 'notes', 'plan', 'checklist', 'active_goal', 'correction_overlay', 'summary', 'subtasks', 'subtasks_skipped_reason'}
                 if set(edit) - allowed: raise UserError('unsupported approval edits: ' + ', '.join(sorted(set(edit) - allowed)))
                 self.conversion.prepare(run_id, unit_id, choice=choice, reason='User approved exact immutable proposal ' + proposal['proposal_id'],
