@@ -1,7 +1,8 @@
 // Smoke test for desktop/plugin.js outside the desktop app: loads the built ESM file with a stub
 // @hermes/plugin-sdk and the real React, checks that it imports only allowed specifiers, registers its
 // contributions, and that its page and settings page render without throwing.
-// Usage: node ui/dev/desktop-smoke.mjs  (needs react + react-dom resolvable, e.g. NODE_PATH)
+// Usage: node ui/dev/desktop-smoke.mjs  (uses ui/node_modules when react is installed there:
+//   cd ui && npm install --no-save --no-package-lock react@19.3.0 react-dom@19.3.0 esbuild)
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -17,7 +18,8 @@ const bad = specifiers.filter((s) => !['react', 'react/jsx-runtime', '@hermes/pl
 if (bad.length) throw new Error('disallowed imports: ' + bad.join(', '))
 if (/\bimport\s*\(/.test(src)) throw new Error('dynamic import found')
 
-const nm = process.env.REACT_NODE_MODULES || path.join(os.homedir(), '.hermes/hermes-agent/node_modules')
+const local = path.join(here, '..', 'node_modules')
+const nm = process.env.REACT_NODE_MODULES || (fs.existsSync(path.join(local, 'react')) ? local : path.join(os.homedir(), '.hermes/hermes-agent/node_modules'))
 const tmp = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'at-desktop-smoke-'))
 fs.mkdirSync(path.join(tmp, 'node_modules/@hermes/plugin-sdk'), { recursive: true })
 fs.writeFileSync(path.join(tmp, 'node_modules/@hermes/plugin-sdk/package.json'), '{"name":"@hermes/plugin-sdk","type":"module","main":"index.js"}')
