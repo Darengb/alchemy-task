@@ -2906,7 +2906,17 @@ function ProposalCard({ p, run, onResolved, readOnly }) {
     if (p.expired) body.allow_expired = true;
     setBusy(choice);
     try {
-      const res = await api.approve(p.proposal_id, body);
+      let res;
+      try {
+        res = await api.approve(p.proposal_id, body);
+      } catch (err) {
+        if (choice !== "update" || err.code !== "stale_revision") throw err;
+        const fresh = await api.run(run.run_id);
+        const fp = (fresh && fresh.proposals || []).find((x) => x.proposal_id === p.proposal_id);
+        const ft = fp && (fp.targets || []).find((x) => x.task_id === t.task_id);
+        if (!ft || !ft.revision || ft.revision === t.revision) throw err;
+        res = await api.approve(p.proposal_id, { ...body, expected_revision: ft.revision });
+      }
       const receipt = res.receipt || {};
       toast(choice === "create" ? "Task created" : "Task updated", receipt.task_id ? { action: { label: "Open", run: () => actions.open(receipt.task_id) } } : {});
       onResolved(res);

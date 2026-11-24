@@ -29,6 +29,7 @@ from .discovery_conversion import DiscoveryConversion, order_semantic_targets
 from .discovery_digest import DiscoveryDigest, coverage_degraded
 from .core import attention as _attention
 from .core import run_summaries as _summaries
+from .core import task_index
 
 
 def _pick(value, path):
@@ -2049,6 +2050,21 @@ class DiscoveryIntegration:
                                   'operation': 'created' if plan.get('request', {}).get('choice') == 'create' else 'updated',
                                   'state': receipt.get('state', 'prepared'), 'receipt': receipt}
             proposals.append(item)
+        # Target revisions were frozen at match time. Another approval (often a sibling proposal
+        # for the same task) changes the task, so a waiting proposal shows each target's CURRENT
+        # revision; the update's compare-and-swap then guards only against edits after display.
+        if any(p['state'] == 'pending' and p.get('targets') for p in proposals):
+            try:
+                index = task_index.refresh(self.rt.store(), self.rt.data_dir)
+                by_id = {e['task_id']: e['revision'] for _, e in index.tasks() if e.get('task_id') and e.get('revision')}
+                by_path = {e['rel']: e['revision'] for _, e in index.tasks() if e.get('revision')}
+            except Exception:
+                by_id, by_path = {}, {}  # display-only refresh; a stale revision still fails safely at approval
+            for p in proposals:
+                if p['state'] == 'pending':
+                    for t in p.get('targets') or []:
+                        now = by_id.get(t.get('task_id')) or by_path.get(t.get('path'))
+                        if now: t['revision'] = now
         result['proposals'] = proposals
         result['outcomes'] = copy.deepcopy(data['digests'].get(result['run_id'], {}).get('outcomes', []))
         for outcome in result['outcomes']:

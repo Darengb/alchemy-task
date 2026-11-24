@@ -7,6 +7,7 @@ details that change on purpose.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -301,3 +302,33 @@ def test_resources_are_stored_once_and_survive_migration_and_prune(data_dir):
     assert result["deleted_runs"] == [a] and result["blobs_removed"] == 1
     assert store.read_resource_bytes(b, shared) == b"same body"
     assert not store.blob_path(only_a).exists()
+
+
+def test_waiting_update_uses_the_tasks_current_revision(settings, data_dir, tmp_path):
+    """After another approval changes a target task, a waiting proposal for that task still updates it."""
+    from alchemy_task import runtime
+    from alchemy_task.discovery_integration import DiscoveryIntegration
+    ctx = FakeCtx({"workspace_root": settings.workspace_root, "timezone": settings.timezone}, data_dir)
+    rt = runtime.Runtime(ctx, settings, data_dir)
+    ctx.state.set("streams", {"work": {"name": "work", "mode": "production", "areas": ["work"], "research_cap": 50,
+                                       "sources": [{"name": "Feed", "scope": ["board"], "method": "reader"}],
+                                       "deliver": "origin", "origin_session": "parent", "label": ""}})
+    venue = settings.root() / "areas" / "work" / "tasks" / "2026-11-05-book-venue-for-the-offsite.md"
+    rel = "areas/work/tasks/" + venue.name
+    venue.write_text(re.sub(r"(?m)^task_id:.*$", "task_id: " + tf.new_task_id(), venue.read_text(), count=1))  # as the ID job assigns
+    store, run = _accepted_run(data_dir, extra={"existing_task_candidates": [{"path": rel, "match_basis": "related_only"}]})
+    integration = DiscoveryIntegration(rt, profile_home=tmp_path / "profile")
+    for c in store.get_run(run)["candidates"]:
+        if c.get("parent_candidate_id"):
+            integration.record_decision(run, c["candidate_id"], decision="propose", reason="Related task.", session_id="parent")
+    integration.finalize(run, session_id="parent")
+    pid = integration.project_run(store.get_run(run))["proposals"][0]["proposal_id"]
+    target = integration.digest._load()["proposals"][pid]["binding"]["targets"][0]  # frozen at match time
+    venue.write_text(venue.read_text() + "\nUpdated by another proposal.\n")  # as a sibling approval would
+    shown = integration.project_run(store.get_run(run))["proposals"][0]
+    revision = shown["targets"][0]["revision"]
+    assert revision != target["revision"] and revision == tf.content_hash(venue.read_bytes())
+    result = integration._decide_resolved({"approve": [shown["proposal_id"]], "edits": {shown["proposal_id"]: {
+        "choice": "update", "target_task_id": target["task_id"], "expected_revision": revision}}}, resolve=lambda ref: shown)
+    assert result["results"][0]["task_id"] == target["task_id"]
+    assert "Updated by another proposal." in venue.read_text() and venue.read_bytes() != b""
