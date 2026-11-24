@@ -92,14 +92,16 @@ def test_research_bundle_validation():
     assert research.validate_bundle(bundle, bundle["candidate_id"], sources)
     bundle["workstreams"][0]["suggested_due"] = "2026-11-23"
     assert research.validate_bundle(bundle, bundle["candidate_id"], sources)[0][1]["suggested_due"] == "2026-11-23"
-    for bad in ({"title": None}, {"suggested_due": "Monday"}):
+    bundle["workstreams"][0]["user_role"] = "waiting_on"
+    assert research.validate_bundle(bundle, bundle["candidate_id"], sources)[0][1]["user_role"] == "waiting_on"
+    for bad in ({"title": None}, {"suggested_due": "Monday"}, {"user_role": "someone"}):
         broken = json.loads(json.dumps(bundle))
         broken["workstreams"][0].update(bad)
         with pytest.raises(research.UserError):
             research.validate_bundle(broken, broken["candidate_id"], sources)
 
 
-def _accepted_run(data_dir, *, suggested_due=None):
+def _accepted_run(data_dir, *, suggested_due=None, extra=None):
     """One discovery run whose single item has accepted research, as a parent agent would leave it."""
     import hashlib
     from alchemy_task.core.discovery_state import DiscoveryStore
@@ -132,6 +134,7 @@ def _accepted_run(data_dir, *, suggested_due=None):
     bundle["candidate_id"] = item["candidate_id"]
     if suggested_due:
         bundle["workstreams"][0]["suggested_due"] = suggested_due
+    bundle["workstreams"][0].update(extra or {})
     receipt = store.spool_payload(run, token, bundle)
     store.observe_terminal(run, token, state="SUCCEEDED", receipt={"state": "SUCCEEDED"})
     read_all(receipt["resource"], "parent")
@@ -166,6 +169,78 @@ def test_discovery_proposal_becomes_a_task(settings, data_dir, tmp_path):
     assert str(task.fm["due"]) == "2030-01-07"
 
 
+def test_someone_elses_action_is_not_proposed(settings, data_dir, tmp_path):
+    from alchemy_task import runtime
+    from alchemy_task.core.attention import NOT_PROPOSED, sort_failures
+    from alchemy_task.discovery_integration import DiscoveryIntegration
+    ctx = FakeCtx({"workspace_root": settings.workspace_root, "timezone": settings.timezone}, data_dir)
+    rt = runtime.Runtime(ctx, settings, data_dir)
+    ctx.state.set("streams", {"work": {"name": "work", "mode": "production", "areas": ["work"], "research_cap": 50,
+                                       "sources": [{"name": "Feed", "scope": ["board"], "method": "reader"}],
+                                       "deliver": "origin", "origin_session": "parent", "label": ""}})
+    store, run = _accepted_run(data_dir, extra={"user_role": "none", "owner_and_collaborators": [{"name": "Doug", "role": "owner"}]})
+    integration = DiscoveryIntegration(rt, profile_home=tmp_path / "profile")
+    for c in store.get_run(run)["candidates"]:
+        if c.get("parent_candidate_id"):
+            integration.record_decision(run, c["candidate_id"], decision="propose", reason="New action.", session_id="parent")
+    digest = integration.finalize(run, session_id="parent")
+    attention, _, not_proposed = sort_failures(digest["failures"])
+    assert digest["items"] == [] and attention == []
+    assert [f["group"] for f in not_proposed] == [NOT_PROPOSED] and "Doug" in not_proposed[0]["text"]
+
+
+def test_resolved_runs_leave_the_discovery_list(settings, data_dir, tmp_path):
+    """The badge counts pending proposals from the saved summaries; once every item of a run is
+    resolved, the run drops out of the default Discovery list."""
+    from alchemy_task import runtime
+    from alchemy_task.discovery_integration import DiscoveryIntegration
+    ctx = FakeCtx({"workspace_root": settings.workspace_root, "timezone": settings.timezone}, data_dir)
+    rt = runtime.Runtime(ctx, settings, data_dir)
+    ctx.state.set("streams", {"work": {"name": "work", "mode": "production", "areas": ["work"], "research_cap": 50,
+                                       "sources": [{"name": "Feed", "scope": ["board"], "method": "reader"}],
+                                       "deliver": "origin", "origin_session": "parent", "label": ""}})
+    store, run = _accepted_run(data_dir, suggested_due="2030-01-07")
+    integration = DiscoveryIntegration(rt, profile_home=tmp_path / "profile")
+    for c in store.get_run(run)["candidates"]:
+        if c.get("parent_candidate_id"):
+            integration.record_decision(run, c["candidate_id"], decision="propose", reason="New action.", session_id="parent")
+    integration.finalize(run, session_id="parent")
+    before = integration.badge()
+    assert before["pending"] == 1 and before["has_runs"]
+    assert [v["run_id"] for v in integration.summary_views() if v["needs_attention"]] == [run]
+    integration.decide({"dismiss": ["1"], "day": "2030-01-01"}, session_id="parent", today="2030-01-02")
+    after = integration.badge()
+    assert after["pending"] == 0 and after["version"] > before["version"]
+    assert not [v for v in integration.summary_views() if v["needs_attention"]]
+    # A rebuild from the detailed records gives the same answer.
+    integration.summaries.invalidate()
+    assert integration.badge()["pending"] == 0
+
+
+def test_task_edits_after_indexing_change_exact_matches(settings, data_dir):
+    """Matching sees task edits made after the index was built, and closed tasks are never targets."""
+    from alchemy_task import runtime
+    from alchemy_task.core import task_index
+    from alchemy_task.discovery_conversion import DiscoveryConversion
+    rt = runtime.Runtime(FakeCtx({"workspace_root": settings.workspace_root, "timezone": settings.timezone}, data_dir), settings, data_dir)
+    store, run = _accepted_run(data_dir)
+    unit = next(c["candidate_id"] for c in store.get_run(run)["candidates"] if c.get("parent_candidate_id"))
+    conversion = DiscoveryConversion(rt, store)
+    assert conversion.match(run, unit)["kind"] == "new"
+    folder = settings.root() / "areas" / "work" / "tasks"
+    newsletter, venue = folder / "2026-11-01-draft-the-spring-newsletter.md", folder / "2026-11-05-book-venue-for-the-offsite.md"
+    action = store.get_candidate(run, unit).get("action_id")
+    for path in (newsletter, venue):
+        text = path.read_text().replace("tags:", "discovery_action_ids: [%s]\ntags:" % (action or "none"), 1)
+        path.write_text(text + "\nFrom the thread slack:T1:C1:171.1:171.2\n")
+    found = conversion.match(run, unit)
+    assert found["kind"] == "conflict" and len(found["targets"]) == 2
+    newsletter.write_text(newsletter.read_text().replace("status: open", "status: cancelled", 1))
+    task_index._memory.clear()  # a restarted process reads the saved index
+    found = conversion.match(run, unit)
+    assert found["kind"] == "exact" and [t["path"] for t in found["targets"]] == ["areas/work/tasks/" + venue.name]
+
+
 def test_research_children_cannot_write_or_read_credentials():
     from alchemy_task.core.research_guard import is_write_like, refuse_file_read
     assert is_write_like("mcp__gmail__send_email") and is_write_like("write_file") and is_write_like("terminal")
@@ -186,3 +261,43 @@ def test_only_lost_items_raise_an_alarm():
     assert group(reason="could not be matched to your tasks: bad file") == ATTENTION
     unreadable = classify({"reason": "The email's four image attachments can't be read here; open it to check them."})
     assert unreadable["group"] == ATTENTION and "image" in unreadable["text"]
+
+
+def test_resources_are_stored_once_and_survive_migration_and_prune(data_dir):
+    import hashlib, os
+    from alchemy_task.core.discovery_state import DiscoveryStore
+    store = DiscoveryStore(data_dir / "discovery")
+    a, b = store.init_run("run-a"), store.init_run("run-b")
+    shared = store.put_resource(a, "task-body-x", "same body")["sha256"]
+    assert store.put_resource(b, "task-body-x", "same body")["sha256"] == shared
+    only_a = store.put_resource(a, "task-body-y", "only in a")["sha256"]
+    blobs = [p for p in (store.state_root / "blobs").rglob("*") if p.is_file()]
+    assert sorted(p.name for p in blobs) == sorted({shared, only_a})
+    # A run written before the shared store: its copy lives in runs/<id>/resources.
+    legacy_data = b"legacy bytes"
+    legacy_sha = hashlib.sha256(legacy_data).hexdigest()
+    ledger_path = store.run_dir(b) / "ledger.json"
+    ledger = json.loads(ledger_path.read_text())
+    ledger["resources"]["old"] = {"name": "old", "sha256": legacy_sha, "total_bytes": len(legacy_data), "entry_count": None}
+    ledger_path.write_text(json.dumps(ledger))
+    (store.run_dir(b) / "resources").mkdir()
+    (store.run_dir(b) / "resources" / legacy_sha).write_bytes(legacy_data)
+    assert store.read_resource_bytes(b, legacy_sha) == legacy_data
+    before = ledger_path.read_bytes()
+    assert store.migrate_resources(dry_run=True)["blobs_created"] == 1
+    assert (store.run_dir(b) / "resources" / legacy_sha).exists()
+    done = store.migrate_resources(dry_run=False)
+    assert done["legacy_files_removed"] == 1 and not done["problems"]
+    assert not (store.run_dir(b) / "resources").exists() and ledger_path.read_bytes() == before
+    assert store.read_resource_bytes(b, legacy_sha) == legacy_data
+    assert store.migrate_resources(dry_run=False)["files"] == 0
+    # Pruning run A drops its unique blob but keeps the one run B still names.
+    path_a = store.run_dir(a) / "ledger.json"
+    ledger_a = json.loads(path_a.read_text()); ledger_a["status"] = "finalized"; path_a.write_text(json.dumps(ledger_a))
+    old = 1_000_000_000
+    for p in [path_a, *(store.state_root / "blobs").rglob("*")]:
+        os.utime(p, (old, old))
+    result = store.prune(days=0)
+    assert result["deleted_runs"] == [a] and result["blobs_removed"] == 1
+    assert store.read_resource_bytes(b, shared) == b"same body"
+    assert not store.blob_path(only_a).exists()

@@ -62,9 +62,11 @@ def item_noun(item_type: str, *, email: bool = False) -> str:
 
 
 def is_noop(workstream: Any) -> bool:
-    """A workstream that proposes nothing: the matched task is already current, or it is excluded."""
+    """A workstream that proposes nothing: the matched task is already current, it is excluded,
+    or another person owns it and the user has no part in it (user_role 'none')."""
     return isinstance(workstream, dict) and (workstream.get('existing_task_already_current') is True
-                                              or workstream.get('disposition') in EXCLUDED_DISPOSITIONS)
+                                              or workstream.get('disposition') in EXCLUDED_DISPOSITIONS
+                                              or workstream.get('user_role') == 'none')
 
 
 def priority_rank(workstream: Any) -> int:

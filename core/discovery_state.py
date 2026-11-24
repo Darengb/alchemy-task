@@ -170,7 +170,7 @@ class DiscoveryStore:
 
     def __init__(self, state_root: Path):
         self.state_root = Path(state_root)
-        for name in ('', 'runs', 'locks', 'sources', 'budgets', 'reviews', 'tombstones', 'hooks', 'hooks/children'):
+        for name in ('', 'runs', 'locks', 'sources', 'budgets', 'reviews', 'tombstones', 'hooks', 'hooks/children', 'blobs'):
             path = self.state_root / name
             path.mkdir(parents=True, exist_ok=True, mode=0o700)
             os.chmod(path, 0o700)
@@ -338,7 +338,7 @@ class DiscoveryStore:
                 if old['stream'] != stream or old['config'] != config or old['business_date'] != business_date:
                     raise UserError('run frozen configuration conflict')
                 return run_id
-            for directory in (path, path / 'resources', path / 'spool', path / 'research', path / 'commits', path / 'uploads'):
+            for directory in (path, path / 'spool', path / 'research', path / 'commits', path / 'uploads'):
                 directory.mkdir(parents=True, exist_ok=True, mode=0o700)
                 os.chmod(directory, 0o700)
             ledger = {'schema_version': 2, 'run_id': run_id, 'stream': stream, 'business_date': business_date, 'config': config, 'config_revision': _hash(_json_bytes(config)), 'schema_revision': schema_revision or _hash(_json_bytes(child_schema())), 'origin': copy.deepcopy(origin or {}), 'lineage': copy.deepcopy(lineage or {}), 'created': now(), 'status': 'open', 'revision': 1, 'index_revision': None, 'candidates': [], 'cohorts': [], 'attempts': {}, 'resources': {}, 'page_receipts': {}, 'start_events': {}, 'errors': [], 'action_registry': {}}
@@ -410,13 +410,180 @@ class DiscoveryStore:
         if old and old['sha256'] != digest:
             raise UserError('immutable resource revision conflict')
         info = {'name': name, 'sha256': digest, 'total_bytes': len(data), 'entry_count': len(content) if isinstance(content, (list, dict)) else None}
-        path = self.run_dir(run_id) / 'resources' / digest
-        if path.exists() and path.read_bytes() != data:
-            raise UserError('resource hash conflict')
-        if not path.exists():
-            atomic_write(path, data)
+        self._store_blob(run_id, digest, data)
         ledger['resources'][name] = info
         return info
+
+    # Content store: each distinct resource is kept once under blobs/<aa>/<sha256>
+    # and shared by every run whose ledger names that hash. Runs written before
+    # the store existed keep their copies under runs/<id>/resources/ until
+    # migrate_resources() moves them; reads fall back there.
+    def blob_path(self, digest: str) -> Path:
+        digest = _name(digest)
+        if not re.fullmatch(r'[0-9a-f]{64}', digest):
+            raise UserError('invalid resource hash')
+        return self.state_root / 'blobs' / digest[:2] / digest
+
+    def resource_path(self, run_id: str, digest: str) -> Path:
+        """Where this run's resource with this hash lives: shared store, else legacy per-run copy."""
+        shared = self.blob_path(digest)
+        if shared.exists():
+            return shared
+        return self.run_dir(run_id) / 'resources' / _name(digest)
+
+    def read_resource_bytes(self, run_id: str, digest: str) -> bytes:
+        return self.resource_path(run_id, digest).read_bytes()
+
+    def read_resource_text(self, run_id: str, digest: str) -> str:
+        return self.read_resource_bytes(run_id, digest).decode('utf-8')
+
+    def read_resource_json(self, run_id: str, digest: str) -> Any:
+        return json.loads(self.read_resource_bytes(run_id, digest))
+
+    def _store_blob(self, run_id: str, digest: str, data: bytes) -> None:
+        path = self.blob_path(digest)
+        legacy = self.run_dir(run_id) / 'resources' / digest
+        if legacy.exists() and legacy.read_bytes() != data:
+            raise UserError('resource hash conflict')
+        if path.exists():
+            if path.read_bytes() != data:
+                raise UserError('resource hash conflict')
+            # Fresh mtime: blob GC skips recent blobs, so a run that is about to
+            # save a new reference never loses the blob to a concurrent prune.
+            with contextlib.suppress(OSError):
+                os.utime(path)
+            if path.exists():
+                return
+            # A concurrent prune removed it between the check and the touch: write it again.
+        # Identical concurrent writers race harmlessly: same bytes, atomic replace.
+        atomic_write(path, data)
+
+    _HASH_RE = re.compile(rb'(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])')
+    BLOB_GRACE_SECONDS = 3600
+
+    def _referenced_hashes(self) -> set[str]:
+        """Every hash any remaining run can name: its ledger (resources, cohorts,
+        attempts, receipts) and its spool receipts. Over-counting only retains."""
+        found: set[str] = set()
+        for path in (self.state_root / 'runs').glob('*/ledger.json'):
+            found.update(x.decode() for x in self._HASH_RE.findall(path.read_bytes()))
+            for receipt in (path.parent / 'spool').glob('*.receipt.json'):
+                found.update(x.decode() for x in self._HASH_RE.findall(receipt.read_bytes()))
+        return found
+
+    def _gc_blobs_locked(self) -> dict[str, int]:
+        """Delete shared blobs no remaining run references. Caller holds 'retention'."""
+        referenced = self._referenced_hashes()
+        cutoff = dt.datetime.now(dt.timezone.utc).timestamp() - self.BLOB_GRACE_SECONDS
+        removed = freed = 0
+        for shard in sorted((self.state_root / 'blobs').glob('[0-9a-f][0-9a-f]')):
+            for blob in shard.iterdir():
+                if not re.fullmatch(r'[0-9a-f]{64}', blob.name) or blob.name in referenced:
+                    continue
+                st = blob.stat()
+                if st.st_mtime >= cutoff:
+                    continue
+                blob.unlink()
+                removed += 1; freed += st.st_size
+            with contextlib.suppress(OSError):
+                shard.rmdir()
+        return {'blobs_removed': removed, 'blob_bytes_freed': freed}
+
+    def migrate_resources(self, *, dry_run: bool = True) -> dict[str, Any]:
+        """Move legacy runs/<id>/resources/<sha256> copies into the shared store.
+
+        Idempotent and resumable: every file is hash-checked against its name; a
+        missing blob is created by hard link (copy when linking fails), an existing
+        blob must match byte for byte. A run's legacy copies are removed only after
+        every hash its ledger and receipts name resolves to a verified shared blob.
+        Ledger bytes are never touched. Holds the retention lock and each run lock.
+        """
+        totals = {'dry_run': dry_run, 'runs_seen': 0, 'runs_migrated': 0, 'files': 0, 'bytes': 0,
+                  'blobs_created': 0, 'blob_bytes_created': 0, 'already_shared': 0,
+                  'legacy_files_removed': 0, 'legacy_bytes_removed': 0, 'problems': []}
+        planned: set[str] = set()
+        with self._lock('retention'):
+            for run_path in sorted((self.state_root / 'runs').iterdir()):
+                legacy = run_path / 'resources'
+                if not run_path.is_dir() or not legacy.is_dir():
+                    continue
+                totals['runs_seen'] += 1
+                with self._lock(self._run_lock_name(run_path.name)):
+                    ok, verified = True, []
+                    for file in sorted(legacy.iterdir()):
+                        if not file.is_file() or not re.fullmatch(r'[0-9a-f]{64}', file.name):
+                            if not (file.name.startswith('.') and file.name.endswith('.tmp')):
+                                ok = False; totals['problems'].append({'run_id': run_path.name, 'file': file.name, 'problem': 'unexpected file'})
+                            continue
+                        data = file.read_bytes()
+                        totals['files'] += 1; totals['bytes'] += len(data)
+                        if _hash(data) != file.name:
+                            ok = False; totals['problems'].append({'run_id': run_path.name, 'file': file.name, 'problem': 'content does not match its hash'})
+                            continue
+                        blob = self.blob_path(file.name)
+                        if dry_run and file.name in planned:
+                            totals['already_shared'] += 1
+                        elif blob.exists():
+                            if blob.read_bytes() != data:
+                                ok = False; totals['problems'].append({'run_id': run_path.name, 'file': file.name, 'problem': 'shared blob differs'})
+                                continue
+                            totals['already_shared'] += 1
+                        else:
+                            totals['blobs_created'] += 1; totals['blob_bytes_created'] += len(data)
+                            planned.add(file.name)
+                            if not dry_run:
+                                self._link_blob(file, blob, data)
+                        verified.append((file, len(data)))
+                    if not ok:
+                        continue
+                    shared = {f.name for f, _ in verified}
+                    unresolved = sorted(h for h in self._run_resource_hashes(run_path)
+                                        if not ((dry_run and h in shared) or self._blob_ok(h)))
+                    if unresolved:
+                        totals['problems'].append({'run_id': run_path.name, 'problem': 'references not resolvable through the shared store', 'hashes': unresolved[:10], 'count': len(unresolved)})
+                        continue
+                    for file, size in verified:
+                        totals['legacy_files_removed'] += 1; totals['legacy_bytes_removed'] += size
+                        if not dry_run:
+                            file.unlink()
+                    totals['runs_migrated'] += 1
+                    if not dry_run:
+                        with contextlib.suppress(OSError):
+                            legacy.rmdir()
+        return totals
+
+    def _run_resource_hashes(self, run_path: Path) -> set[str]:
+        ledger = read_json(run_path / 'ledger.json', {}) or {}
+        found = {info['sha256'] for info in (ledger.get('resources') or {}).values() if isinstance(info, dict) and info.get('sha256')}
+        for receipt in (run_path / 'spool').glob('*.receipt.json'):
+            if (value := (read_json(receipt, {}) or {}).get('transport_sha256')):
+                found.add(value)
+        return found
+
+    def _blob_ok(self, digest: str) -> bool:
+        try:
+            return _hash(self.blob_path(digest).read_bytes()) == digest
+        except OSError:
+            return False
+
+    def _link_blob(self, source: Path, blob: Path, data: bytes) -> None:
+        blob.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        temporary = blob.parent / f'.{blob.name}.{secrets.token_hex(4)}.tmp'
+        try:
+            os.link(source, temporary)
+        except OSError:
+            atomic_write(blob, data)
+            return
+        try:
+            os.replace(temporary, blob)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary)
+        dirfd = os.open(blob.parent, os.O_RDONLY)
+        try:
+            os.fsync(dirfd)
+        finally:
+            os.close(dirfd)
 
     def put_resource(self, run_id: str, name: str, content: Any) -> dict[str, Any]:
         with self._lock(self._run_lock_name(run_id)):
@@ -495,7 +662,7 @@ class DiscoveryStore:
                     raise UserError('invalid resource cursor') from None
                 if bound != _hash(f'{name}:{revision}:{reader}'.encode())[:24]:
                     raise UserError('cursor binding conflict')
-            data = (self.run_dir(run_id) / 'resources' / revision).read_bytes()
+            data = self.read_resource_bytes(run_id, revision)
             if _hash(data) != revision or offset < 0 or offset > len(data):
                 raise UserError('resource content or offset conflict')
             end = min(offset + limit, len(data))
@@ -655,9 +822,7 @@ class DiscoveryStore:
             body = [{**copy.deepcopy(item), 'source_ids': new_ids, 'source_correction': {'reason': reason}}]
             data = _json_bytes(body)
             digest = _hash(data)
-            path = self.run_dir(run_id) / 'resources' / digest
-            if not path.exists():
-                atomic_write(path, data)
+            self._store_blob(run_id, digest, data)
             number = len(corrections) + 1
             audit = 'superseded-source-body-' + cid + '-' + str(number)
             ledger['resources'][audit] = {**old, 'name': audit}
@@ -947,7 +1112,7 @@ class DiscoveryStore:
         committed = read_json(self.run_dir(run_id) / 'spool' / (token + '.receipt.json'))
         if committed:
             saved = (self.run_dir(run_id) / 'spool' / (token + '.json')).read_bytes()
-            original_transport = (self.run_dir(run_id) / 'resources' / committed['transport_sha256']).read_bytes()
+            original_transport = self.read_resource_bytes(run_id, committed['transport_sha256'])
             if committed.get('run_id') != run_id or committed.get('token') != token or committed.get('candidate_id') != attempt['candidate_id'] or _hash(saved) != committed['payload_sha256'] or len(saved) != committed['total_bytes'] or _hash(original_transport) != committed['transport_sha256']:
                 raise UserError('committed spool bytes or binding conflict')
             if attempt['payload'] and attempt['payload'] != committed:
@@ -1044,7 +1209,7 @@ class DiscoveryStore:
         if not info:
             return ''
         try:
-            return (self.run_dir(run_id) / 'resources' / info['sha256']).read_bytes().decode('utf-8', 'replace')
+            return self.read_resource_bytes(run_id, info['sha256']).decode('utf-8', 'replace')
         except OSError:
             return ''
 
@@ -1103,7 +1268,7 @@ class DiscoveryStore:
         if not info:
             return None
         try:
-            return json.loads((self.run_dir(run_id) / 'resources' / info['sha256']).read_bytes())
+            return self.read_resource_json(run_id, info['sha256'])
         except (OSError, ValueError):
             return None
 
@@ -1314,7 +1479,7 @@ class DiscoveryStore:
                 if not attempt or receipt['run_id'] != run_id or receipt['candidate_id'] != attempt['candidate_id'] or not attempt['child_session'] or path.name != token + '.receipt.json':
                     raise UserError('spool receipt binding conflict')
                 data = (self.run_dir(run_id) / 'spool' / (token + '.json')).read_bytes()
-                transport = (self.run_dir(run_id) / 'resources' / receipt['transport_sha256']).read_bytes()
+                transport = self.read_resource_bytes(run_id, receipt['transport_sha256'])
                 if len(data) > MAX_BUNDLE_BYTES or len(transport) > MAX_BUNDLE_BYTES or _hash(data) != receipt['payload_sha256'] or _hash(transport) != receipt['transport_sha256'] or len(data) != receipt['total_bytes']:
                     raise UserError('committed spool bytes/hash mismatch')
                 if attempt['payload']:
@@ -1859,7 +2024,8 @@ class DiscoveryStore:
                     digest_data['digests'].pop(run_id, None)
                     digest_data['delivery'].pop(run_id, None)
                 atomic_json(digest_path, digest_data)
-        return {'deleted_runs': deleted, 'retained_runs': retained, 'days': days}
+            blobs = self._gc_blobs_locked() if deleted else {'blobs_removed': 0, 'blob_bytes_freed': 0}
+        return {'deleted_runs': deleted, 'retained_runs': retained, 'days': days, **blobs}
 
     def retire_stream(self, stream_name: str, *, storage_streams: list[str] | None = None, source_keys: list[str] | None = None) -> dict[str, Any]:
         """Retire every run, pending proposal, backlog and budget of one removed stream.
@@ -1915,6 +2081,8 @@ class DiscoveryStore:
                         dismissed.append(pid)
                 if dismissed:
                     atomic_json(digest_path, data)
+            if removed:
+                self._gc_blobs_locked()
         cleared = []
         for storage in sorted(s for s in storages - kept_storages if isinstance(s, str) and s):
             files = [self._source_path(storage, key) for key in sorted(keys)]

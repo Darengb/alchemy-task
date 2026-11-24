@@ -41,7 +41,7 @@ class DiscoveryContext:
         existing = self.store.get_run(run_id)['resources']
         if 'context-bootstrap' in existing:
             info = existing['context-bootstrap']
-            return json.loads((self.store.run_dir(run_id) / 'resources' / info['sha256']).read_text())
+            return self.store.read_resource_json(run_id, info['sha256'])
         task_store = self.rt.store()
         scan = task_store.scan()
         resources = {}
@@ -135,7 +135,7 @@ def _candidate_words(store, run_id: str) -> set[str]:
     for name, info in ledger.get('resources', {}).items():
         if name.startswith('source-body-'):
             try:
-                parts.append((store.run_dir(run_id) / 'resources' / info['sha256']).read_text(encoding='utf-8'))
+                parts.append(store.read_resource_text(run_id, info['sha256']))
             except OSError:
                 pass
     return _words(' '.join(parts))
