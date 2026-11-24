@@ -452,7 +452,9 @@ class DiscoveryStore:
             # save a new reference never loses the blob to a concurrent prune.
             with contextlib.suppress(OSError):
                 os.utime(path)
-            return
+            if path.exists():
+                return
+            # A concurrent prune removed it between the check and the touch: write it again.
         # Identical concurrent writers race harmlessly: same bytes, atomic replace.
         atomic_write(path, data)
 
