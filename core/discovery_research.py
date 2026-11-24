@@ -18,7 +18,8 @@ RESEARCH_KEYS = {
     "sources_unavailable", "existing_task_candidates", "new_information", "errors",
     "represented_candidate_ids",
 }
-OPTIONAL_RESEARCH_KEYS = {"priority", "existing_task_already_current", "digest_current_state", "digest_next_action", "digest_addition", "recommended_task_path", "subtasks", "suggested_due"}
+OPTIONAL_RESEARCH_KEYS = {"priority", "existing_task_already_current", "digest_current_state", "digest_next_action", "digest_addition", "recommended_task_path", "subtasks", "suggested_due", "user_role"}
+USER_ROLES = ("doer", "approver", "waiting_on", "none")
 MAX_SUBTASKS, SUBTASK_CHARS = 8, 140
 CONFIDENCES = {"high", "medium", "low"}
 DIGEST_FIELD_CHARS = 300
@@ -79,6 +80,8 @@ def validate_research(payload: Any, cid: str, expected_sources: list[str]) -> di
         for key in set(payload) & OPTIONAL_RESEARCH_KEYS:
             if key == "priority":
                 if payload[key] not in PRIORITIES: raise UserError("priority must be one of: " + ", ".join(PRIORITIES))
+            elif key == "user_role":
+                if payload[key] not in USER_ROLES: raise UserError("user_role must be one of: " + ", ".join(USER_ROLES))
             elif key == "existing_task_already_current":
                 if type(payload[key]) is not bool: raise UserError(f"{key} must be a boolean")
             elif key == "subtasks":

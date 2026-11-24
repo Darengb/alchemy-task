@@ -92,14 +92,16 @@ def test_research_bundle_validation():
     assert research.validate_bundle(bundle, bundle["candidate_id"], sources)
     bundle["workstreams"][0]["suggested_due"] = "2026-11-23"
     assert research.validate_bundle(bundle, bundle["candidate_id"], sources)[0][1]["suggested_due"] == "2026-11-23"
-    for bad in ({"title": None}, {"suggested_due": "Monday"}):
+    bundle["workstreams"][0]["user_role"] = "waiting_on"
+    assert research.validate_bundle(bundle, bundle["candidate_id"], sources)[0][1]["user_role"] == "waiting_on"
+    for bad in ({"title": None}, {"suggested_due": "Monday"}, {"user_role": "someone"}):
         broken = json.loads(json.dumps(bundle))
         broken["workstreams"][0].update(bad)
         with pytest.raises(research.UserError):
             research.validate_bundle(broken, broken["candidate_id"], sources)
 
 
-def _accepted_run(data_dir, *, suggested_due=None):
+def _accepted_run(data_dir, *, suggested_due=None, extra=None):
     """One discovery run whose single item has accepted research, as a parent agent would leave it."""
     import hashlib
     from alchemy_task.core.discovery_state import DiscoveryStore
@@ -132,6 +134,7 @@ def _accepted_run(data_dir, *, suggested_due=None):
     bundle["candidate_id"] = item["candidate_id"]
     if suggested_due:
         bundle["workstreams"][0]["suggested_due"] = suggested_due
+    bundle["workstreams"][0].update(extra or {})
     receipt = store.spool_payload(run, token, bundle)
     store.observe_terminal(run, token, state="SUCCEEDED", receipt={"state": "SUCCEEDED"})
     read_all(receipt["resource"], "parent")
@@ -164,6 +167,26 @@ def test_discovery_proposal_becomes_a_task(settings, data_dir, tmp_path):
     assert len(tasks) == before + 1
     task = next(t for t in tasks if t.task_id == result["results"][0]["task_id"])
     assert str(task.fm["due"]) == "2030-01-07"
+
+
+def test_someone_elses_action_is_not_proposed(settings, data_dir, tmp_path):
+    from alchemy_task import runtime
+    from alchemy_task.core.attention import NOT_PROPOSED, sort_failures
+    from alchemy_task.discovery_integration import DiscoveryIntegration
+    ctx = FakeCtx({"workspace_root": settings.workspace_root, "timezone": settings.timezone}, data_dir)
+    rt = runtime.Runtime(ctx, settings, data_dir)
+    ctx.state.set("streams", {"work": {"name": "work", "mode": "production", "areas": ["work"], "research_cap": 50,
+                                       "sources": [{"name": "Feed", "scope": ["board"], "method": "reader"}],
+                                       "deliver": "origin", "origin_session": "parent", "label": ""}})
+    store, run = _accepted_run(data_dir, extra={"user_role": "none", "owner_and_collaborators": [{"name": "Doug", "role": "owner"}]})
+    integration = DiscoveryIntegration(rt, profile_home=tmp_path / "profile")
+    for c in store.get_run(run)["candidates"]:
+        if c.get("parent_candidate_id"):
+            integration.record_decision(run, c["candidate_id"], decision="propose", reason="New action.", session_id="parent")
+    digest = integration.finalize(run, session_id="parent")
+    attention, _, not_proposed = sort_failures(digest["failures"])
+    assert digest["items"] == [] and attention == []
+    assert [f["group"] for f in not_proposed] == [NOT_PROPOSED] and "Doug" in not_proposed[0]["text"]
 
 
 def test_research_children_cannot_write_or_read_credentials():

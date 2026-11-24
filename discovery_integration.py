@@ -1408,6 +1408,23 @@ class DiscoveryIntegration:
             atomic_json(path, record)
             return record
 
+    def _not_yours(self, run_id, unit_id):
+        """Research says another person owns this action and the user has no part in it, or None."""
+        try:
+            research = self.store.research_for(run_id, unit_id)
+        except (UserError, OSError, ValueError):
+            return None
+        return research if _attention.user_has_no_part(research) else None
+
+    def _record_not_yours_locked(self, run_id, unit_id, research, path, decision='not_yours'):
+        """Someone else's action: not proposed, never written, listed quietly in run details."""
+        record = {'run_id': run_id, 'unit_id': unit_id, 'kind': _attention.NOT_YOURS, 'targets': [],
+                  'request': {'decision': 'not_yours', 'parent_decision': decision, 'reason': _attention.not_yours_text(research)},
+                  'title': research.get('title') or 'Research follow-up', 'user_role': 'none',
+                  'next_action': 'Not proposed: research says someone else owns this and the user has no part in it. Continue with the next unit.'}
+        atomic_json(path, record)
+        return record
+
     def _failed_match(self, run_id, unit_id, exc):
         reason = 'could not be matched to your tasks: ' + str(exc)[:300]
         self._record_unit_failure(run_id, unit_id, reason)
@@ -1583,7 +1600,7 @@ class DiscoveryIntegration:
             wid = candidate['candidate_id']
             record = read_json(self._decision_path(run_id, wid), {})
             action = record.get('request', {}).get('decision')
-            complete = action in {'noop', 'failed'} or candidate.get('research_disposition', '').startswith('exclude_')
+            complete = action in {'noop', 'failed', 'not_yours'} or candidate.get('research_disposition', '').startswith('exclude_')
             if action == 'auto':
                 receipt = read_json(self.conversion._paths(run_id, wid)[1], {})
                 complete = receipt.get('state') == 'complete'
@@ -1651,12 +1668,18 @@ class DiscoveryIntegration:
             old = read_json(path)
             request = {'decision': decision, 'reason': reason, 'target_task_id': target_task_id,
                        'expected_revision': expected_revision, 'useful_delta': useful_delta}
+            if old and old.get('kind') == _attention.NOT_YOURS:
+                return old
             if old and old.get('kind') != 'failed':
                 if old['request'] != request: raise UserError('post-join decision is immutable')
                 # A saved auto plan is safe to resume by exact full postimage.
                 if decision == 'auto' and not old.get('shadow'): self.conversion.deliver_git(run_id, unit_id)
                 return old
             self.conversion.joined(run_id, unit_id)  # a wrong run or unit is the caller's mistake and is refused
+            # Another person's action with no part for the user is never proposed or written, whatever was decided.
+            others = self._not_yours(run_id, unit_id)
+            if others is not None:
+                return self._record_not_yours_locked(run_id, unit_id, others, path, decision)
             try:
                 outcome = self.conversion.match(run_id, unit_id)
             except (UserError, OSError, ValueError) as exc:
@@ -1690,7 +1713,7 @@ class DiscoveryIntegration:
                       'targets': targets, 'title': outcome['research']['title'],
                       **{k: outcome['research'].get(k) for k in ('current_understanding', 'substantive_next_action', 'source_links', 'related_context_links', 'new_information', 'sources_unavailable')},
                       # Authored short digest text and the nothing-new flag are optional research fields.
-                      **{k: outcome['research'][k] for k in ('digest_current_state', 'digest_next_action', 'digest_addition', 'existing_task_already_current', 'suggested_due') if k in outcome['research']},
+                      **{k: outcome['research'][k] for k in ('digest_current_state', 'digest_next_action', 'digest_addition', 'existing_task_already_current', 'suggested_due', 'user_role') if k in outcome['research']},
                       'research_disposition': outcome['research']['disposition'],
                       'uncertainty': outcome['research']['decisions_and_open_questions']['open_questions'],
                       'research_revision': content_revision(outcome['research'])}
@@ -1727,9 +1750,18 @@ class DiscoveryIntegration:
         for candidate in ledger['candidates']:
             if not candidate.get('parent_candidate_id') or candidate['parent_candidate_id'] not in join['accepted'] or not candidate.get('eligible_research'): continue
             decision = read_json(self._decision_path(run_id, candidate['candidate_id']))
+            if not decision and self._not_yours(run_id, candidate['candidate_id']) is not None:
+                path = self._decision_path(run_id, candidate['candidate_id'])
+                with self.store._lock('decision:' + run_id + ':' + candidate['candidate_id']):
+                    decision = read_json(path) or self._record_not_yours_locked(
+                        run_id, candidate['candidate_id'], self._not_yours(run_id, candidate['candidate_id']), path, 'undecided')
             if not decision:
                 # One unreviewed unit never blocks the digest: it goes under Needs attention, nothing is written.
                 decision = self._record_unit_failure(run_id, candidate['candidate_id'], 'not reviewed in this run')
+            if decision.get('kind') == _attention.NOT_YOURS:
+                unit_failures.append({'unit_id': candidate['candidate_id'], 'title': decision.get('title') or candidate['title'],
+                                      'kind': _attention.NOT_YOURS, 'reason': decision['request'].get('reason') or ''})
+                continue
             if decision.get('kind') == 'covered':
                 unit_failures.append({'unit_id': candidate['candidate_id'], 'title': decision.get('title') or candidate['title'],
                                       'kind': 'covered', 'reason': decision['request'].get('reason') or 'covered by another item'})
