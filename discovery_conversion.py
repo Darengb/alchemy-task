@@ -142,7 +142,7 @@ class DiscoveryConversion:
         info = ledger['resources'].get('join-record')
         if not info:
             raise UserError('global join required before matching or mutation')
-        join = json.loads((self.store.run_dir(run) / 'resources' / info['sha256']).read_text())
+        join = self.store.read_resource_json(run, info['sha256'])
         c = self.store.get_candidate(run, wid)
         if not join.get('joined') or c.get('parent_candidate_id') not in join['accepted']:
             raise UserError('unit not part of accepted global join')
