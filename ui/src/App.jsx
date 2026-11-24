@@ -8,6 +8,7 @@ import { AppContext, createTaskStore, usePref, useStore, useWidth } from './stor
 import { TasksView } from './tasks.jsx'
 import { TaskPanel } from './panel.jsx'
 import { DiscoveryView, SetupPrompt, discoveryBadge } from './discovery.jsx'
+import { singleFlight } from './lib/discovery.js'
 import { SettingsPanel } from './settings.jsx'
 import { BrandMark, Icon, IconButton, OverlayHost, Spinner, ToastHost, ToastOutlet, cx, useToast } from './ui.jsx'
 
@@ -39,28 +40,70 @@ function AppInner({ transport, host, initialView, settingsOnly, chat }) {
   const [prefsRaw, setPrefsRaw] = usePref('prefs', { view: null, area: '', hideDone: false })
   const prefs = prefsRaw
   const setPrefs = React.useCallback((p) => setPrefsRaw((cur) => ({ ...cur, ...p })), [setPrefsRaw])
+  const [badge, setBadge] = React.useState(null)
   const [runs, setRuns] = React.useState(null)
+  const [runsInfo, setRunsInfo] = React.useState(null)
   const [runsError, setRunsError] = React.useState(null)
   const [runsLoading, setRunsLoading] = React.useState(false)
   const [streams, setStreams] = React.useState(null)
+  // The (version, day) each copy came from; the server answers "unchanged" when the client is current.
+  const badgeSeen = React.useRef(null)
+  const runsSeen = React.useRef(null)
+  const tabRef = React.useRef(tab)
+  tabRef.current = tab
 
-  // ---- loading
-  const loadMeta = React.useCallback(() => api.meta().then((m) => { setMeta(m); setMetaError(null); store.setToday(m.today) }, setMetaError), [api, store])
-  const loadRuns = React.useCallback(async () => {
-    setRunsLoading(true)
-    try { const res = await api.runs(); setRuns(res.runs || []); setRunsError(null) } catch (err) { setRunsError(err) }
-    setRunsLoading(false)
-    // Streams only matter for the setup badge before the first run, so skip the call once runs exist.
+  // ---- loading. Each endpoint has at most one request in flight (singleFlight).
+  const loadMeta = React.useMemo(() => singleFlight(() => api.meta().then((m) => { setMeta(m); setMetaError(null); store.setToday(m.today) }, setMetaError)), [api, store])
+  const loadBadge = React.useMemo(() => singleFlight(async () => {
+    const seen = badgeSeen.current
+    try {
+      const res = await api.badge(seen ? { since: seen.version, day: seen.day } : {})
+      if (res.unchanged) return false
+      badgeSeen.current = { version: res.version, day: res.day }
+      setBadge(res)
+      return true
+    } catch { return false }
+  }), [api])
+  const loadStreams = React.useMemo(() => singleFlight(async () => {
     try { const s = await api.settings(); setStreams(Array.isArray(s.streams) ? s.streams : null) } catch { setStreams(null) }
-  }, [api])
-  React.useEffect(() => { loadMeta(); loadRuns() }, [loadMeta, loadRuns])
+  }), [api])
+  const fetchRuns = React.useMemo(() => singleFlight(async (force) => {
+    const seen = force ? null : runsSeen.current
+    setRunsLoading(true)
+    try {
+      const res = await api.runs(seen ? { since: seen.version, day: seen.day } : {})
+      if (!res.unchanged) {
+        runsSeen.current = { version: res.version, day: res.day }
+        setRuns(res.runs || [])
+        setRunsInfo({ total: res.total || 0, latest: res.latest || null, version: res.version, day: res.day })
+      }
+      setRunsError(null)
+    } catch (err) { setRunsError(err) }
+    setRunsLoading(false)
+  }), [api])
+  // Discovery list and its sources: only while the Discovery tab is open.
+  const loadRuns = React.useCallback((force = true) => Promise.all([fetchRuns(force), loadStreams(), loadBadge()]), [fetchRuns, loadStreams, loadBadge])
+  React.useEffect(() => { loadMeta(); loadBadge() }, [loadMeta, loadBadge])
+  React.useEffect(() => { if (tab === 'discovery') loadRuns(false) }, [tab, loadRuns])
 
+  const refreshTasks = React.useMemo(() => singleFlight(() => store.refresh()), [store])
   React.useEffect(() => {
-    const refresh = () => { loadMeta(); store.refresh(); loadRuns() }
+    const refresh = async () => {
+      loadMeta(); refreshTasks()
+      const changed = await loadBadge()
+      if (tabRef.current === 'discovery') { fetchRuns(false); if (changed) loadStreams() }
+    }
     const id = setInterval(() => { if (document.visibilityState === 'visible') refresh() }, POLL_MS)
     window.addEventListener('focus', refresh)
     return () => { clearInterval(id); window.removeEventListener('focus', refresh) }
-  }, [loadMeta, loadRuns, store])
+  }, [loadMeta, loadBadge, fetchRuns, loadStreams, refreshTasks])
+
+  // An approve/dismiss/finish answer carries the new badge and that run's summary: update both in place
+  // rather than reloading history. The next list poll drops a run that no longer needs the user.
+  const onDiscoveryAction = React.useCallback((res) => {
+    if (res && res.badge) { badgeSeen.current = { version: res.badge.version, day: res.badge.day }; setBadge(res.badge) }
+    if (res && res.run) setRuns((cur) => (cur || []).map((r) => (r.run_id === res.run.run_id ? res.run : r)))
+  }, [])
 
   React.useEffect(() => {
     const open = (e) => {
@@ -136,7 +179,7 @@ function AppInner({ transport, host, initialView, settingsOnly, chat }) {
   }, [api, store, toast])
 
   const onDrop = React.useCallback((task, date) => actions.move(task, date), [actions])
-  const pending = discoveryBadge(runs, streams)
+  const pending = discoveryBadge(badge)
   const ctx = React.useMemo(() => ({
     api, store, meta: meta || {}, today: today || (meta && meta.today), prefs, setPrefs, actions, selectedId, narrow, host, chat,
   }), [api, store, meta, today, prefs, setPrefs, actions, selectedId, narrow, host, chat])
@@ -187,7 +230,7 @@ function AppInner({ transport, host, initialView, settingsOnly, chat }) {
         </nav>
         <div className={cx('at-main', selectedId && !narrow && 'has-panel', settingsOpen && !narrow && 'has-panel')}>
           {tab === 'tasks' ? <TasksView narrow={narrow} /> : (
-            <DiscoveryView runs={runs} streams={streams} error={runsError} loading={runsLoading} reload={loadRuns} />
+            <DiscoveryView runs={runs} info={runsInfo} streams={streams} error={runsError} loading={runsLoading} reload={loadRuns} onAction={onDiscoveryAction} />
           )}
         </div>
         {selectedId ? <TaskPanel id={selectedId} narrow={narrow} onClose={() => setSelectedId(null)} /> : null}

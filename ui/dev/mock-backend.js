@@ -30,6 +30,28 @@ export function createMockBackend({ today = nyToday() } = {}) {
   const full = (t) => clone({ ...t, date: t.scheduled || t.due })
   const closed = (t) => t.status === 'done' || t.status === 'cancelled'
   const log = (t, msg) => { t.body = t.body.replace(/(## Log\n\n)/, `$1- ${today}: ${msg}\n`) }
+  // Saved run summaries, as GET /badge and GET /runs return them; version bumps on every change.
+  let version = 1
+  const summaryOf = (r) => {
+    const ps = r.proposals || []
+    const pending = ps.filter((p) => p.state === 'pending' && !p.expired).length
+    const attention = (r.attention || r.failures || []).length
+    const unfinished = ps.filter((p) => p.state === 'approved').length
+    const cov = r.coverage || []
+    const count = (st) => ps.filter((p) => p.state === st).length
+    return { run_id: r.run_id, stream: r.stream, day: r.day, time: r.time, mode: r.mode, status: r.status || 'finalized', timezone: r.timezone,
+      proposals: { total: ps.length, pending: count('pending'), approved: count('approved'), complete: count('complete'), dismissed: count('dismissed') },
+      pending, expired: ps.filter((p) => p.state === 'pending' && p.expired).length, attention, conflicts: (r.conflicts || []).length, unfinished,
+      sources: { checked: cov.filter((c) => c.status === 'complete').length, total: cov.length }, degraded: r.degraded || false,
+      needs_attention: !!(pending || attention || (r.conflicts || []).length || unfinished) }
+  }
+  const badge = () => ({ version, day: today, pending: db.runs.reduce((n, r) => n + summaryOf(r).pending, 0),
+    has_runs: db.runs.length > 0, streams_configured: db.settings.streams.length > 0 })
+  const current = (q) => q.get('since') === String(version) && q.get('day') === today
+  const afterAction = (run, pid) => {
+    version += 1
+    return { badge: badge(), run: summaryOf(run), run_detail: clone(run), proposal: clone(run.proposals.find((x) => x.proposal_id === pid)) }
+  }
 
   const routes = [
     ['GET', /^\/meta$/, () => ({ ok: true, today, areas: db.areas, default_area: db.settings.tasks.default_area, configured: true,
@@ -83,7 +105,28 @@ export function createMockBackend({ today = nyToday() } = {}) {
       setTimeout(() => { t.research = 'complete'; bump(t) }, 8000)
       return { ok: true, task: full(t) }
     }],
-    ['GET', /^\/runs$/, () => ({ ok: true, runs: clone(db.runs) })],
+    ['GET', /^\/badge$/, (q) => (current(q) ? { ok: true, unchanged: true, version, day: today } : { ok: true, ...badge() })],
+    ['GET', /^\/runs$/, (q) => {
+      if (current(q)) return { ok: true, unchanged: true, version, day: today }
+      const all = db.runs.map(summaryOf)
+      const every = q.get('all') === '1'
+      const limit = Number(q.get('limit') || 20); const offset = Number(q.get('offset') || 0)
+      return { ok: true, version, day: today, all: every, total: all.length, latest: all[0] || null, offset: every ? offset : 0,
+        runs: every ? all.slice(offset, offset + limit) : all.filter((r) => r.needs_attention), has_more: every && offset + limit < all.length }
+    }],
+    ['GET', /^\/runs\/([^/]+)$/, (q, [id]) => {
+      const run = db.runs.find((r) => r.run_id === id)
+      if (!run) throw new HttpError(404, 'not_found', 'Unknown exact run_id')
+      return { ok: true, ...clone(run) }
+    }],
+    ['POST', /^\/runs\/([^/]+)\/units\/([^/]+)\/resume$/, (q, [id, unit]) => {
+      const run = db.runs.find((r) => r.run_id === id)
+      const p = run && run.proposals.find((x) => x.unit_id === unit)
+      if (p && p.state === 'approved') { p.state = 'complete'; if (p.result) p.result.state = 'complete'; run.summary.approved -= 1; run.summary.complete += 1 }
+      const o = run && (run.outcomes || []).find((x) => x.unit_id === unit)
+      if (o) { o.status = 'complete'; o.resume_action = null }
+      return { ok: true, receipt: { state: 'complete' }, ...afterAction(run, p && p.proposal_id) }
+    }],
     ['POST', /^\/tasks\/([^/]+)\/handoff$/, (q, [id], body) => {
       const t = find(id)
       const text = `[Alchemy Task handoff]\nThe user pressed "Send to chat" on a task (demo).\nTask: ${t.title}\nTask ID: ${t.task_id}`
@@ -119,7 +162,7 @@ export function createMockBackend({ today = nyToday() } = {}) {
       p.result = { task_id: task.task_id, title: task.title, operation: body.choice === 'create' ? 'created' : 'updated', state: 'complete' }
       run.summary.pending -= 1
       run.summary.complete += 1
-      return { ok: true, receipt: { state: 'complete', task_id: task.task_id } }
+      return { ok: true, receipt: { state: 'complete', task_id: task.task_id }, ...afterAction(run, pid) }
     }],
     ['POST', /^\/proposals\/([^/]+)\/dismiss$/, (q, [pid]) => {
       const run = db.runs.find((r) => r.proposals.some((p) => p.proposal_id === pid))
@@ -127,7 +170,7 @@ export function createMockBackend({ today = nyToday() } = {}) {
       p.state = 'dismissed'
       run.summary.pending -= 1
       run.summary.dismissed += 1
-      return { ok: true, proposal_id: pid, state: 'dismissed' }
+      return { ok: true, proposal_id: pid, state: 'dismissed', ...afterAction(run, pid) }
     }],
     ['GET', /^\/settings$/, () => ({ ok: true, ...clone(db.settings) })],
     ['PATCH', /^\/settings\/streams\/([^/]+)$/, (q, [name], body) => {
@@ -152,7 +195,10 @@ export function createMockBackend({ today = nyToday() } = {}) {
     ['PATCH', /^\/settings\/tasks$/, (q, m, body) => { Object.assign(db.settings.tasks, body); for (const k of ['research_model', 'research_provider']) if (body[k] === '') db.settings.tasks[k] = null; if (body.default_area) db.settings.tasks.default_area = body.default_area; return { ok: true } }],
   ]
 
+  // Every request, so the preview can check what a page load, poll or action sends.
+  const requests = []
   async function send(method, path, body) {
+    requests.push(`${method} ${path}`)
     await sleep()
     const [p, query] = path.split('?')
     const q = new URLSearchParams(query || '')
@@ -163,5 +209,5 @@ export function createMockBackend({ today = nyToday() } = {}) {
     }
     throw new HttpError(404, 'not_found', `No mock route for ${method} ${p}`)
   }
-  return { send, db, today, addDays }
+  return { send, db, today, addDays, requests }
 }

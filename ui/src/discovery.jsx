@@ -7,7 +7,7 @@ import { useApp } from './store.js'
 import { AreaDot, Button, DatePicker, Disclosure, Icon, IconButton, Menu, Segmented, Spinner, copyText, cx, useOverlay, useToast } from './ui.jsx'
 
 export { pendingCount, discoveryBadge } from './lib/discovery.js'
-import { nextRunLabel } from './lib/discovery.js'
+import { nextRunLabel, singleFlight } from './lib/discovery.js'
 import { digestField, fullResearch } from './lib/digestText.js'
 import { elapsedLabel, runProgressLabel } from './lib/runProgress.js'
 
@@ -21,15 +21,39 @@ function runTime(r) {
 }
 
 function sourcesLine(r) {
+  // A saved run summary carries counts only; the full run detail carries each source's receipt.
+  if (!r.coverage && r.sources) {
+    const { checked = 0, total = 0 } = r.sources
+    if (!total) return ''
+    return checked === total ? `${checked} ${checked === 1 ? 'source' : 'sources'} checked` : `${checked} of ${total} sources checked`
+  }
   const cov = r.coverage || []
   if (!cov.length) return r.sources_checked && r.sources_checked.length ? `${r.sources_checked.length} sources` : ''
   const ok = cov.filter((c) => c.status === 'complete').length
   return ok === cov.length ? `${ok} ${ok === 1 ? 'source' : 'sources'} checked` : `${ok} of ${cov.length} sources checked`
 }
 
-export function DiscoveryView({ runs, streams, error, loading, reload }) {
+const PAGE = 20
+
+// 'All runs' pages through saved run summaries; nothing is fetched until it is chosen.
+function useAllRuns(active, version) {
+  const { api } = useApp()
+  const [state, setState] = React.useState({ runs: null, hasMore: false, loading: false, error: null })
+  const load = React.useCallback(async (offset) => {
+    setState((s) => ({ ...s, loading: true }))
+    try {
+      const res = await api.runs({ all: 1, limit: PAGE, offset })
+      setState((s) => ({ runs: offset ? [...(s.runs || []), ...(res.runs || [])] : (res.runs || []), hasMore: !!res.has_more, loading: false, error: null }))
+    } catch (err) { setState((s) => ({ ...s, loading: false, error: err })) }
+  }, [api])
+  React.useEffect(() => { if (active) load(0) }, [active, version, load])
+  return { ...state, more: () => load((state.runs || []).length) }
+}
+
+export function DiscoveryView({ runs, info, streams, error, loading, reload, onAction }) {
   const { today } = useApp()
   const [filter, setFilter] = React.useState('waiting')
+  const allRuns = useAllRuns(filter === 'all', info && info.version)
   if (error && error.code === 'not_found') {
     return <Empty icon="inbox" title="Discovery is not available yet"
                   text="This version of Alchemy Task has no discovery runs to show. Update the plugin to review discovery here." />
@@ -38,9 +62,10 @@ export function DiscoveryView({ runs, streams, error, loading, reload }) {
   if (error && !runs) {
     return <Empty icon="alert" title="Could not load discovery" text={describeError(error)} action={<Button onClick={reload}>Try again</Button>} />
   }
-  const all = runs || []
+  const waiting = runs || []
+  const total = info ? info.total : waiting.length
   const configured = Array.isArray(streams) && streams.length > 0
-  if (!all.length && configured) {
+  if (!total && configured) {
     // Set up but not run yet: show what it will read and when, not the setup prompt.
     return (
       <div className="at-scroll at-disco">
@@ -60,15 +85,14 @@ export function DiscoveryView({ runs, streams, error, loading, reload }) {
       </div>
     )
   }
-  if (!all.length) {
+  if (!total) {
     return <Empty icon="spark" title="No discovery runs yet"
                   text="Discovery reads the sources you choose and proposes tasks. Setup takes a few minutes in chat."
                   action={<SetupPrompt />} after={<DiscoveryExplainer />} />
   }
-  const needs = (r) => (r.summary ? r.summary.pending : (r.proposals || []).filter((p) => p.state === 'pending').length) > 0
-    || (r.conflicts || []).length || (r.failures || []).length
-  const shown = filter === 'waiting' ? all.filter(needs) : all
-  const latest = all[0]
+  // The server lists only runs that still need the user; 'All runs' pages through the rest.
+  const shown = filter === 'waiting' ? waiting : (allRuns.runs || [])
+  const latest = (info && info.latest) || waiting[0]
   return (
     <div className="at-scroll at-disco">
       <div className="at-disco-inner">
@@ -81,7 +105,9 @@ export function DiscoveryView({ runs, streams, error, loading, reload }) {
         </div>
         {configured ? <SourcesBar streams={streams} reload={reload} /> : null}
         {configured ? <RunningCards streams={streams} /> : null}
-        {!shown.length ? (
+        {filter === 'all' && !allRuns.runs ? <div className="at-loading"><Spinner size={18} /></div> : null}
+        {filter === 'all' && allRuns.error ? <div className="at-run-none">{describeError(allRuns.error)}</div> : null}
+        {filter === 'waiting' && !shown.length && latest ? (
           <div className="at-caughtup">
             <Icon name="check" size={18} />
             <div>
@@ -90,7 +116,10 @@ export function DiscoveryView({ runs, streams, error, loading, reload }) {
             </div>
           </div>
         ) : null}
-        {shown.map((r) => <RunCard key={r.run_id} run={r} filter={filter} reload={reload} />)}
+        {shown.map((r) => <RunCard key={r.run_id} summary={r} filter={filter} onAction={onAction} />)}
+        {filter === 'all' && allRuns.hasMore ? (
+          <div className="at-run-more"><Button size="sm" onClick={allRuns.more} disabled={allRuns.loading}>{allRuns.loading ? 'Loading…' : 'Show more runs'}</Button></div>
+        ) : null}
       </div>
     </div>
   )
@@ -322,18 +351,52 @@ function DiscoveryExplainer() {
   )
 }
 
-function RunCard({ run, filter, reload }) {
-  const { today } = useApp()
-  const proposals = run.proposals || []
-  const visible = filter === 'waiting' ? proposals.filter((p) => p.state === 'pending') : proposals
-  const outcomes = (run.outcomes || []).filter((o) => o.status !== 'noop')
+// Summary key: when a run's saved summary changes, its open detail is fetched again.
+const summaryKey = (r) => [r.pending, r.expired, r.attention, r.conflicts, r.unfinished, r.status, JSON.stringify(r.proposals || {})].join('|')
+
+// One run. The list renders from its saved summary; the full detail (proposals, failures, coverage) is
+// fetched when the card is open: at once under 'Waiting for you', on click under 'All runs'.
+function RunCard({ summary, filter, onAction }) {
+  const { today, api } = useApp()
+  const toast = useToast()
+  const [open, setOpen] = React.useState(filter === 'waiting')
+  const [detail, setDetail] = React.useState(null)
+  const [failed, setFailed] = React.useState(null)
+  const key = summaryKey(summary)
+  const fetchDetail = React.useMemo(() => singleFlight(async () => {
+    try { setDetail(await api.run(summary.run_id)); setFailed(null) } catch (err) { setFailed(err) }
+  }), [api, summary.run_id])
+  // The summary the shown detail belongs to, so an unchanged summary never refetches the detail.
+  const shownKey = React.useRef(null)
+  React.useEffect(() => {
+    if (!open || shownKey.current === key) return
+    shownKey.current = key
+    fetchDetail()
+  }, [open, key, fetchDetail])
+  // An action answer carries the updated run detail; use it instead of fetching all history again.
+  const resolved = React.useCallback((res) => {
+    if (res && res.run_detail) { setDetail(res.run_detail); if (res.run) shownKey.current = summaryKey(res.run) }
+    else if (res && res.proposal) setDetail((d) => d && { ...d, proposals: d.proposals.map((p) => (p.proposal_id === res.proposal.proposal_id ? res.proposal : p)) })
+    else fetchDetail()
+    if (onAction) onAction(res)
+  }, [fetchDetail, onAction])
+  const reload = React.useCallback(() => fetchDetail(), [fetchDetail])
+  const run = detail ? { ...summary, ...detail } : summary
+  const proposals = (detail && detail.proposals) || []
+  const unfinished = (p) => p.state === 'approved' && !(p.result && p.result.state === 'complete')
+  const visible = filter === 'waiting' ? proposals.filter((p) => p.state === 'pending' || unfinished(p)) : proposals
+  const outcomes = ((detail && detail.outcomes) || []).filter((o) => o.status !== 'noop')
   // Only what is lost unless the user acts; moved and not-proposed items sit quietly in run details.
-  const attention = [...(run.conflicts || []).map((c) => ({ ...c, kind: 'conflict' })), ...(run.attention || run.failures || [])]
-  const quiet = [...(run.moved || []).map((m) => ({ ...m, label: 'Next run' })), ...(run.not_proposed || []).map((m) => ({ ...m, label: 'Not proposed' }))]
+  const attention = detail ? [...(detail.conflicts || []).map((c) => ({ ...c, kind: 'conflict' })), ...(detail.attention || detail.failures || [])] : []
+  const quiet = detail ? [...(detail.moved || []).map((m) => ({ ...m, label: 'Next run' })), ...(detail.not_proposed || []).map((m) => ({ ...m, label: 'Not proposed' }))] : []
   const test = run.mode && run.mode !== 'production'
+  const pendingCount = typeof summary.pending === 'number' ? summary.pending : (run.summary && run.summary.pending)
+  const toggle = filter === 'all' ? () => setOpen((v) => !v) : null
   return (
     <article className="at-run">
-      <header className="at-run-head">
+      <header className={cx('at-run-head', toggle && 'is-toggle')} onClick={toggle || undefined}
+              role={toggle ? 'button' : undefined} tabIndex={toggle ? 0 : undefined} aria-expanded={toggle ? open : undefined}
+              onKeyDown={toggle ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() } } : undefined}>
         <div>
           <div className="at-run-title">{titleCase(run.stream)}</div>
           <div className="at-run-sub">
@@ -343,16 +406,21 @@ function RunCard({ run, filter, reload }) {
           </div>
         </div>
         <span className="at-flex" />
-        {run.summary && run.summary.pending ? <span className="at-count is-accent">{run.summary.pending} waiting</span> : null}
+        {pendingCount ? <span className="at-count is-accent">{pendingCount} waiting</span> : null}
+        {toggle ? <Icon name={open ? 'chevD' : 'chevR'} size={14} className="at-muted" /> : null}
       </header>
+      {!open ? null : !detail ? (
+        failed ? <div className="at-run-none">{describeError(failed)} <Button size="sm" onClick={reload}>Try again</Button></div>
+          : <div className="at-loading"><Spinner size={14} /></div>
+      ) : (<>
       {visible.length ? (
         <div className="at-proposals">
-          {visible.map((p) => <ProposalCard key={p.proposal_id} p={p} run={run} reload={reload} readOnly={test} />)}
+          {visible.map((p) => <ProposalCard key={p.proposal_id} p={p} run={run} onResolved={resolved} readOnly={test} />)}
         </div>
       ) : filter === 'all' && !proposals.length ? <div className="at-run-none">No new proposals in this run.</div> : null}
       {outcomes.length ? (
         <Disclosure title="Updated automatically" count={outcomes.length} className="at-run-fold">
-          {outcomes.map((o) => <Outcome key={o.unit_id} o={o} run={run} reload={reload} />)}
+          {outcomes.map((o) => <Outcome key={o.unit_id} o={o} run={run} onResolved={resolved} />)}
         </Disclosure>
       ) : null}
       {attention.length ? (
@@ -394,6 +462,7 @@ function RunCard({ run, filter, reload }) {
           {run.delivery && run.delivery.state ? <div className="at-detail-row"><span className="at-muted">Digest</span><span className="at-flex" /><span>{deliveryLabel(run.delivery.state)}</span></div> : null}
         </div>
       </Disclosure>
+      </>)}
     </article>
   )
 }
@@ -408,13 +477,13 @@ function filteredRows(coverage) {
 
 const deliveryLabel = (s) => ({ delivered: 'Sent', host_pending: 'Sent by Hermes', prepared: 'Prepared', not_prepared: 'Not sent', unknown: 'Unknown', inflight: 'Sending' }[s] || s)
 
-function Outcome({ o, run, reload }) {
+function Outcome({ o, run, onResolved }) {
   const { actions, api } = useApp()
   const toast = useToast()
   const [busy, setBusy] = React.useState(false)
   const resume = async () => {
     setBusy(true)
-    try { await api.resume(run.run_id, o.unit_id); await reload() } catch (err) { toast(describeError(err), { tone: 'error' }) }
+    try { onResolved(await api.resume(run.run_id, o.unit_id)) } catch (err) { toast(describeError(err), { tone: 'error' }) }
     setBusy(false)
   }
   const done = o.status === 'complete'
@@ -432,7 +501,7 @@ function Outcome({ o, run, reload }) {
 
 // ------------------------------------------------------------------ proposal
 
-function ProposalCard({ p, run, reload, readOnly }) {
+function ProposalCard({ p, run, onResolved, readOnly }) {
   const { api, actions, today, meta, store } = useApp()
   const toast = useToast()
   const overlay = useOverlay()
@@ -448,6 +517,12 @@ function ProposalCard({ p, run, reload, readOnly }) {
   const [busy, setBusy] = React.useState(null)
   const [gone, setGone] = React.useState(false)
 
+  // Approved but not finished (the task write or its sync stopped): finish the saved plan.
+  const finish = async () => {
+    setBusy('finish')
+    try { onResolved(await api.resume(run.run_id, p.unit_id)); store.refresh() } catch (err) { toast(describeError(err), { tone: 'error' }) }
+    setBusy(null)
+  }
   if (p.state === 'approved' || p.state === 'complete') {
     const r = p.result || {}
     const finished = p.state === 'complete' || r.state === 'complete'
@@ -459,7 +534,9 @@ function ProposalCard({ p, run, reload, readOnly }) {
           <button type="button" className="at-linkish" onClick={() => r.task_id && actions.open(r.task_id)}>{r.title || p.title}</button>
         </span>
         <span className="at-flex" />
-        {finished ? <span className="at-muted">{p.ref}</span> : <span className="at-muted">Saving…</span>}
+        {finished ? <span className="at-muted">{p.ref}</span> : (
+          <Button size="sm" onClick={finish} disabled={!!busy || readOnly}>{busy ? 'Finishing…' : 'Finish'}</Button>
+        )}
       </div>
     )
   }
@@ -478,21 +555,22 @@ function ProposalCard({ p, run, reload, readOnly }) {
       const res = await api.approve(p.proposal_id, body)
       const receipt = res.receipt || {}
       toast(choice === 'create' ? 'Task created' : 'Task updated', receipt.task_id ? { action: { label: 'Open', run: () => actions.open(receipt.task_id) } } : {})
-      await reload()
+      onResolved(res)
       store.refresh()
     } catch (err) {
       toast(describeError(err), { tone: 'error' })
-      if (err.code === 'already_resolved' || err.code === 'stale_revision') reload()
+      // Refetch only this run's detail (a failed write keeps the run listed so it can be retried).
+      onResolved(null)
     }
     setBusy(null)
   }
   const dismiss = async () => {
     setBusy('dismiss')
     try {
-      await api.dismiss(p.proposal_id)
+      const res = await api.dismiss(p.proposal_id)
       setGone(true)
       toast('Proposal dismissed')
-      reload()
+      onResolved(res)
     } catch (err) { toast(describeError(err), { tone: 'error' }) }
     setBusy(null)
   }
