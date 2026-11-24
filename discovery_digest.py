@@ -14,6 +14,7 @@ from .core.discovery_identity import UserError, canonical_source_id
 from urllib.parse import urlsplit, parse_qs
 from .core.digest_text import digest_field, first_sentence
 from .core import attention as _attention
+from .core.run_summaries import RunSummaries
 
 
 def _suggested_date(value):
@@ -509,6 +510,12 @@ class DiscoveryDigest:
                 raise UserError('proposal already resolved')
             data['proposals'][proposal_id]['state'] = state
             atomic_json(self.path, data)
+            # Keep the dashboard's saved run summary in step; never fail a decision over it.
+            summaries = RunSummaries(self.store)
+            try:
+                summaries.patch_proposals(data['proposals'][proposal_id]['binding']['run_id'], data)
+            except (OSError, ValueError, KeyError, TypeError):
+                summaries.invalidate()
             return data['proposals'][proposal_id]
 
     def delivery(self, run):

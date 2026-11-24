@@ -28,6 +28,7 @@ from .discovery_runner import DiscoveryRunner, RunnerPolicy, make_tool_handlers,
 from .discovery_conversion import DiscoveryConversion, order_semantic_targets
 from .discovery_digest import DiscoveryDigest, coverage_degraded
 from .core import attention as _attention
+from .core import run_summaries as _summaries
 
 
 def _pick(value, path):
@@ -263,6 +264,7 @@ class DiscoveryIntegration:
         self.store = DiscoveryStore(rt.data_dir / 'discovery')
         self.digest = DiscoveryDigest(rt.data_dir / 'discovery')
         self.conversion = DiscoveryConversion(rt, self.store)
+        self.summaries = _summaries.RunSummaries(self.store)
         # Research runs as short bounded calls inside the default host tool
         # deadline; no operator timeout configuration or receipt is needed.
         self.runner = DiscoveryRunner(rt.ctx, rt, store=self.store, recovery_authorizer=self._authorize_recovery)
@@ -829,6 +831,7 @@ class DiscoveryIntegration:
                                               'job_binding': copy.deepcopy(current.get('job_binding')),
                                               'cron_execution': execution}, lineage=_lineage)
             if mode == 'production' and _lineage is None: self._mark_active(current['name'], run)
+            self.refresh_run_summaries((run,))
             out = {'run_id': run, 'resumed': False, 'stream': current['name'], 'sources': config['sources'],
                    'windows': windows, 'research_remaining_today': current['research_cap']}
             return self._with_screening({**out, **self._follow_up_start(run, config)}, current['name'])
@@ -1548,9 +1551,13 @@ class DiscoveryIntegration:
         except Exception as exc:
             return self._delivery_record(run_id, {'state': 'unknown', 'reason': str(exc)[:500]})
 
-    def delivery_status(self, run_id):
-        digest = self.digest.get(run_id)
-        receipt = self.digest.delivery(run_id)
+    def delivery_status(self, run_id, data=None):
+        # ``data``: an already loaded digest ledger, so one projection parses it once.
+        if data is None:
+            digest, receipt = self.digest.get(run_id), self.digest.delivery(run_id)
+        else:
+            if run_id not in data['digests']: raise UserError('no immutable digest for this run')
+            digest, receipt = data['digests'][run_id], data['delivery'][run_id]
         stream = self._stream_or_frozen(digest['stream'], digest['origin']['session_id'])
         owner = stream.get('delivery_owner', 'native_origin')
         if stream.get('removed'):
@@ -1787,6 +1794,8 @@ class DiscoveryIntegration:
             pending = self.store.get_run(run_id); pending['pending_operations'] = [FINALIZATION_PROJECTION]; self.store._save(run_id, pending)
         self.store.save_review(run_id, {'digest': digest, 'conflicts': conflicts, 'joined': join})
         self.reconcile_endstate(run_id)
+        # The backlog just settled, which can change what earlier runs of this stream still need.
+        self.refresh_run_summaries((run_id,), stream=ledger['config'].get('stream_name', ledger['stream']))
         return digest
 
     def decide(self, args, *, session_id, today=None):
@@ -1942,45 +1951,50 @@ class DiscoveryIntegration:
         if run_id: return project(self.store.get_run(run_id))
         return {'runs': [project(r) for r in self._all_runs() if session_id in {r['origin'].get('session_id'), r['origin'].get('stream_origin_session')} or self._actor_allowed(session_id, read=True)]}
 
-    def project_run(self, ledger, *, reconcile=False):
-        """Project durable state after the entrypoint has checked its caller."""
-        def project(ledger):
-            # UI sees full records; child capability tokens/launch capabilities remain internal.
-            run = ledger['run_id']
-            if reconcile and ledger.get('review'):
-                self.reconcile_endstate(run)
-                ledger = self.store.get_run(run)
-            attempts = [{k: v for k, v in a.items() if k not in {'token', 'handle'}} for a in ledger['attempts'].values()]
-            decisions = [read_json(p) for p in sorted((self.store.run_dir(run) / 'decisions').glob('*.json'))]
-            conversions = [read_json(p) for p in sorted((self.store.run_dir(run) / 'conversions').glob('*.receipt.json'))]
-            digest = self.digest._load()['digests'].get(run)
-            coverage = list(self._collection_receipts(ledger).values())
-            join = (ledger.get('review') or {}).get('joined') or {}
-            return {'run_id': run, 'time': ledger['created'], 'day': ledger['business_date'], 'stream': ledger['config'].get('stream_name', ledger['stream']),
-                    'status': ledger['status'], 'sources_checked': ledger['config'].get('sources', []),
-                    'coverage': coverage, 'research': attempts, 'candidates': ledger['candidates'],
-                    'mode': ledger['config'].get('mode'), 'timezone': ledger['config'].get('timezone'),
-                    'lineage': ledger.get('lineage', {}), 'pilot_skipped': join.get('pilot_skipped', []),
-                    'legacy_proposals': list((self.rt.ctx.state.get('discovery_legacy:' + ledger['config'].get('stream_name', ledger['stream']), default={}) or {}).values()),
-                    'proposals': digest['items'] if digest else [], 'decisions': decisions, 'conversions': conversions,
-                    'conflicts': (ledger.get('review') or {}).get('conflicts', []), 'failures': ledger['errors'] + join.get('failures', []), 'deferred': join.get('deferred', []),
-                    'recovery': read_json(self.store.run_dir(run) / 'supervisor.json', {}),
-                    'delivery': self.delivery_status(run) if digest else {'state': 'not_prepared'}}
-        result = project(ledger)
-        data = self.digest._load()
-        for failure in data['digests'].get(result['run_id'], {}).get('failures', []):
+    def _run_failures(self, ledger, data):
+        """The run's failure records (ledger errors, join and digest failures), each once, with retry state."""
+        join = (ledger.get('review') or {}).get('joined') or {}
+        failures = copy.deepcopy(ledger['errors'] + join.get('failures', []))
+        for failure in data['digests'].get(ledger['run_id'], {}).get('failures', []):
             # Finalization adds a display title to join failures. Count that
             # same failure once while preserving its original diagnostic fields.
             extra = {'title', 'retry_pending'}
             key = {k: v for k, v in failure.items() if k not in extra}
-            prior = next((f for f in result['failures'] if {k: v for k, v in f.items() if k not in extra} == key), None)
+            prior = next((f for f in failures if {k: v for k, v in f.items() if k not in extra} == key), None)
             if prior is None:
-                result['failures'].append(copy.deepcopy(failure))
+                failures.append(copy.deepcopy(failure))
             else:
                 for k in extra:
                     if k not in prior and k in failure: prior[k] = failure[k]
+        return self._with_retry(failures, ledger)
+
+    def project_run(self, ledger, *, reconcile=False):
+        """Project durable state after the entrypoint has checked its caller."""
+        run = ledger['run_id']
+        if reconcile and ledger.get('review'):
+            self.reconcile_endstate(run)
+            ledger = self.store.get_run(run)
+        # One parse of the shared digest ledger per projection (it is large).
+        data = self.digest._load()
+        # UI sees full records; child capability tokens/launch capabilities remain internal.
+        attempts = [{k: v for k, v in a.items() if k not in {'token', 'handle'}} for a in ledger['attempts'].values()]
+        decisions = [read_json(p) for p in sorted((self.store.run_dir(run) / 'decisions').glob('*.json'))]
+        conversions = [read_json(p) for p in sorted((self.store.run_dir(run) / 'conversions').glob('*.receipt.json'))]
+        digest = data['digests'].get(run)
+        coverage = list(self._collection_receipts(ledger).values())
+        join = (ledger.get('review') or {}).get('joined') or {}
+        result = {'run_id': run, 'time': ledger['created'], 'day': ledger['business_date'], 'stream': ledger['config'].get('stream_name', ledger['stream']),
+                  'status': ledger['status'], 'sources_checked': ledger['config'].get('sources', []),
+                  'coverage': coverage, 'research': attempts, 'candidates': ledger['candidates'],
+                  'mode': ledger['config'].get('mode'), 'timezone': ledger['config'].get('timezone'),
+                  'lineage': ledger.get('lineage', {}), 'pilot_skipped': join.get('pilot_skipped', []),
+                  'legacy_proposals': list((self.rt.ctx.state.get('discovery_legacy:' + ledger['config'].get('stream_name', ledger['stream']), default={}) or {}).values()),
+                  'proposals': digest['items'] if digest else [], 'decisions': decisions, 'conversions': conversions,
+                  'conflicts': (ledger.get('review') or {}).get('conflicts', []), 'failures': [], 'deferred': join.get('deferred', []),
+                  'recovery': read_json(self.store.run_dir(run) / 'supervisor.json', {}),
+                  'delivery': self.delivery_status(run, data) if digest else {'state': 'not_prepared'}}
         # Only what is lost unless the user acts is an alarm; the rest is quiet run detail.
-        result['failures'] = self._with_retry(result['failures'], ledger)
+        result['failures'] = self._run_failures(ledger, data)
         attention, moved, not_proposed = _attention.sort_failures(result['failures'])
         for d in result['deferred']:
             cap = 'cap' in str(d.get('reason') or '').lower()
@@ -2016,6 +2030,92 @@ class DiscoveryIntegration:
                                  conflicts=len(result['conflicts']), failures=len(result['attention']), deferred=len(result['deferred']))
         result['degraded'] = bool(result['attention'] or any(coverage_degraded(c) for c in result['coverage']))
         return result
+
+    # ---- saved run summaries (dashboard badge and Discovery list)
+
+    def run_summary(self, ledger, data=None):
+        """The small saved summary of one run, from its detailed records. Read-only."""
+        data = self.digest._load() if data is None else data
+        run = ledger['run_id']
+        attention = _attention.sort_failures(self._run_failures(ledger, data))[0]
+        digest = data['digests'].get(run) or {}
+        receipts = {}
+        for path in sorted((self.store.run_dir(run) / 'conversions').glob('*.receipt.json')):
+            receipt = read_json(path, {}) or {}
+            if receipt.get('unit_id'): receipts[receipt['unit_id']] = receipt
+        unfinished_outcomes = 0
+        for outcome in digest.get('outcomes') or []:
+            status = (receipts.get(outcome.get('unit_id')) or {}).get('state', outcome.get('status'))
+            if outcome.get('resume_action') and status != 'complete': unfinished_outcomes += 1
+        coverage = list(self._collection_receipts(ledger).values())
+        return {'run_id': run, 'stream': ledger['config'].get('stream_name', ledger['stream']), 'day': ledger['business_date'],
+                'time': ledger['created'], 'mode': ledger['config'].get('mode'), 'status': ledger['status'],
+                'timezone': ledger['config'].get('timezone'),
+                **_summaries.proposal_fields(run, data),
+                'attention': len(attention), 'conflicts': len((ledger.get('review') or {}).get('conflicts', [])),
+                'unfinished_outcomes': unfinished_outcomes,
+                'sources': {'checked': sum(c.get('status') == 'complete' for c in coverage), 'total': len(coverage)},
+                'degraded': bool(attention or any(coverage_degraded(c) for c in coverage))}
+
+    def _summaries_for(self, ledgers, data):
+        out = {}
+        for ledger in ledgers:
+            try:
+                out[ledger['run_id']] = self.run_summary(ledger, data)
+            except (UserError, OSError, ValueError, KeyError, TypeError):
+                continue  # one unreadable run never hides the others
+        return out
+
+    def rebuild_run_summaries(self, *, if_missing=False):
+        """Regenerate the summary index from the detailed run records (read-only on those records)."""
+        return self.summaries.replace(lambda: self._summaries_for(self._all_runs(), self.digest._load()), if_missing=if_missing)
+
+    def summary_index(self):
+        """The saved summary index, rebuilt first when it is missing or unreadable."""
+        return self.summaries.load() or self.rebuild_run_summaries(if_missing=True)
+
+    def refresh_run_summaries(self, run_ids=(), *, stream=''):
+        """After a write: recompute the named runs (or every run of ``stream``). Never fails the caller."""
+        try:
+            def compute():
+                data = self.digest._load()
+                if stream:
+                    ledgers = [r for r in self._all_runs() if r['config'].get('stream_name', r['stream']) == stream or r['run_id'] in run_ids]
+                else:
+                    ledgers = []
+                    for run_id in run_ids:
+                        try:
+                            ledgers.append(self.store.get_run(run_id))
+                        except UserError:
+                            continue
+                return self._summaries_for([r for r in ledgers if not r.get('pruned_at')], data)
+            index = self.summaries.load()
+            gone = tuple(k for k in (index or {}).get('runs', {}) if not (self.store.run_dir(k) / 'ledger.json').exists())
+            self.summaries.update(compute, drop=gone)
+        except (UserError, OSError, ValueError, KeyError, TypeError):
+            self.summaries.invalidate()
+
+    def summary_views(self, index=None):
+        """Every saved summary as clients see it today, newest first (runs pruned since are left out)."""
+        index = index or self.summary_index()
+        days, out = {}, []
+        for summary in index['runs'].values():
+            zone = summary.get('timezone') or self.rt.settings.timezone
+            if zone not in days: days[zone] = _summaries.today_in(zone, self.rt.settings.timezone, self.utcnow())
+            out.append(_summaries.view(summary, days[zone]))
+        out = [s for s in out if (self.store.run_dir(s['run_id']) / 'ledger.json').exists()]
+        return sorted(out, key=lambda r: (r['time'], r['run_id']), reverse=True)
+
+    def badge(self):
+        index = self.summary_index()
+        views = self.summary_views(index)
+        streams = self.rt.ctx.state.get('streams', default={}) or {}
+        return {'version': index['version'], 'day': self.summary_day(), 'pending': sum(v['pending'] for v in views),
+                'has_runs': bool(views), 'streams_configured': bool(streams)}
+
+    def summary_day(self):
+        # Sent with a version: a client's copy is current only for the same version AND day (expiry is by date).
+        return _summaries.today_in(None, self.rt.settings.timezone, self.utcnow())
 
 
 STR = {'type': 'string'}
@@ -2141,7 +2241,9 @@ def register(ctx, *, integration=None):
             if action == 'cancel': return service.conversion.cancel(a['run_id'], a['unit_id'], **params)
             if action == 'bind_manual': return service.conversion.bind_manual(a['run_id'], a['unit_id'], target_task_id=a['target_task_id'], expected_revision=a['expected_revision'], **params)
             raise UserError('unknown plan action')
-        return service.conversion.deliver_git(a['run_id'], a['unit_id'])
+        receipt = service.conversion.deliver_git(a['run_id'], a['unit_id'])
+        service.refresh_run_summaries((a['run_id'],))
+        return receipt
     handlers.update({
         'discovery_replay': lambda a, session_id='', **_: service.replay(**a, session_id=session_id),
         'discovery_config': config_call,

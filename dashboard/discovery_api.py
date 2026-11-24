@@ -126,25 +126,94 @@ async def update_settings(request: Request):
         return _error(exc)
 
 
+def _since(query):
+    """Client's last seen (version, day), or None. ``since`` must be an integer version."""
+    if 'since' not in query: return None
+    try:
+        return int(query['since']), query.get('day', '')
+    except ValueError as exc:
+        raise APIError('invalid_request', 'since must be an integer version') from exc
+
+
+def _unchanged(since, version, day):
+    return since is not None and since == (version, day)
+
+
+def _badge(service):
+    return service.badge()
+
+
+@router.get('/badge')
+async def badge(request: Request):
+    """Tasks tab badge: pending proposals and whether discovery has any runs or streams. Cheap: reads
+    the saved run-summary index only, and answers {unchanged: true} when the client is current."""
+    try:
+        _query(request, {'since', 'day'})
+        since = _since(dict(request.query_params))
+        def work():
+            out = _badge(_service())
+            if _unchanged(since, out['version'], out['day']):
+                return {'ok': True, 'unchanged': True, 'version': out['version'], 'day': out['day']}
+            return {'ok': True, **out}
+        return await asyncio.to_thread(work)
+    except (UserError, HTTPException, ValueError, KeyError, TypeError, OSError) as exc:
+        return _error(exc)
+
+
+def _int(query, key, default, top):
+    try:
+        value = int(query.get(key, default))
+    except ValueError as exc:
+        raise APIError('invalid_request', key + ' must be an integer') from exc
+    if not 0 <= value <= top: raise APIError('invalid_request', '%s must be 0..%d' % (key, top))
+    return value
+
+
 @router.get('/runs')
 async def runs(request: Request):
+    """Saved run summaries. Default: only runs that still need the user (pending, failed writes,
+    conflicts, alarms). ``all=1`` pages every retained run (``limit``, ``offset``). Full detail of
+    one run comes from /runs/{run_id}. Reads never reconcile or write run records."""
     try:
-        _query(request, {'stream', 'day_from', 'day_to'})
+        _query(request, {'stream', 'day_from', 'day_to', 'all', 'limit', 'offset', 'since', 'day'})
         query = dict(request.query_params)
         for key in ('day_from', 'day_to'):
             if query.get(key): dt.date.fromisoformat(query[key])
+        every = query.get('all') in {'1', 'true'}
+        limit, offset = _int(query, 'limit', 20, 200), _int(query, 'offset', 0, 100000)
+        since = _since(query)
         def work():
             service = _service()
-            # History is polled even from the Tasks tab. Read saved state here;
-            # explicit discovery operations own reconciliation and backlog writes.
-            records = [service.project_run(r, reconcile=False) for r in service._all_runs()
-                       if (not query.get('stream') or r['config'].get('stream_name', r['stream']) == query['stream'])
-                       and (not query.get('day_from') or r['business_date'] >= query['day_from'])
-                       and (not query.get('day_to') or r['business_date'] <= query['day_to'])]
-            return {'ok': True, 'runs': sorted(records, key=lambda r: (r['time'], r['run_id']), reverse=True)}
+            index = service.summary_index()
+            day = service.summary_day()
+            if _unchanged(since, index['version'], day):
+                return {'ok': True, 'unchanged': True, 'version': index['version'], 'day': day}
+            views = [r for r in service.summary_views(index)
+                     if (not query.get('stream') or r['stream'] == query['stream'])
+                     and (not query.get('day_from') or r['day'] >= query['day_from'])
+                     and (not query.get('day_to') or r['day'] <= query['day_to'])]
+            shown = views[offset:offset + limit] if every else [r for r in views if r['needs_attention']]
+            return {'ok': True, 'version': index['version'], 'day': day, 'all': every, 'runs': shown,
+                    'total': len(views), 'offset': offset if every else 0,
+                    'has_more': every and offset + limit < len(views), 'latest': views[0] if views else None,
+                    'pending': sum(v['pending'] for v in views)}
         return await asyncio.to_thread(work)
     except (UserError, NeedsInput, ConcurrentEditError, HTTPException, ValueError, KeyError, TypeError, OSError) as exc:
         return _error(exc)
+
+
+def _after_action(service, proposal_id):
+    """What an approve/dismiss answer carries so the page updates one card and the badge: the
+    proposal as the run detail shows it, that run's saved summary, and the new badge."""
+    record = service.digest._load()['proposals'].get(proposal_id) or {}
+    run_id = (record.get('binding') or {}).get('run_id')
+    out = {'badge': _badge(service)}
+    if run_id:
+        detail = service.project_run(service.store.get_run(run_id), reconcile=False)
+        out['proposal'] = next((p for p in detail['proposals'] if p['proposal_id'] == proposal_id), None)
+        out['run'] = next((s for s in service.summary_views() if s['run_id'] == run_id), None)
+        out['run_detail'] = detail
+    return out
 
 
 @router.get('/runs/{run_id}')
@@ -183,7 +252,7 @@ async def approve(request: Request, proposal_id: str):
             # Retries return the saved receipt even if delivery still needs resume.
             receipt = read_json(service.conversion._paths(proposal['run_id'], proposal['unit_id'])[1])
             if receipt:
-                return {'ok': True, 'receipt': receipt}
+                return {'ok': True, 'receipt': receipt, **_after_action(service, proposal_id)}
             today = service.utcnow().astimezone(ZoneInfo(ledger['config'].get('timezone') or service.rt.settings.timezone)).date().isoformat()
             if proposal['expires'] < today and body.pop('allow_expired', False) is not True:
                 raise APIError('expired', 'Proposal expired; explicit allow_expired is required', 409)
@@ -193,7 +262,7 @@ async def approve(request: Request, proposal_id: str):
             if body['choice'] == 'update' and not body.get('target_task_id'):
                 raise APIError('target_required', 'Select an exact nominated target_task_id')
             result = service._decide_resolved({'approve': [proposal_id], 'edits': {proposal_id: body}}, resolve=lambda ref: proposal)
-            return {'ok': True, 'receipt': result['results'][0]}
+            return {'ok': True, 'receipt': result['results'][0], **_after_action(service, proposal_id)}
         return await asyncio.to_thread(work)
     except (UserError, NeedsInput, ConcurrentEditError, HTTPException, ValueError, KeyError, TypeError, OSError) as exc:
         return _error(exc)
@@ -210,7 +279,7 @@ async def dismiss(request: Request, proposal_id: str):
             if record['state'] != 'pending':
                 raise APIError('already_resolved', 'Proposal already resolved', 409)
             service._decide_resolved({'dismiss': [proposal_id]}, resolve=lambda ref: proposal)
-            return {'ok': True, 'proposal_id': proposal_id, 'state': 'dismissed'}
+            return {'ok': True, 'proposal_id': proposal_id, 'state': 'dismissed', **_after_action(service, proposal_id)}
         return await asyncio.to_thread(work)
     except (UserError, NeedsInput, ConcurrentEditError, HTTPException, ValueError, KeyError, TypeError, OSError) as exc:
         return _error(exc)
@@ -236,7 +305,12 @@ async def resume(request: Request, run_id: str, unit_id: str):
             receipt = service.conversion.deliver_git(run_id, unit_id)
             for pid, _ in proposals:
                 if receipt['state'] == 'complete': service.digest.decide(pid, 'complete')
-            return {'ok': True, 'receipt': receipt}
+            # An automatic update has no proposal decision to refresh its summary; do it here.
+            service.refresh_run_summaries((run_id,))
+            out = _after_action(service, proposals[0][0]) if proposals else {
+                'badge': _badge(service), 'run_detail': service.project_run(_run(service, run_id), reconcile=False),
+                'run': next((s for s in service.summary_views() if s['run_id'] == run_id), None)}
+            return {'ok': True, 'receipt': receipt, **out}
         return await asyncio.to_thread(work)
     except (UserError, NeedsInput, ConcurrentEditError, HTTPException, ValueError, KeyError, TypeError, OSError) as exc:
         return _error(exc)
