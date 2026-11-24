@@ -335,6 +335,9 @@
       handoff: (id, surface) => call("POST", `/tasks/${enc(id)}/handoff`, { surface }),
       handoffStatus: (handoffId) => call("GET", `/handoffs/${enc(handoffId)}`),
       // ---- discovery (routes owned by the discovery backend; see docs/discovery-backend-contract.md)
+      // Tasks tab badge: pending count and index version only. since/day: answer {unchanged: true} when current.
+      badge: (params = {}) => call("GET", "/badge" + qs(params)),
+      // Saved run summaries: runs that need the user by default; {all: 1, limit, offset} pages every run.
       runs: (params = {}) => call("GET", "/runs" + qs(params)),
       run: (runId) => call("GET", `/runs/${enc(runId)}`),
       approve: (proposalId, body) => call("POST", `/proposals/${enc(proposalId)}/approve`, body),
@@ -2443,12 +2446,21 @@
   }
 
   // ui/src/lib/discovery.js
-  var pendingCount = (runs) => (runs || []).reduce((n, r) => n + (r.proposals || []).filter((p) => p.state === "pending" && !p.expired).length, 0);
-  var discoveryBadge = (runs, streams) => {
-    const pending = pendingCount(runs);
-    if (pending) return pending;
-    return Array.isArray(runs) && !runs.length && Array.isArray(streams) && !streams.length ? 1 : 0;
+  var discoveryBadge = (badge) => {
+    if (!badge) return 0;
+    if (badge.pending) return badge.pending;
+    return badge.has_runs === false && badge.streams_configured === false ? 1 : 0;
   };
+  function singleFlight(fn) {
+    let pending = null;
+    return (...args) => {
+      if (pending) return pending;
+      pending = Promise.resolve().then(() => fn(...args)).finally(() => {
+        pending = null;
+      });
+      return pending;
+    };
+  }
   function nextRunLabel(iso, now = /* @__PURE__ */ new Date()) {
     if (!iso) return "";
     const d = new Date(iso);
@@ -2521,14 +2533,38 @@
     return d.toLocaleTimeString(void 0, { hour: "numeric", minute: "2-digit" });
   }
   function sourcesLine(r) {
+    if (!r.coverage && r.sources) {
+      const { checked = 0, total = 0 } = r.sources;
+      if (!total) return "";
+      return checked === total ? `${checked} ${checked === 1 ? "source" : "sources"} checked` : `${checked} of ${total} sources checked`;
+    }
     const cov = r.coverage || [];
     if (!cov.length) return r.sources_checked && r.sources_checked.length ? `${r.sources_checked.length} sources` : "";
     const ok = cov.filter((c) => c.status === "complete").length;
     return ok === cov.length ? `${ok} ${ok === 1 ? "source" : "sources"} checked` : `${ok} of ${cov.length} sources checked`;
   }
-  function DiscoveryView({ runs, streams, error, loading, reload }) {
+  var PAGE = 20;
+  function useAllRuns(active, version) {
+    const { api } = useApp();
+    const [state, setState] = react_dashboard_default.useState({ runs: null, hasMore: false, loading: false, error: null });
+    const load = react_dashboard_default.useCallback(async (offset) => {
+      setState((s) => ({ ...s, loading: true }));
+      try {
+        const res = await api.runs({ all: 1, limit: PAGE, offset });
+        setState((s) => ({ runs: offset ? [...s.runs || [], ...res.runs || []] : res.runs || [], hasMore: !!res.has_more, loading: false, error: null }));
+      } catch (err) {
+        setState((s) => ({ ...s, loading: false, error: err }));
+      }
+    }, [api]);
+    react_dashboard_default.useEffect(() => {
+      if (active) load(0);
+    }, [active, version, load]);
+    return { ...state, more: () => load((state.runs || []).length) };
+  }
+  function DiscoveryView({ runs, info, streams, error, loading, reload, onAction }) {
     const { today } = useApp();
     const [filter, setFilter] = react_dashboard_default.useState("waiting");
+    const allRuns = useAllRuns(filter === "all", info && info.version);
     if (error && error.code === "not_found") {
       return /* @__PURE__ */ react_dashboard_default.createElement(
         Empty,
@@ -2543,12 +2579,13 @@
     if (error && !runs) {
       return /* @__PURE__ */ react_dashboard_default.createElement(Empty, { icon: "alert", title: "Could not load discovery", text: describeError(error), action: /* @__PURE__ */ react_dashboard_default.createElement(Button, { onClick: reload }, "Try again") });
     }
-    const all = runs || [];
+    const waiting = runs || [];
+    const total = info ? info.total : waiting.length;
     const configured = Array.isArray(streams) && streams.length > 0;
-    if (!all.length && configured) {
+    if (!total && configured) {
       return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-disco" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disco-inner" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disco-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("h1", { className: "at-period" }, "Discovery"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Refresh", onClick: reload })), /* @__PURE__ */ react_dashboard_default.createElement(SourcesBar, { streams, reload }), /* @__PURE__ */ react_dashboard_default.createElement(RunningCards, { streams }), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "clock", size: 18 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup-title" }, "Waiting for the first run"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, streams.map((s) => `${titleCase(s.name)}: ${s.when || "scheduled"}`).join(" \xB7 "))))));
     }
-    if (!all.length) {
+    if (!total) {
       return /* @__PURE__ */ react_dashboard_default.createElement(
         Empty,
         {
@@ -2560,9 +2597,8 @@
         }
       );
     }
-    const needs = (r) => (r.summary ? r.summary.pending : (r.proposals || []).filter((p) => p.state === "pending").length) > 0 || (r.conflicts || []).length || (r.failures || []).length;
-    const shown = filter === "waiting" ? all.filter(needs) : all;
-    const latest = all[0];
+    const shown = filter === "waiting" ? waiting : allRuns.runs || [];
+    const latest = info && info.latest || waiting[0];
     return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-scroll at-disco" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disco-inner" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-disco-bar" }, /* @__PURE__ */ react_dashboard_default.createElement("h1", { className: "at-period" }, "Discovery"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement(
       Segmented,
       {
@@ -2571,7 +2607,7 @@
         onChange: setFilter,
         options: [{ value: "waiting", label: "Waiting for you" }, { value: "all", label: "All runs" }]
       }
-    ), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Refresh", onClick: reload })), configured ? /* @__PURE__ */ react_dashboard_default.createElement(SourcesBar, { streams, reload }) : null, configured ? /* @__PURE__ */ react_dashboard_default.createElement(RunningCards, { streams }) : null, !shown.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "check", size: 18 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup-title" }, "All caught up"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, "Last run: ", titleCase(latest.stream), ", ", relativeDay(latest.day, today), " ", runTime(latest)))) : null, shown.map((r) => /* @__PURE__ */ react_dashboard_default.createElement(RunCard, { key: r.run_id, run: r, filter, reload }))));
+    ), /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "refresh", label: "Refresh", onClick: reload })), configured ? /* @__PURE__ */ react_dashboard_default.createElement(SourcesBar, { streams, reload }) : null, configured ? /* @__PURE__ */ react_dashboard_default.createElement(RunningCards, { streams }) : null, filter === "all" && !allRuns.runs ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-loading" }, /* @__PURE__ */ react_dashboard_default.createElement(Spinner, { size: 18 })) : null, filter === "all" && allRuns.error ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-none" }, describeError(allRuns.error)) : null, filter === "waiting" && !shown.length && latest ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "check", size: 18 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-caughtup-title" }, "All caught up"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, "Last run: ", titleCase(latest.stream), ", ", relativeDay(latest.day, today), " ", runTime(latest)))) : null, shown.map((r) => /* @__PURE__ */ react_dashboard_default.createElement(RunCard, { key: r.run_id, summary: r, filter, onAction })), filter === "all" && allRuns.hasMore ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-more" }, /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", onClick: allRuns.more, disabled: allRuns.loading }, allRuns.loading ? "Loading\u2026" : "Show more runs")) : null));
   }
   var SETUP_PROMPT = "Set up task discovery";
   var ADD_SOURCE_PROMPT = "I want to add a new source to task discovery";
@@ -2722,15 +2758,67 @@
   function DiscoveryExplainer() {
     return /* @__PURE__ */ react_dashboard_default.createElement("section", { className: "at-explainer", "aria-label": "What discovery does" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-explainer-head" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-explainer-kicker" }, "Why set it up"), /* @__PURE__ */ react_dashboard_default.createElement("h3", null, "A safety net for the asks that slip through"), /* @__PURE__ */ react_dashboard_default.createElement("p", null, "Every day, small requests get buried: a reply you meant to send, a favor asked halfway through a long thread, one ask among twenty in a meeting. Discovery finds the ones meant for you and offers them as tasks, so nothing quietly falls through the cracks.")), /* @__PURE__ */ react_dashboard_default.createElement("ol", { className: "at-explainer-steps" }, DISCO_STEPS.map((s, i) => /* @__PURE__ */ react_dashboard_default.createElement("li", { key: s.title, className: "at-explainer-step" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-explainer-num" }, i + 1), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-explainer-step-icon" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: s.icon, size: 16 })), /* @__PURE__ */ react_dashboard_default.createElement("strong", null, s.title), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-explainer-step-text" }, s.text)))), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-explainer-sub" }, "What it catches"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-explainer-grid" }, DISCO_CATCHES.map((c) => /* @__PURE__ */ react_dashboard_default.createElement("article", { key: c.source, className: "at-catch" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-catch-source" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: c.icon, size: 14 }), " ", c.source), /* @__PURE__ */ react_dashboard_default.createElement("h4", null, c.title), /* @__PURE__ */ react_dashboard_default.createElement("blockquote", null, [].concat(c.quote).map((line) => /* @__PURE__ */ react_dashboard_default.createElement("span", { key: line }, line))), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-catch-where" }, c.where), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-catch-task" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-catch-check", "aria-hidden": "true" }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-catch-task-text" }, c.task), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-catch-due" }, c.due))))), /* @__PURE__ */ react_dashboard_default.createElement("p", { className: "at-explainer-foot" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "check", size: 14 }), " Nothing becomes a task until you reply. Discovery only reads your sources: it never replies to anyone or changes anything in your email, chat or documents."));
   }
-  function RunCard({ run, filter, reload }) {
-    const { today } = useApp();
-    const proposals = run.proposals || [];
-    const visible = filter === "waiting" ? proposals.filter((p) => p.state === "pending") : proposals;
-    const outcomes = (run.outcomes || []).filter((o) => o.status !== "noop");
-    const attention = [...(run.conflicts || []).map((c) => ({ ...c, kind: "conflict" })), ...run.attention || run.failures || []];
-    const quiet = [...(run.moved || []).map((m) => ({ ...m, label: "Next run" })), ...(run.not_proposed || []).map((m) => ({ ...m, label: "Not proposed" }))];
+  var summaryKey = (r) => [r.pending, r.expired, r.attention, r.conflicts, r.unfinished, r.status, JSON.stringify(r.proposals || {})].join("|");
+  function RunCard({ summary, filter, onAction }) {
+    const { today, api } = useApp();
+    const toast = useToast();
+    const [open, setOpen] = react_dashboard_default.useState(filter === "waiting");
+    const [detail, setDetail] = react_dashboard_default.useState(null);
+    const [failed, setFailed] = react_dashboard_default.useState(null);
+    const key = summaryKey(summary);
+    const fetchDetail = react_dashboard_default.useMemo(() => singleFlight(async () => {
+      try {
+        setDetail(await api.run(summary.run_id));
+        setFailed(null);
+      } catch (err) {
+        setFailed(err);
+      }
+    }), [api, summary.run_id]);
+    const shownKey = react_dashboard_default.useRef(null);
+    react_dashboard_default.useEffect(() => {
+      if (!open || shownKey.current === key) return;
+      shownKey.current = key;
+      fetchDetail();
+    }, [open, key, fetchDetail]);
+    const resolved = react_dashboard_default.useCallback((res) => {
+      if (res && res.run_detail) {
+        setDetail(res.run_detail);
+        if (res.run) shownKey.current = summaryKey(res.run);
+      } else if (res && res.proposal) setDetail((d) => d && { ...d, proposals: d.proposals.map((p) => p.proposal_id === res.proposal.proposal_id ? res.proposal : p) });
+      else fetchDetail();
+      if (onAction) onAction(res);
+    }, [fetchDetail, onAction]);
+    const reload = react_dashboard_default.useCallback(() => fetchDetail(), [fetchDetail]);
+    const run = detail ? { ...summary, ...detail } : summary;
+    const proposals = detail && detail.proposals || [];
+    const unfinished = (p) => p.state === "approved" && !(p.result && p.result.state === "complete");
+    const visible = filter === "waiting" ? proposals.filter((p) => p.state === "pending" || unfinished(p)) : proposals;
+    const outcomes = (detail && detail.outcomes || []).filter((o) => o.status !== "noop");
+    const attention = detail ? [...(detail.conflicts || []).map((c) => ({ ...c, kind: "conflict" })), ...detail.attention || detail.failures || []] : [];
+    const quiet = detail ? [...(detail.moved || []).map((m) => ({ ...m, label: "Next run" })), ...(detail.not_proposed || []).map((m) => ({ ...m, label: "Not proposed" }))] : [];
     const test = run.mode && run.mode !== "production";
-    return /* @__PURE__ */ react_dashboard_default.createElement("article", { className: "at-run" }, /* @__PURE__ */ react_dashboard_default.createElement("header", { className: "at-run-head" }, /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-title" }, titleCase(run.stream)), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-sub" }, /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(run.day, today), runTime(run) ? ` \xB7 ${runTime(run)}` : ""), sourcesLine(run) ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx(run.degraded && "is-late") }, sourcesLine(run)) : null, test ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-badge" }, "Test run") : null)), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), run.summary && run.summary.pending ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-count is-accent" }, run.summary.pending, " waiting") : null), visible.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-proposals" }, visible.map((p) => /* @__PURE__ */ react_dashboard_default.createElement(ProposalCard, { key: p.proposal_id, p, run, reload, readOnly: test }))) : filter === "all" && !proposals.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-none" }, "No new proposals in this run.") : null, outcomes.length ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Updated automatically", count: outcomes.length, className: "at-run-fold" }, outcomes.map((o) => /* @__PURE__ */ react_dashboard_default.createElement(Outcome, { key: o.unit_id, o, run, reload }))) : null, attention.length ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Needs attention", count: attention.length, tone: "late", className: "at-run-fold", defaultOpen: true }, attention.map((a, i) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: i, className: "at-attn" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 14 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-attn-title" }, a.title || (a.kind === "conflict" ? "Several tasks match one item" : "Research follow-up")), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, a.kind === "conflict" ? "Nothing was changed. Ask Hermes which task this belongs to." : a.text || a.reason))))) : null, /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Run details", className: "at-run-fold is-quiet" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-details" }, (run.coverage || []).map((c, i) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: i, className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx("at-statusdot", c.status === "complete" ? "is-ok" : "is-late") }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, c.source_key || c.source || "Source"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, c.status === "complete" ? "Checked" : c.status || "Unknown"))), quiet.map((q, i) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: "q" + i, className: "at-detail-row is-note" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, q.label), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, q.title || "Research item", /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-detail-note" }, q.text)))), filteredRows(run.coverage).map((f, i) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: "f" + i, className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Filtered"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, f.title), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, f.rule, f.kept ? " \xB7 replies kept" : ""))), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Run"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono" }, String(run.run_id).slice(0, 12))), run.delivery && run.delivery.state ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Digest"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, deliveryLabel(run.delivery.state))) : null)));
+    const pendingCount2 = typeof summary.pending === "number" ? summary.pending : run.summary && run.summary.pending;
+    const toggle = filter === "all" ? () => setOpen((v) => !v) : null;
+    return /* @__PURE__ */ react_dashboard_default.createElement("article", { className: "at-run" }, /* @__PURE__ */ react_dashboard_default.createElement(
+      "header",
+      {
+        className: cx("at-run-head", toggle && "is-toggle"),
+        onClick: toggle || void 0,
+        role: toggle ? "button" : void 0,
+        tabIndex: toggle ? 0 : void 0,
+        "aria-expanded": toggle ? open : void 0,
+        onKeyDown: toggle ? (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggle();
+          }
+        } : void 0
+      },
+      /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-title" }, titleCase(run.stream)), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-sub" }, /* @__PURE__ */ react_dashboard_default.createElement("span", null, relativeDay(run.day, today), runTime(run) ? ` \xB7 ${runTime(run)}` : ""), sourcesLine(run) ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx(run.degraded && "is-late") }, sourcesLine(run)) : null, test ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-badge" }, "Test run") : null)),
+      /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }),
+      pendingCount2 ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-count is-accent" }, pendingCount2, " waiting") : null,
+      toggle ? /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: open ? "chevD" : "chevR", size: 14, className: "at-muted" }) : null
+    ), !open ? null : !detail ? failed ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-none" }, describeError(failed), " ", /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", onClick: reload }, "Try again")) : /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-loading" }, /* @__PURE__ */ react_dashboard_default.createElement(Spinner, { size: 14 })) : /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, visible.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-proposals" }, visible.map((p) => /* @__PURE__ */ react_dashboard_default.createElement(ProposalCard, { key: p.proposal_id, p, run, onResolved: resolved, readOnly: test }))) : filter === "all" && !proposals.length ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-run-none" }, "No new proposals in this run.") : null, outcomes.length ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Updated automatically", count: outcomes.length, className: "at-run-fold" }, outcomes.map((o) => /* @__PURE__ */ react_dashboard_default.createElement(Outcome, { key: o.unit_id, o, run, onResolved: resolved }))) : null, attention.length ? /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Needs attention", count: attention.length, tone: "late", className: "at-run-fold", defaultOpen: true }, attention.map((a, i) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: i, className: "at-attn" }, /* @__PURE__ */ react_dashboard_default.createElement(Icon, { name: "alert", size: 14 }), /* @__PURE__ */ react_dashboard_default.createElement("div", null, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-attn-title" }, a.title || (a.kind === "conflict" ? "Several tasks match one item" : "Research follow-up")), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-muted" }, a.kind === "conflict" ? "Nothing was changed. Ask Hermes which task this belongs to." : a.text || a.reason))))) : null, /* @__PURE__ */ react_dashboard_default.createElement(Disclosure, { title: "Run details", className: "at-run-fold is-quiet" }, /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-details" }, (run.coverage || []).map((c, i) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: i, className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx("at-statusdot", c.status === "complete" ? "is-ok" : "is-late") }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, c.source_key || c.source || "Source"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, c.status === "complete" ? "Checked" : c.status || "Unknown"))), quiet.map((q, i) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: "q" + i, className: "at-detail-row is-note" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, q.label), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, q.title || "Research item", /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-detail-note" }, q.text)))), filteredRows(run.coverage).map((f, i) => /* @__PURE__ */ react_dashboard_default.createElement("div", { key: "f" + i, className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Filtered"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }, f.title), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, f.rule, f.kept ? " \xB7 replies kept" : ""))), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Run"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-mono" }, String(run.run_id).slice(0, 12))), run.delivery && run.delivery.state ? /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-detail-row" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Digest"), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement("span", null, deliveryLabel(run.delivery.state))) : null))));
   }
   function filteredRows(coverage) {
     return (coverage || []).flatMap((c) => {
@@ -2739,15 +2827,14 @@
     }).slice(0, 50);
   }
   var deliveryLabel = (s) => ({ delivered: "Sent", host_pending: "Sent by Hermes", prepared: "Prepared", not_prepared: "Not sent", unknown: "Unknown", inflight: "Sending" })[s] || s;
-  function Outcome({ o, run, reload }) {
+  function Outcome({ o, run, onResolved }) {
     const { actions, api } = useApp();
     const toast = useToast();
     const [busy, setBusy] = react_dashboard_default.useState(false);
     const resume = async () => {
       setBusy(true);
       try {
-        await api.resume(run.run_id, o.unit_id);
-        await reload();
+        onResolved(await api.resume(run.run_id, o.unit_id));
       } catch (err) {
         toast(describeError(err), { tone: "error" });
       }
@@ -2756,7 +2843,7 @@
     const done = o.status === "complete";
     return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-outcome" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx("at-statusdot", done ? "is-ok" : "is-late") }), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-outcome-title", onClick: () => o.task_id && actions.open(o.task_id) }, o.title), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), done ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Updated") : o.resume_action ? /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", onClick: resume, disabled: busy }, busy ? "Finishing\u2026" : "Finish update") : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, o.status));
   }
-  function ProposalCard({ p, run, reload, readOnly }) {
+  function ProposalCard({ p, run, onResolved, readOnly }) {
     const { api, actions, today, meta, store } = useApp();
     const toast = useToast();
     const overlay = useOverlay();
@@ -2770,10 +2857,20 @@
     const [area, setArea] = react_dashboard_default.useState(p.area || (streamAreas.length === 1 ? streamAreas[0] : meta.default_area) || "");
     const [busy, setBusy] = react_dashboard_default.useState(null);
     const [gone, setGone] = react_dashboard_default.useState(false);
+    const finish = async () => {
+      setBusy("finish");
+      try {
+        onResolved(await api.resume(run.run_id, p.unit_id));
+        store.refresh();
+      } catch (err) {
+        toast(describeError(err), { tone: "error" });
+      }
+      setBusy(null);
+    };
     if (p.state === "approved" || p.state === "complete") {
       const r = p.result || {};
       const finished = p.state === "complete" || r.state === "complete";
-      return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-prop is-resolved" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx("at-statusdot", finished ? "is-ok" : "is-late") }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-prop-resolved" }, r.operation === "updated" ? "Updated" : "Created", " ", /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-linkish", onClick: () => r.task_id && actions.open(r.task_id) }, r.title || p.title)), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), finished ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, p.ref) : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Saving\u2026"));
+      return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-prop is-resolved" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: cx("at-statusdot", finished ? "is-ok" : "is-late") }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-prop-resolved" }, r.operation === "updated" ? "Updated" : "Created", " ", /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", className: "at-linkish", onClick: () => r.task_id && actions.open(r.task_id) }, r.title || p.title)), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), finished ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, p.ref) : /* @__PURE__ */ react_dashboard_default.createElement(Button, { size: "sm", onClick: finish, disabled: !!busy || readOnly }, busy ? "Finishing\u2026" : "Finish"));
     }
     if (p.state === "dismissed" || gone) {
       return /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-prop is-resolved is-dismissed" }, /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-prop-resolved" }, p.title), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-muted" }, "Dismissed"));
@@ -2795,21 +2892,21 @@
         const res = await api.approve(p.proposal_id, body);
         const receipt = res.receipt || {};
         toast(choice === "create" ? "Task created" : "Task updated", receipt.task_id ? { action: { label: "Open", run: () => actions.open(receipt.task_id) } } : {});
-        await reload();
+        onResolved(res);
         store.refresh();
       } catch (err) {
         toast(describeError(err), { tone: "error" });
-        if (err.code === "already_resolved" || err.code === "stale_revision") reload();
+        onResolved(null);
       }
       setBusy(null);
     };
     const dismiss = async () => {
       setBusy("dismiss");
       try {
-        await api.dismiss(p.proposal_id);
+        const res = await api.dismiss(p.proposal_id);
         setGone(true);
         toast("Proposal dismissed");
-        reload();
+        onResolved(res);
       } catch (err) {
         toast(describeError(err), { tone: "error" });
       }
@@ -3166,41 +3263,75 @@
     const [prefsRaw, setPrefsRaw] = usePref("prefs", { view: null, area: "", hideDone: false });
     const prefs = prefsRaw;
     const setPrefs = react_dashboard_default.useCallback((p) => setPrefsRaw((cur) => ({ ...cur, ...p })), [setPrefsRaw]);
+    const [badge, setBadge] = react_dashboard_default.useState(null);
     const [runs, setRuns] = react_dashboard_default.useState(null);
+    const [runsInfo, setRunsInfo] = react_dashboard_default.useState(null);
     const [runsError, setRunsError] = react_dashboard_default.useState(null);
     const [runsLoading, setRunsLoading] = react_dashboard_default.useState(false);
     const [streams, setStreams] = react_dashboard_default.useState(null);
-    const loadMeta = react_dashboard_default.useCallback(() => api.meta().then((m) => {
+    const badgeSeen = react_dashboard_default.useRef(null);
+    const runsSeen = react_dashboard_default.useRef(null);
+    const tabRef = react_dashboard_default.useRef(tab);
+    tabRef.current = tab;
+    const loadMeta = react_dashboard_default.useMemo(() => singleFlight(() => api.meta().then((m) => {
       setMeta(m);
       setMetaError(null);
       store.setToday(m.today);
-    }, setMetaError), [api, store]);
-    const loadRuns = react_dashboard_default.useCallback(async () => {
-      setRunsLoading(true);
+    }, setMetaError)), [api, store]);
+    const loadBadge = react_dashboard_default.useMemo(() => singleFlight(async () => {
+      const seen = badgeSeen.current;
       try {
-        const res = await api.runs();
-        setRuns(res.runs || []);
-        setRunsError(null);
-      } catch (err) {
-        setRunsError(err);
+        const res = await api.badge(seen ? { since: seen.version, day: seen.day } : {});
+        if (res.unchanged) return false;
+        badgeSeen.current = { version: res.version, day: res.day };
+        setBadge(res);
+        return true;
+      } catch {
+        return false;
       }
-      setRunsLoading(false);
+    }), [api]);
+    const loadStreams = react_dashboard_default.useMemo(() => singleFlight(async () => {
       try {
         const s = await api.settings();
         setStreams(Array.isArray(s.streams) ? s.streams : null);
       } catch {
         setStreams(null);
       }
-    }, [api]);
+    }), [api]);
+    const fetchRuns = react_dashboard_default.useMemo(() => singleFlight(async (force) => {
+      const seen = force ? null : runsSeen.current;
+      setRunsLoading(true);
+      try {
+        const res = await api.runs(seen ? { since: seen.version, day: seen.day } : {});
+        if (!res.unchanged) {
+          runsSeen.current = { version: res.version, day: res.day };
+          setRuns(res.runs || []);
+          setRunsInfo({ total: res.total || 0, latest: res.latest || null, version: res.version, day: res.day });
+        }
+        setRunsError(null);
+      } catch (err) {
+        setRunsError(err);
+      }
+      setRunsLoading(false);
+    }), [api]);
+    const loadRuns = react_dashboard_default.useCallback((force = true) => Promise.all([fetchRuns(force), loadStreams(), loadBadge()]), [fetchRuns, loadStreams, loadBadge]);
     react_dashboard_default.useEffect(() => {
       loadMeta();
-      loadRuns();
-    }, [loadMeta, loadRuns]);
+      loadBadge();
+    }, [loadMeta, loadBadge]);
     react_dashboard_default.useEffect(() => {
-      const refresh = () => {
+      if (tab === "discovery") loadRuns(false);
+    }, [tab, loadRuns]);
+    const refreshTasks = react_dashboard_default.useMemo(() => singleFlight(() => store.refresh()), [store]);
+    react_dashboard_default.useEffect(() => {
+      const refresh = async () => {
         loadMeta();
-        store.refresh();
-        loadRuns();
+        refreshTasks();
+        const changed = await loadBadge();
+        if (tabRef.current === "discovery") {
+          fetchRuns(false);
+          if (changed) loadStreams();
+        }
       };
       const id = setInterval(() => {
         if (document.visibilityState === "visible") refresh();
@@ -3210,7 +3341,14 @@
         clearInterval(id);
         window.removeEventListener("focus", refresh);
       };
-    }, [loadMeta, loadRuns, store]);
+    }, [loadMeta, loadBadge, fetchRuns, loadStreams, refreshTasks]);
+    const onDiscoveryAction = react_dashboard_default.useCallback((res) => {
+      if (res && res.badge) {
+        badgeSeen.current = { version: res.badge.version, day: res.badge.day };
+        setBadge(res.badge);
+      }
+      if (res && res.run) setRuns((cur) => (cur || []).map((r) => r.run_id === res.run.run_id ? res.run : r));
+    }, []);
     react_dashboard_default.useEffect(() => {
       const open = (e) => {
         const v = e.detail;
@@ -3303,7 +3441,7 @@
       return a;
     }, [api, store, toast]);
     const onDrop = react_dashboard_default.useCallback((task, date) => actions.move(task, date), [actions]);
-    const pending = discoveryBadge(runs, streams);
+    const pending = discoveryBadge(badge);
     const ctx = react_dashboard_default.useMemo(() => ({
       api,
       store,
@@ -3360,7 +3498,7 @@
       return /* @__PURE__ */ react_dashboard_default.createElement(react_dashboard_default.Fragment, null, /* @__PURE__ */ react_dashboard_default.createElement("nav", { className: "at-appbar" }, narrow ? null : /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-brand" }, /* @__PURE__ */ react_dashboard_default.createElement(BrandMark, { size: 20 }), "Alchemy Task"), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: "at-tabs", role: "tablist" }, /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", role: "tab", "aria-selected": tab === "tasks", className: cx("at-tab", tab === "tasks" && "is-on"), onClick: () => setTab("tasks") }, "Tasks"), /* @__PURE__ */ react_dashboard_default.createElement("button", { type: "button", role: "tab", "aria-selected": tab === "discovery", className: cx("at-tab", tab === "discovery" && "is-on"), onClick: () => setTab("discovery") }, "Discovery", pending ? /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-badge-dot" }, pending) : null)), /* @__PURE__ */ react_dashboard_default.createElement("span", { className: "at-flex" }), busy ? /* @__PURE__ */ react_dashboard_default.createElement(Spinner, { size: 12 }) : null, /* @__PURE__ */ react_dashboard_default.createElement(IconButton, { icon: "gear", label: "Settings", className: cx(settingsOpen && "is-on"), onClick: () => {
         setSelectedId(null);
         setSettingsOpen((v) => !v);
-      } })), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-main", selectedId && !narrow && "has-panel", settingsOpen && !narrow && "has-panel") }, tab === "tasks" ? /* @__PURE__ */ react_dashboard_default.createElement(TasksView, { narrow }) : /* @__PURE__ */ react_dashboard_default.createElement(DiscoveryView, { runs, streams, error: runsError, loading: runsLoading, reload: loadRuns })), selectedId ? /* @__PURE__ */ react_dashboard_default.createElement(TaskPanel, { id: selectedId, narrow, onClose: () => setSelectedId(null) }) : null, settingsOpen && !selectedId ? /* @__PURE__ */ react_dashboard_default.createElement(SettingsPanel, { narrow, onClose: () => setSettingsOpen(false) }) : null);
+      } })), /* @__PURE__ */ react_dashboard_default.createElement("div", { className: cx("at-main", selectedId && !narrow && "has-panel", settingsOpen && !narrow && "has-panel") }, tab === "tasks" ? /* @__PURE__ */ react_dashboard_default.createElement(TasksView, { narrow }) : /* @__PURE__ */ react_dashboard_default.createElement(DiscoveryView, { runs, info: runsInfo, streams, error: runsError, loading: runsLoading, reload: loadRuns, onAction: onDiscoveryAction })), selectedId ? /* @__PURE__ */ react_dashboard_default.createElement(TaskPanel, { id: selectedId, narrow, onClose: () => setSelectedId(null) }) : null, settingsOpen && !selectedId ? /* @__PURE__ */ react_dashboard_default.createElement(SettingsPanel, { narrow, onClose: () => setSettingsOpen(false) }) : null);
     })();
     return /* @__PURE__ */ react_dashboard_default.createElement(AppContext.Provider, { value: ctx }, /* @__PURE__ */ react_dashboard_default.createElement(
       "div",

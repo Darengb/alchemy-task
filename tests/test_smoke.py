@@ -189,6 +189,34 @@ def test_someone_elses_action_is_not_proposed(settings, data_dir, tmp_path):
     assert [f["group"] for f in not_proposed] == [NOT_PROPOSED] and "Doug" in not_proposed[0]["text"]
 
 
+def test_resolved_runs_leave_the_discovery_list(settings, data_dir, tmp_path):
+    """The badge counts pending proposals from the saved summaries; once every item of a run is
+    resolved, the run drops out of the default Discovery list."""
+    from alchemy_task import runtime
+    from alchemy_task.discovery_integration import DiscoveryIntegration
+    ctx = FakeCtx({"workspace_root": settings.workspace_root, "timezone": settings.timezone}, data_dir)
+    rt = runtime.Runtime(ctx, settings, data_dir)
+    ctx.state.set("streams", {"work": {"name": "work", "mode": "production", "areas": ["work"], "research_cap": 50,
+                                       "sources": [{"name": "Feed", "scope": ["board"], "method": "reader"}],
+                                       "deliver": "origin", "origin_session": "parent", "label": ""}})
+    store, run = _accepted_run(data_dir, suggested_due="2030-01-07")
+    integration = DiscoveryIntegration(rt, profile_home=tmp_path / "profile")
+    for c in store.get_run(run)["candidates"]:
+        if c.get("parent_candidate_id"):
+            integration.record_decision(run, c["candidate_id"], decision="propose", reason="New action.", session_id="parent")
+    integration.finalize(run, session_id="parent")
+    before = integration.badge()
+    assert before["pending"] == 1 and before["has_runs"]
+    assert [v["run_id"] for v in integration.summary_views() if v["needs_attention"]] == [run]
+    integration.decide({"dismiss": ["1"], "day": "2030-01-01"}, session_id="parent", today="2030-01-02")
+    after = integration.badge()
+    assert after["pending"] == 0 and after["version"] > before["version"]
+    assert not [v for v in integration.summary_views() if v["needs_attention"]]
+    # A rebuild from the detailed records gives the same answer.
+    integration.summaries.invalidate()
+    assert integration.badge()["pending"] == 0
+
+
 def test_research_children_cannot_write_or_read_credentials():
     from alchemy_task.core.research_guard import is_write_like, refuse_file_read
     assert is_write_like("mcp__gmail__send_email") and is_write_like("write_file") and is_write_like("terminal")

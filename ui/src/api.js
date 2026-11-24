@@ -76,6 +76,9 @@ export function makeTransport(send) {
     handoffStatus: (handoffId) => call('GET', `/handoffs/${enc(handoffId)}`),
 
     // ---- discovery (routes owned by the discovery backend; see docs/discovery-backend-contract.md)
+    // Tasks tab badge: pending count and index version only. since/day: answer {unchanged: true} when current.
+    badge: (params = {}) => call('GET', '/badge' + qs(params)),
+    // Saved run summaries: runs that need the user by default; {all: 1, limit, offset} pages every run.
     runs: (params = {}) => call('GET', '/runs' + qs(params)),
     run: (runId) => call('GET', `/runs/${enc(runId)}`),
     approve: (proposalId, body) => call('POST', `/proposals/${enc(proposalId)}/approve`, body),

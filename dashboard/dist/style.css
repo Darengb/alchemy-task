@@ -2681,6 +2681,18 @@ html:has(.at-mobile-editor[open]) {
 .at-run-sub .is-late {
   color: var(--at-late);
 }
+.at-run-head.is-toggle {
+  cursor: pointer;
+  align-items: center;
+}
+.at-run-head .at-count {
+  white-space: nowrap;
+}
+.at-run-more {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 12px;
+}
 .at-run-none {
   padding: 12px 16px;
   border-radius: 8px;
