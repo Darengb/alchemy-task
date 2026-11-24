@@ -186,3 +186,43 @@ def test_only_lost_items_raise_an_alarm():
     assert group(reason="could not be matched to your tasks: bad file") == ATTENTION
     unreadable = classify({"reason": "The email's four image attachments can't be read here; open it to check them."})
     assert unreadable["group"] == ATTENTION and "image" in unreadable["text"]
+
+
+def test_resources_are_stored_once_and_survive_migration_and_prune(data_dir):
+    import hashlib, os
+    from alchemy_task.core.discovery_state import DiscoveryStore
+    store = DiscoveryStore(data_dir / "discovery")
+    a, b = store.init_run("run-a"), store.init_run("run-b")
+    shared = store.put_resource(a, "task-body-x", "same body")["sha256"]
+    assert store.put_resource(b, "task-body-x", "same body")["sha256"] == shared
+    only_a = store.put_resource(a, "task-body-y", "only in a")["sha256"]
+    blobs = [p for p in (store.state_root / "blobs").rglob("*") if p.is_file()]
+    assert sorted(p.name for p in blobs) == sorted({shared, only_a})
+    # A run written before the shared store: its copy lives in runs/<id>/resources.
+    legacy_data = b"legacy bytes"
+    legacy_sha = hashlib.sha256(legacy_data).hexdigest()
+    ledger_path = store.run_dir(b) / "ledger.json"
+    ledger = json.loads(ledger_path.read_text())
+    ledger["resources"]["old"] = {"name": "old", "sha256": legacy_sha, "total_bytes": len(legacy_data), "entry_count": None}
+    ledger_path.write_text(json.dumps(ledger))
+    (store.run_dir(b) / "resources").mkdir()
+    (store.run_dir(b) / "resources" / legacy_sha).write_bytes(legacy_data)
+    assert store.read_resource_bytes(b, legacy_sha) == legacy_data
+    before = ledger_path.read_bytes()
+    assert store.migrate_resources(dry_run=True)["blobs_created"] == 1
+    assert (store.run_dir(b) / "resources" / legacy_sha).exists()
+    done = store.migrate_resources(dry_run=False)
+    assert done["legacy_files_removed"] == 1 and not done["problems"]
+    assert not (store.run_dir(b) / "resources").exists() and ledger_path.read_bytes() == before
+    assert store.read_resource_bytes(b, legacy_sha) == legacy_data
+    assert store.migrate_resources(dry_run=False)["files"] == 0
+    # Pruning run A drops its unique blob but keeps the one run B still names.
+    path_a = store.run_dir(a) / "ledger.json"
+    ledger_a = json.loads(path_a.read_text()); ledger_a["status"] = "finalized"; path_a.write_text(json.dumps(ledger_a))
+    old = 1_000_000_000
+    for p in [path_a, *(store.state_root / "blobs").rglob("*")]:
+        os.utime(p, (old, old))
+    result = store.prune(days=0)
+    assert result["deleted_runs"] == [a] and result["blobs_removed"] == 1
+    assert store.read_resource_bytes(b, shared) == b"same body"
+    assert not store.blob_path(only_a).exists()

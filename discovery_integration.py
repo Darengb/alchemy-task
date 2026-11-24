@@ -877,7 +877,7 @@ class DiscoveryIntegration:
             raise UserError('saved replay schema compatibility failed')
         inputs = {}
         for name, info in old['resources'].items():
-            raw = (self.store.run_dir(run_id) / 'resources' / info['sha256']).read_bytes()
+            raw = self.store.read_resource_bytes(run_id, info['sha256'])
             if hashlib.sha256(raw).hexdigest() != info['sha256'] or len(raw) != info['total_bytes']:
                 raise UserError('saved replay resource integrity failed')
             inputs[name] = raw.decode('utf-8')
@@ -1167,7 +1167,7 @@ class DiscoveryIntegration:
         extra = {}
         for name, info in ledger['resources'].items():
             if name.startswith('refiltered-'):
-                found = read_json(self.store.run_dir(ledger['run_id']) / 'resources' / info['sha256'], {})
+                found = read_json(self.store.resource_path(ledger['run_id'], info['sha256']), {})
                 extra[name[len('refiltered-'):]] = int(found.get('messages') or 0)
         if not extra:
             return coverage
@@ -1185,7 +1185,7 @@ class DiscoveryIntegration:
         current = {}
         for name, info in ledger['resources'].items():
             if name.startswith('collection-'):
-                receipt = json.loads((self.store.run_dir(ledger['run_id']) / 'resources' / info['sha256']).read_text())
+                receipt = self.store.read_resource_json(ledger['run_id'], info['sha256'])
                 key = receipt['source_key']
                 if key not in current or receipt.get('pass', 1) > current[key].get('pass', 1): current[key] = receipt
         return current
@@ -1308,7 +1308,7 @@ class DiscoveryIntegration:
         selection = {}
         if info:
             try:
-                selection = {e['candidate_id']: e for e in json.loads((self.store.run_dir(run_id) / 'resources' / info['sha256']).read_text())}
+                selection = {e['candidate_id']: e for e in self.store.read_resource_json(run_id, info['sha256'])}
             except (OSError, ValueError, KeyError, TypeError):
                 selection = {}
         occurrences = {c.get('occurrence_id'): c for c in ledger['candidates'] if c.get('occurrence_id')}
@@ -1340,7 +1340,7 @@ class DiscoveryIntegration:
         ledger = self.store.get_run(run_id)
         info = ledger['resources'].get('backlog-selection')
         if not info: return
-        selection = json.loads((self.store.run_dir(run_id) / 'resources' / info['sha256']).read_text())
+        selection = self.store.read_resource_json(run_id, info['sha256'])
         for entry in selection:
             cid = entry['candidate_id']
             candidate = self.store.get_candidate(run_id, cid)
@@ -1721,7 +1721,7 @@ class DiscoveryIntegration:
         info = ledger['resources'].get('join-record')
         unfinished = ('; call discovery_research_run with run_id %s until it returns status complete, then discovery_join' % run_id)
         if not info: raise UserError('global join required before review decisions/digest' + unfinished)
-        join = json.loads((self.store.run_dir(run_id) / 'resources' / info['sha256']).read_text())
+        join = self.store.read_resource_json(run_id, info['sha256'])
         if not join.get('joined'): raise UserError('global join incomplete' + unfinished)
         items, conflicts, outcomes, unit_failures = [], [], [], []
         for candidate in ledger['candidates']:
@@ -1760,11 +1760,11 @@ class DiscoveryIntegration:
         supplement_failures = []
         if 'supplement-selection' in ledger['resources']:
             info = ledger['resources']['supplement-selection']
-            selection = read_json(self.store.run_dir(run_id) / 'resources' / info['sha256'])
+            selection = read_json(self.store.resource_path(run_id, info['sha256']))
             supplement_failures = [{'title': x['title'], 'reason': 'Retained candidate not found in current approved window; original input remains saved'} for x in selection['expected'] if x['candidate_id'] in selection['missing_current']]
         if 'freeze-withheld' in ledger['resources']:
             info = ledger['resources']['freeze-withheld']
-            supplement_failures += [{'title': x['title'], 'reason': x['reason']} for x in read_json(self.store.run_dir(run_id) / 'resources' / info['sha256'])]
+            supplement_failures += [{'title': x['title'], 'reason': x['reason']} for x in read_json(self.store.resource_path(run_id, info['sha256']))]
         stream = self._stream(ledger['config'].get('stream_name', ledger['stream']))
         # The delivery owner is frozen with the digest so a later stream removal keeps the run's real delivery state.
         origin = {**ledger['origin'], 'session_id': ledger['origin'].get('stream_origin_session', ledger['origin']['session_id']),
