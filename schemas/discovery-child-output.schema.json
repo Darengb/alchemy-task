@@ -558,6 +558,15 @@
             "status_only"
           ]
         },
+        "user_role": {
+          "description": "Optional but expected. The user's part in this action, decided from the source (named assignees such as '[Name] Action' or 'X will ...', who was asked): doer (the user personally does the next step or is directly asked), approver (the user must approve, review, decide or sign off), waiting_on (someone else does it but the user is blocked on or depends on the result, or is expected to follow up), none (someone else owns it and the user has no step, dependency or follow-up). When unclear, prefer waiting_on or doer over none. A none workstream is not proposed and needs only minimal research.",
+          "enum": [
+            "doer",
+            "approver",
+            "waiting_on",
+            "none"
+          ]
+        },
         "suggested_due": {
           "description": "Optional. The date this task should be done, as YYYY-MM-DD, only when the source states or clearly implies one (\"Monday\", \"by Nov 23\", \"end of next week\"). Resolve relative words against the message's own date and the user's timezone, and pick the day the user's step belongs on (for example the day after a merge when the step is verifying it). Omit when the source gives no timing.",
           "type": "string",

@@ -4,7 +4,8 @@ Shared by the chat digest and the dashboard so both show the same thing.
 
 - ``attention``: something is lost unless the user acts (nothing will retry it).
 - ``moved``: the next run researches it again; nothing for the user to do.
-- ``not_proposed``: researched, but covered by another item or left out on purpose.
+- ``not_proposed``: researched, but covered by another item, owned by someone else with no part
+  for the user, or left out on purpose.
 
 Every group carries plain text for the user: no ids, field names or review wording.
 """
@@ -19,6 +20,8 @@ ATTENTION, MOVED, NOT_PROPOSED = 'attention', 'moved', 'not_proposed'
 TIME_BOX = "not finished within this run's research time"
 NOT_REVIEWED = 'not reviewed in this run'
 MATCH_FAILED = 'could not be matched to your tasks'
+# A unit whose research says another person owns the action and the user has no part in it.
+NOT_YOURS = 'not_yours'
 
 _LIFECYCLE = re.compile(r'\s*lifecycle terminal ([A-Za-z_]+)\s*')
 # Review wording that says the item repeats another one.
@@ -37,6 +40,20 @@ def _user_text(reason, title):
     return text
 
 
+def user_has_no_part(research):
+    """True only when research explicitly set user_role 'none'. Older research without the field never hides."""
+    return isinstance(research, dict) and research.get('user_role') == 'none'
+
+
+def not_yours_text(research):
+    """Plain reason naming the owner, for example 'Owned by Doug; you have no part in it.'"""
+    owners = research.get('owner_and_collaborators') if isinstance(research, dict) else None
+    name = next((' '.join(str(o.get('name') or '').split()) for o in owners or []
+                 if isinstance(o, dict) and o.get('role') == 'owner' and str(o.get('name') or '').strip()), '')
+    name = re.sub(r'\s*\(.*$', '', name)[:80].rstrip(' ,;:')
+    return f'Owned by {name}; you have no part in it.' if name else 'Owned by someone else; you have no part in it.'
+
+
 def classify(failure):
     """{'group', 'text'} for one failure record.
 
@@ -46,6 +63,8 @@ def classify(failure):
     reason = str(failure.get('reason') or '').strip()
     title = str(failure.get('title') or '')
     retry = failure.get('retry_pending') is True
+    if failure.get('kind') == NOT_YOURS:
+        return {'group': NOT_PROPOSED, 'text': reason or 'Owned by someone else; you have no part in it.'}
     if failure.get('kind') == 'covered':
         return {'group': NOT_PROPOSED, 'text': 'Covered by another item.'}
     if _DUPLICATE.search(reason):
