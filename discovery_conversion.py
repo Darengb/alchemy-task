@@ -13,6 +13,7 @@ from .core.discovery_dossiers import content_revision, render_discovery_dossier,
 from .core.locks import task_lock
 from .core import taskfile as tf
 from .core import research as rs
+from .core import task_index
 from .core.discovery_identity import UserError, canonical_source_id, extract_identities, source_identity_covers, is_message_refinement
 
 # Core Git outcomes that are final for a workspace without a remote or without Git.
@@ -152,52 +153,38 @@ class DiscoveryConversion:
         return c, research
 
     def _exact_values(self, doc, *, slack_workspaces=None):
-        # Related-only identities in a managed dossier never grant write authority.
-        body = doc.body
-        values = set()
-        try:
-            self._validate_dossiers(body)
-        except UserError:
-            # One task whose text merely mentions a marker (for example in a code span) must not block
-            # matching for every unit. Its dossier blocks grant no exact identity; plain metadata and
-            # body identities still count, and writing into it is still refused at the write check.
-            body = re.sub(r'<!-- discovery-dossier:[^>]*-->', '', body)
-            metadata = {k: v for k, v in doc.fm.items() if k not in {'related_source_ids', 'discovery_related_source_ids'}}
-            values.update(extract_identities(metadata, slack_workspaces=slack_workspaces))
-            values.update(extract_identities(body, slack_workspaces=slack_workspaces))
-            return values
-        for match in re.finditer(r'<!-- discovery-dossier:start ([A-Za-z0-9._-]+) -->(.*?)<!-- discovery-dossier:end \1 -->', body, re.S):
-            values.add('dossier:' + match[1])
-            decisive = re.search(r'### Decisive Source Identities\n(.*?)(?=\n### |$)', match[2], re.S)
-            if decisive:
-                values.update(extract_identities(decisive[1], slack_workspaces=slack_workspaces))
-        body = re.sub(r'<!-- discovery-dossier:start .*?<!-- discovery-dossier:end .*?-->', '', body, flags=re.S)
-        metadata = {k: v for k, v in doc.fm.items() if k not in {'related_source_ids', 'discovery_related_source_ids'}}
-        values.update(extract_identities(metadata, slack_workspaces=slack_workspaces))
-        values.update(extract_identities(body, slack_workspaces=slack_workspaces))
-        return values
+        return task_index.exact_values(doc.fm, doc.body, slack_workspaces=slack_workspaces)
 
     @staticmethod
     def _validate_dossiers(body):
-        opened = None
-        seen = set()
-        for marker in re.finditer(r'<!-- discovery-dossier:(start|end) ([A-Za-z0-9._-]+) -->', body):
-            kind, identity = marker.groups()
-            if kind == 'start':
-                if opened or identity in seen: raise UserError('malformed or duplicated existing dossier markers')
-                opened = identity
-                seen.add(identity)
-            else:
-                if opened != identity: raise UserError('malformed existing dossier end marker')
-                opened = None
-        if opened or body.count('<!-- discovery-dossier:') != len(list(re.finditer(r'<!-- discovery-dossier:(?:start|end) [A-Za-z0-9._-]+ -->', body))):
-            raise UserError('malformed existing dossier markers')
+        task_index.validate_dossiers(body)
 
-    def match(self, run, wid):
+    def _inputs(self, run, wid):
+        """(candidate, research, wanted identities, nominations, approved Slack workspace mapping)."""
         candidate, research = self.joined(run, wid)
         wanted = {canonical_source_id(x) for x in research['exact_source_ids']}
         wanted.add('dossier:dos-' + wid[2:])
         nominations = {x['path']: x['match_basis'] for x in research['existing_task_candidates']}
+        workspaces = {}
+        for source in self.store.get_run(run)['config'].get('sources', []):
+            if isinstance(source, dict):
+                for host, workspace in (source.get('url_mappings', {}).get('slack_workspaces') or {}).items():
+                    if host in workspaces and workspaces[host] != workspace: raise UserError('conflicting approved workspace URL mapping')
+                    workspaces[host] = workspace
+        return candidate, research, wanted, nominations, workspaces
+
+    def _index(self, tasks):
+        index = task_index.refresh(tasks, self.rt.data_dir)
+        if index.errors:
+            raise UserError('canonical task inventory is incomplete; resolve parse failures before matching')
+        return index
+
+    def match(self, run, wid):
+        return self._match(run, wid)[0]
+
+    def _match(self, run, wid):
+        """(match outcome, exact signature of the files that could match exactly)."""
+        candidate, research, wanted, nominations, workspaces = self._inputs(run, wid)
         tasks = self.rt.store()
         for relative, basis in nominations.items():
             if basis != 'exact': continue
@@ -207,19 +194,12 @@ class DiscoveryConversion:
             nominated = tf.parse_file(path)
             if not tf.has_task_tag(nominated.fm) or not nominated.task_id:
                 raise UserError('exact nomination must be a tagged canonical task with stable task_id')
-        workspaces = {}
-        for source in self.store.get_run(run)['config'].get('sources', []):
-            if isinstance(source, dict):
-                for host, workspace in (source.get('url_mappings', {}).get('slack_workspaces') or {}).items():
-                    if host in workspaces and workspaces[host] != workspace: raise UserError('conflicting approved workspace URL mapping')
-                    workspaces[host] = workspace
-        scan = tasks.scan()
-        if scan.errors:
-            raise UserError('canonical task inventory is incomplete; resolve parse failures before matching')
+        index = self._index(tasks)
         exact, semantic = [], []
         closed = []
-        for item in scan.tasks:
-            doc = tf.parse_file(item.path)  # full current bytes, not cached summaries
+        # The index names the files that could match; only those are reread in full.
+        for path, _ in index.candidates(wanted, workspaces, nominations):
+            doc = tf.parse_file(Path(path))  # full current bytes, not cached summaries
             rel = tasks.rel(doc.path)
             if doc.is_closed:
                 # Done or cancelled tasks are research context, never a destination: a follow-up
@@ -241,7 +221,23 @@ class DiscoveryConversion:
             elif rel in nominations:
                 semantic.append(target)
         semantic = order_semantic_targets(semantic, research)
-        return {'run_id': run, 'unit_id': wid, 'kind': 'conflict' if len(exact) > 1 else 'exact' if exact else 'selection' if len(semantic) > 1 else 'semantic' if semantic else 'new', 'targets': exact or semantic, 'closed_related': closed, 'research': research}
+        return {'run_id': run, 'unit_id': wid, 'kind': 'conflict' if len(exact) > 1 else 'exact' if exact else 'selection' if len(semantic) > 1 else 'semantic' if semantic else 'new', 'targets': exact or semantic, 'closed_related': closed, 'research': research}, self._signature(index, wanted, nominations, workspaces)
+
+    @staticmethod
+    def _signature(index, wanted, nominations, workspaces):
+        return index.signature(wanted, workspaces, [rel for rel, basis in nominations.items() if basis == 'exact'])
+
+    def _exact_unchanged(self, run, wid, plan):
+        """True when, by the stat-refreshed index, no file that could match exactly changed since prepare."""
+        saved = plan.get('exact_signature')
+        if saved is None: return False  # plan prepared before signatures were saved
+        _, _, wanted, nominations, workspaces = self._inputs(run, wid)
+        return self._signature(self._index(self.rt.store()), wanted, nominations, workspaces) == saved
+
+    def _destination_changed(self, run, wid, plan):
+        """destination_changed, deciding from the index alone when no exact candidate changed."""
+        if self._exact_unchanged(run, wid, plan): return False
+        return destination_changed(self.match(run, wid), plan)
 
     def _paths(self, run, wid):
         self.store.get_candidate(run, wid)  # validate identifiers before constructing paths
@@ -313,14 +309,14 @@ class DiscoveryConversion:
             raise UserError('choice must be create, update, auto or noop')
         if choice in {'create', 'update'} and user_approved is not True:
             raise UserError('explicit user approval required')
-        outcome = self.match(run, wid)
+        outcome, signature = self._match(run, wid)
         candidate, research = self.joined(run, wid)
         if target_task_id:
             # Matching tolerates another task that merely mentions a marker; writing into a task
             # whose own dossier markers are malformed is still refused.
-            for item in self.rt.store().scan().tasks:
-                if item.fm.get("task_id") == target_task_id:
-                    self._validate_dossiers(tf.parse_file(item.path).body)
+            for path, entry in self._index(self.rt.store()).tasks():
+                if entry.get('task_id') == target_task_id:
+                    self._validate_dossiers(tf.parse_file(Path(path)).body)
         if outcome['kind'] == 'conflict' and not (user_approved is True and choice in {'create', 'update'}):
             # Several exact matches: only the user's numbered choice (or create) may write.
             raise UserError('several existing tasks match exactly; the user must pick one by number or create a separate task')
@@ -486,7 +482,8 @@ class DiscoveryConversion:
             plan = {'run_id': run, 'unit_id': wid, 'request': request, 'state': 'prepared',
                     'task_id': tid, 'path': task_store.rel(path), 'preimage_sha256': tf.content_hash(before) if before else None,
                     'postimage': postimage, 'postimage_sha256': tf.content_hash(postimage.encode()),
-                    'dossier_id': dossier_id, 'research_revision': content_revision(research), 'dossier_revision': revision}
+                    'dossier_id': dossier_id, 'research_revision': content_revision(research), 'dossier_revision': revision,
+                    'exact_signature': signature}
             if old:
                 plan['history'] = [*old.get('history', []), old]
             atomic_json(plan_path, plan)  # UUID, path and FULL postimage persisted BEFORE any task write
@@ -714,8 +711,7 @@ class DiscoveryConversion:
             if hash_ != plan['postimage_sha256']:
                 if receipt or hash_ != plan['preimage_sha256']:
                     raise tf.ConcurrentEditError('whole batch preflight CAS failed')
-                outcome = self.match(run, wid)
-                if destination_changed(outcome, plan):
+                if self._destination_changed(run, wid, plan):
                     raise UserError('destination identity changed during batch preflight')
             self._validate_dossiers(plan['postimage'])
         return {'state': 'verified', 'count': len(bindings)}
@@ -742,8 +738,7 @@ class DiscoveryConversion:
                 elif old:
                     raise tf.ConcurrentEditError('converted task changed; do not overwrite user edits')
                 elif (tf.content_hash(actual) if actual is not None else None) == plan['preimage_sha256']:
-                    current = self.match(run, wid)
-                    if destination_changed(current, plan):
+                    if self._destination_changed(run, wid, plan):
                         raise UserError('exact destinations changed since preparation')
                     tf.atomic_write(path, plan['postimage'].encode(), expect=actual)
                 else:

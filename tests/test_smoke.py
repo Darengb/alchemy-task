@@ -166,6 +166,30 @@ def test_discovery_proposal_becomes_a_task(settings, data_dir, tmp_path):
     assert str(task.fm["due"]) == "2030-01-07"
 
 
+def test_task_edits_after_indexing_change_exact_matches(settings, data_dir):
+    """Matching sees task edits made after the index was built, and closed tasks are never targets."""
+    from alchemy_task import runtime
+    from alchemy_task.core import task_index
+    from alchemy_task.discovery_conversion import DiscoveryConversion
+    rt = runtime.Runtime(FakeCtx({"workspace_root": settings.workspace_root, "timezone": settings.timezone}, data_dir), settings, data_dir)
+    store, run = _accepted_run(data_dir)
+    unit = next(c["candidate_id"] for c in store.get_run(run)["candidates"] if c.get("parent_candidate_id"))
+    conversion = DiscoveryConversion(rt, store)
+    assert conversion.match(run, unit)["kind"] == "new"
+    folder = settings.root() / "areas" / "work" / "tasks"
+    newsletter, venue = folder / "2026-11-01-draft-the-spring-newsletter.md", folder / "2026-11-05-book-venue-for-the-offsite.md"
+    action = store.get_candidate(run, unit).get("action_id")
+    for path in (newsletter, venue):
+        text = path.read_text().replace("tags:", "discovery_action_ids: [%s]\ntags:" % (action or "none"), 1)
+        path.write_text(text + "\nFrom the thread slack:T1:C1:171.1:171.2\n")
+    found = conversion.match(run, unit)
+    assert found["kind"] == "conflict" and len(found["targets"]) == 2
+    newsletter.write_text(newsletter.read_text().replace("status: open", "status: cancelled", 1))
+    task_index._memory.clear()  # a restarted process reads the saved index
+    found = conversion.match(run, unit)
+    assert found["kind"] == "exact" and [t["path"] for t in found["targets"]] == ["areas/work/tasks/" + venue.name]
+
+
 def test_research_children_cannot_write_or_read_credentials():
     from alchemy_task.core.research_guard import is_write_like, refuse_file_read
     assert is_write_like("mcp__gmail__send_email") and is_write_like("write_file") and is_write_like("terminal")
