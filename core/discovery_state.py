@@ -499,6 +499,7 @@ class DiscoveryStore:
         totals = {'dry_run': dry_run, 'runs_seen': 0, 'runs_migrated': 0, 'files': 0, 'bytes': 0,
                   'blobs_created': 0, 'blob_bytes_created': 0, 'already_shared': 0,
                   'legacy_files_removed': 0, 'legacy_bytes_removed': 0, 'problems': []}
+        planned: set[str] = set()
         with self._lock('retention'):
             for run_path in sorted((self.state_root / 'runs').iterdir()):
                 legacy = run_path / 'resources'
@@ -518,13 +519,16 @@ class DiscoveryStore:
                             ok = False; totals['problems'].append({'run_id': run_path.name, 'file': file.name, 'problem': 'content does not match its hash'})
                             continue
                         blob = self.blob_path(file.name)
-                        if blob.exists():
+                        if dry_run and file.name in planned:
+                            totals['already_shared'] += 1
+                        elif blob.exists():
                             if blob.read_bytes() != data:
                                 ok = False; totals['problems'].append({'run_id': run_path.name, 'file': file.name, 'problem': 'shared blob differs'})
                                 continue
                             totals['already_shared'] += 1
                         else:
                             totals['blobs_created'] += 1; totals['blob_bytes_created'] += len(data)
+                            planned.add(file.name)
                             if not dry_run:
                                 self._link_blob(file, blob, data)
                         verified.append((file, len(data)))
@@ -532,7 +536,7 @@ class DiscoveryStore:
                         continue
                     shared = {f.name for f, _ in verified}
                     unresolved = sorted(h for h in self._run_resource_hashes(run_path)
-                                        if not (self._blob_ok(h) or (dry_run and h in shared)))
+                                        if not ((dry_run and h in shared) or self._blob_ok(h)))
                     if unresolved:
                         totals['problems'].append({'run_id': run_path.name, 'problem': 'references not resolvable through the shared store', 'hashes': unresolved[:10], 'count': len(unresolved)})
                         continue
