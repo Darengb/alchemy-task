@@ -487,7 +487,7 @@ class SourceAdapter:
         validate_source_config(config)
         self.store, self.config, self.read_page = store, copy.deepcopy(config), read_page
 
-    def collect(self, stream, *, start: str, end: str, max_pages: int | None = None, previous_receipt=None, filters=None):
+    def collect(self, stream, *, start: str, end: str, max_pages: int | None = None, previous_receipt=None, filters=None, me=None):
         if _date(start) >= _date(end):
             raise UserError('source window must increase')
         if max_pages is not None and (type(max_pages) is not int or max_pages < 1):
@@ -523,7 +523,7 @@ class SourceAdapter:
                 # Same pre-research screening as attested envelopes: calendar notices, auto-replies,
                 # bulk mail and bot-only threads are saved as excluded, never researched.
                 from .core.screening import screen_items, record_screened
-                kept, dropped = screen_items(page['items'])
+                kept, dropped = screen_items(page['items'], me)
                 kept, skipped = _apply_user_filters(kept, self.config, filters, filtered)
                 dropped += skipped
                 state = _persist_items(self.store, stream, self.config, kept)
@@ -595,7 +595,7 @@ def _apply_user_filters(items, config, filters, summary):
     return kept, skipped
 
 
-def collect_attested(store, stream, config, envelope, filters=None):
+def collect_attested(store, stream, config, envelope, filters=None, me=None):
     validate_source_config(config)
     if envelope.get('account_key') != config['account_key']:
         raise UserError('attested account mismatch')
@@ -603,7 +603,7 @@ def collect_attested(store, stream, config, envelope, filters=None):
         raise UserError('source window must increase')
     # Calendar notices, auto-replies, bulk mail, bot threads and parent exclusions are saved as excluded, never researched.
     from .core.screening import screen_items, record_screened
-    items, screened = screen_items(envelope.get('items', []))
+    items, screened = screen_items(envelope.get('items', []), me)
     filtered = {'messages': 0, 'skipped': [], 'context_only': []}
     if (filters or {}).get('rules'):
         # Rules read the item's own messages, so file pointers are inlined first.

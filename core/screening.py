@@ -15,6 +15,8 @@ from __future__ import annotations
 import re
 from typing import Any, Callable
 
+from .discovery_filters import _person_matches, strip_quoted
+
 CALENDAR_SUBJECT_PREFIXES = (
     'invitation:', 'updated invitation:', 'updated invitation with note:', 'accepted:', 'declined:',
     'tentatively accepted:', 'canceled:', 'canceled event', 'cancelled:', 'cancelled event', 'new event:',
@@ -101,26 +103,12 @@ def _single_sender(item: dict) -> bool:
 
 # ----------------------------------------------------------------- rules
 
-# Where a reply's quoted history starts: "On <date>, <name> wrote:" (may wrap onto a second line)
-# or an Outlook-style header block. Everything from there on is someone else's earlier message.
-QUOTE_START = re.compile(r'^[ \t]*(?:On [^\n]{0,300}(?:\n[^\n]{0,200})?wrote:[ \t]*$|-{2,}\s*Original Message\s*-{2,}|From:[^\n]{0,300}\n[ \t]*Sent:)',
-                         re.I | re.M)
-
-
-def _own_text(text: str) -> str:
-    """A message's own words: quoted history (after "On ... wrote:", or '>' lines) removed."""
-    match = QUOTE_START.search(text[:200_000])
-    if match:
-        text = text[:match.start()]
-    return '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('>'))
-
-
 def _calendar(item: dict) -> str | None:
     # A thread people replied to is a conversation (meeting follow-ups often reply to the invite).
     if _subject(item).lower().startswith(CALENDAR_SUBJECT_PREFIXES) and _single_sender(item):
         return 'calendar notice'
     # Judge each message by its own words, never by the invite a reply quotes underneath.
-    texts = [_own_text(_text(m.get('text'))) for m in _messages(item)]
+    texts = [strip_quoted(_text(m.get('text'))) for m in _messages(item)]
     if texts and all(any(p.search(t) for p in CALENDAR_BOILERPLATE) for t in texts):
         return 'calendar notice'
     return None
@@ -160,6 +148,25 @@ def _bots(item: dict) -> str | None:
     return None
 
 
+def _user_wrote(item: dict, me: dict | None) -> bool:
+    """True when the user sent a message here with words of their own (not just an invite or an
+    auto-reply). The thread-level rules never drop such an item: the user's own message is always
+    researched on its merits, whatever thread it sits in."""
+    if not me:
+        return False
+    for message in _messages(item):
+        author = _text(message.get('author') or message.get('from') or message.get('user') or message.get('sender'))
+        ids = [message.get(k) for k in ('author_id', 'user', 'user_id', 'sender_id') if message.get(k)]
+        if not author and not ids:
+            continue
+        if not _person_matches(author, 'me', me, ids):
+            continue
+        own = strip_quoted(_text(message.get('text'))).strip()
+        if own and not any(p.search(own) for p in CALENDAR_BOILERPLATE) and not AUTO_REPLY_TEXT.match(own):
+            return True
+    return False
+
+
 # Ordered, data-driven: append (name, rule) pairs to extend. Each rule returns a reason or None.
 RULES: list[tuple[str, Callable[[dict], str | None]]] = [
     ('calendar', _calendar),
@@ -169,8 +176,11 @@ RULES: list[tuple[str, Callable[[dict], str | None]]] = [
 ]
 
 
-def screen(item: dict) -> tuple[bool, str]:
-    """Return (keep, reason). keep=False means never research this item."""
+def screen(item: dict, me: dict | None = None) -> tuple[bool, str]:
+    """Return (keep, reason). keep=False means never research this item.
+
+    ``me`` (addresses, ids, names from ``discovery_filters.me_identity``) identifies the user's own
+    messages; an item holding one is never dropped by the rules below."""
     if not isinstance(item, dict):
         return True, ''
     disposition = _text(item.get('disposition')).strip().lower()
@@ -179,6 +189,11 @@ def screen(item: dict) -> tuple[bool, str]:
         return False, 'parent: ' + (reason or 'excluded before research')
     if disposition == 'research':
         return True, ''  # the parent read it and chose to research; rules never override that
+    try:
+        if _user_wrote(item, me):
+            return True, ''
+    except Exception:  # noqa: BLE001 - when unsure, keep
+        return True, ''
     for name, rule in RULES:
         try:
             reason = rule(item)
@@ -189,10 +204,10 @@ def screen(item: dict) -> tuple[bool, str]:
     return True, ''
 
 
-def screen_items(items: list) -> tuple[list, list[tuple[dict, str]]]:
+def screen_items(items: list, me: dict | None = None) -> tuple[list, list[tuple[dict, str]]]:
     kept, screened = [], []
     for item in items or []:
-        keep, reason = screen(item)
+        keep, reason = screen(item, me)
         if keep:
             kept.append(item)
         else:

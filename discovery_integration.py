@@ -1011,12 +1011,13 @@ class DiscoveryIntegration:
         if prior and prior['status'] == 'complete': return prior
         window = ledger['config']['windows'][source_key]
         filters = self.source_filters(ledger['config'].get('stream_name', ledger['stream']), config)
+        me = self.source_me(config)
         if envelope is None:
-            receipt = SourceAdapter(self.store, config, read_page=self._collector_reader(run_id, config)).collect(ledger['stream'], **window, max_pages=max_pages, previous_receipt=prior if prior and prior.get('verification') == 'adapter_verified' else None, filters=filters)
+            receipt = SourceAdapter(self.store, config, read_page=self._collector_reader(run_id, config)).collect(ledger['stream'], **window, max_pages=max_pages, previous_receipt=prior if prior and prior.get('verification') == 'adapter_verified' else None, filters=filters, me=me)
         else:
             if any(envelope.get(k) != v for k, v in window.items()):
                 raise UserError('attestation must use SAME saved source window')
-            receipt = collect_attested(self.store, ledger['stream'], config, envelope, filters=filters)
+            receipt = collect_attested(self.store, ledger['stream'], config, envelope, filters=filters, me=me)
             receipt['status'] = 'partial'  # agent assertion never exhaustive
         receipt['source_key'] = source_key
         receipt['pass'] = (prior or {}).get('pass', 0) + 1
@@ -1029,6 +1030,15 @@ class DiscoveryIntegration:
     def _filter_data(self):
         from .core import discovery_filters as F
         return F.load(lambda key, default=None: self.rt.ctx.state.get(key, default=default))
+
+    def source_me(self, config):
+        """Who the user is on one source, so screening never drops a message they sent."""
+        from .core import discovery_filters as F
+        try:
+            accounts = self.rt.ctx.state.get('discovery_identity_accounts', default={}) or {}
+            return F.me_identity(config, accounts)
+        except Exception:  # noqa: BLE001 - identity is a hint; screening falls back to its rules
+            return None
 
     def source_filters(self, stream_name, config):
         """The enabled message rules for one stream and source, plus who 'me' is there."""

@@ -387,3 +387,17 @@ def test_replies_to_a_calendar_invite_are_not_screened_out():
         {"id": "2", "author": "b@x.com", "text": "I'll set it up in Rebuy.\n\nOn Wed, Nov 25 A <a@x.com> wrote:\n" + quoted}]}
     assert _calendar(reply) is None
     assert _calendar({"title": "Invitation: Quick sync", "messages": [{"id": "1", "author": "j@x.com", "text": invite}]}) == "calendar notice"
+
+
+def test_a_message_the_user_sent_is_never_screened_out_by_its_thread():
+    """The user's own message is researched on its merits even in a thread the rules would drop."""
+    from alchemy_task.core.screening import screen
+    me = {"addresses": {"me@x.com"}, "ids": set(), "names": set()}
+    invite = "Sync\nInvitation from Google Calendar\nYou are receiving this email because you are an attendee of the event."
+    own_invite_thread = {"title": "Invitation: Sync", "messages": [
+        {"id": "1", "author": "Me <me@x.com>", "text": invite},
+        {"id": "2", "author": "Me <me@x.com>", "text": "Notes: I'll set up the Rebuy test by Friday.\n\nOn Wed, Nov 25 Me <me@x.com> wrote:\n> " + invite}]}
+    assert screen(own_invite_thread, me) == (True, "")
+    assert screen(own_invite_thread)[0] is False  # without knowing who the user is, the rules still apply
+    bare_invite = {"title": "Invitation: Sync", "messages": [{"id": "1", "author": "me@x.com", "text": invite}]}
+    assert screen(bare_invite, me)[0] is False  # an invite the user sent has no words of their own
