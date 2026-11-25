@@ -758,11 +758,21 @@ class DiscoveryConversion:
             return receipt
 
     def deliver_git(self, run, wid):
+        plan_path, receipt_path = self._paths(run, wid)
+        if self._superseded(read_json(plan_path), read_json(receipt_path)):
+            # The update was written and verified, and the task has moved on since (edited, completed).
+            # Later edits carry it forward; replaying it would overwrite them, so the step is done.
+            with self.store._lock('conversion:' + run + ':' + wid):
+                receipt = read_json(receipt_path)
+                if receipt['git']['state'] not in LOCAL_GIT_TERMINAL | {'verified', 'deferred'}:
+                    receipt['git'] = {'state': 'superseded', 'reason': 'the task changed after this update; later edits carry it forward'}
+                receipt['state'] = 'complete'
+                atomic_json(receipt_path, receipt)
+                return receipt
         receipt = self.apply(run, wid)
-        _, receipt_path = self._paths(run, wid)
         with self.store._lock('conversion:' + run + ':' + wid):
             receipt = read_json(receipt_path)
-            if receipt['git']['state'] in LOCAL_GIT_TERMINAL | {'verified'}:
+            if receipt['git']['state'] in LOCAL_GIT_TERMINAL | {'verified', 'superseded'}:
                 pass
             elif self.rt.settings.git_transport == 'none':
                 receipt['git'] = {'state': 'deferred', 'reason': 'Git delivery disabled by task settings'}
@@ -773,10 +783,21 @@ class DiscoveryConversion:
                     receipt['git'] = {'state': 'pending', 'reason': str(exc)[:500]}
             from .ios_sync import discovery_mirror_status
             receipt['phone'] = discovery_mirror_status(self.rt, receipt['task_id'])
-            receipt['state'] = ('git_pending' if receipt['git']['state'] not in LOCAL_GIT_TERMINAL | {'verified', 'deferred'} else
+            receipt['state'] = ('git_pending' if receipt['git']['state'] not in LOCAL_GIT_TERMINAL | {'verified', 'deferred', 'superseded'} else
                                 'phone_pending' if receipt['phone']['state'] not in {'verified', 'deferred'} else 'complete')
             atomic_json(receipt_path, receipt)
             return receipt
+
+    def _superseded(self, plan, receipt):
+        """True when this update was written and verified earlier and the task file now differs from it."""
+        if not plan or not receipt or (receipt.get('local') or {}).get('state') != 'verified':
+            return False
+        path = self.rt.store().root / plan['path']
+        try:
+            current = tf.content_hash(path.read_bytes())
+        except OSError:
+            return False
+        return current != plan['postimage_sha256']
 
     def _deliver_git(self, receipt):
         """Commit and verify; local_only/no_git are terminal exactly as core task_create reports them."""
@@ -794,6 +815,7 @@ class DiscoveryConversion:
                     'reason': raw.get('note') or 'no remote configured: history is local to this machine'}
         lines = delivery.git('ls-remote', self.rt.settings.git_remote, 'refs/heads/' + branch).stdout.splitlines()
         remote = lines[0].split()[0] if len(lines) == 1 else ''
-        if not remote or remote != head:
-            raise UserError('remote branch does not equal verified committed tree')
+        # The remote may already be ahead (other commits pushed since); containing this commit is enough.
+        if not remote or (remote != head and delivery.git('merge-base', '--is-ancestor', head, remote, check=False).returncode != 0):
+            raise UserError('remote branch does not contain the verified commit yet')
         return {'state': 'verified', 'commit': head, 'remote_commit': remote, 'branch': branch, 'sha256': tf.content_hash(committed)}

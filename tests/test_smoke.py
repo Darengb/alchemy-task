@@ -343,3 +343,33 @@ def test_alarm_only_run_leaves_default_discovery_list():
     assert view({**base, "pending_expires": ["2030-01-05"]}, "2030-01-02")["needs_attention"]
     assert view({**base, "conflicts": 1}, "2030-01-02")["needs_attention"]
     assert view({**base, "unfinished_approvals": 1}, "2030-01-02")["needs_attention"]
+
+
+def test_unfinished_update_finishes_after_the_task_moved_on(settings, data_dir, tmp_path):
+    """An approval whose write landed but whose Git step stayed pending finishes once the task has
+    changed since (edited, completed), without overwriting the later edits."""
+    from alchemy_task import runtime
+    from alchemy_task.core.discovery_state import atomic_json, read_json
+    from alchemy_task.discovery_integration import DiscoveryIntegration
+    ctx = FakeCtx({"workspace_root": settings.workspace_root, "timezone": settings.timezone}, data_dir)
+    rt = runtime.Runtime(ctx, settings, data_dir)
+    ctx.state.set("streams", {"work": {"name": "work", "mode": "production", "areas": ["work"], "research_cap": 50,
+                                       "sources": [{"name": "Feed", "scope": ["board"], "method": "reader"}],
+                                       "deliver": "origin", "origin_session": "parent", "label": ""}})
+    store, run = _accepted_run(data_dir, suggested_due="2030-01-07")
+    integration = DiscoveryIntegration(rt, profile_home=tmp_path / "profile")
+    for c in store.get_run(run)["candidates"]:
+        if c.get("parent_candidate_id"):
+            integration.record_decision(run, c["candidate_id"], decision="propose", reason="New action.", session_id="parent")
+    integration.finalize(run, session_id="parent")
+    result = integration.decide({"approve": ["1"], "day": "2030-01-01", "edits": {"1": {"area": "work"}}},
+                                session_id="parent", today="2030-01-02")
+    unit = next(p["binding"]["unit_id"] for p in integration.digest._load()["proposals"].values())
+    _, receipt_path = integration.conversion._paths(run, unit)
+    receipt = read_json(receipt_path)
+    atomic_json(receipt_path, {**receipt, "git": {"state": "pending", "reason": "remote moved"}, "state": "git_pending"})
+    task = next(t for t in rt.store().scan().tasks if t.task_id == result["results"][0]["task_id"])
+    task.path.write_text(task.path.read_text() + "\nCompleted later.\n")
+    later = task.path.read_bytes()
+    assert integration.conversion.deliver_git(run, unit)["state"] == "complete"
+    assert task.path.read_bytes() == later
