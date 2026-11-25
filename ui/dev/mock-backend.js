@@ -43,7 +43,7 @@ export function createMockBackend({ today = nyToday() } = {}) {
       proposals: { total: ps.length, pending: count('pending'), approved: count('approved'), complete: count('complete'), dismissed: count('dismissed') },
       pending, expired: ps.filter((p) => p.state === 'pending' && p.expired).length, attention, conflicts: (r.conflicts || []).length, unfinished,
       sources: { checked: cov.filter((c) => c.status === 'complete').length, total: cov.length }, degraded: r.degraded || false,
-      needs_attention: !!(pending || attention || (r.conflicts || []).length || unfinished) }
+      needs_attention: !!(pending || (r.conflicts || []).length || unfinished) }
   }
   const badge = () => ({ version, day: today, pending: db.runs.reduce((n, r) => n + summaryOf(r).pending, 0),
     has_runs: db.runs.length > 0, streams_configured: db.settings.streams.length > 0 })
