@@ -332,3 +332,14 @@ def test_waiting_update_uses_the_tasks_current_revision(settings, data_dir, tmp_
         "choice": "update", "target_task_id": target["task_id"], "expected_revision": revision}}}, resolve=lambda ref: shown)
     assert result["results"][0]["task_id"] == target["task_id"]
     assert "Updated by another proposal." in venue.read_text() and venue.read_bytes() != b""
+
+
+def test_alarm_only_run_leaves_default_discovery_list():
+    """A run whose suggestions are all handled drops out of the default list even when it raised
+    a needs-attention note; a pending, conflicting or retryable suggestion keeps it listed."""
+    from alchemy_task.core.run_summaries import view
+    base = {"attention": 2, "conflicts": 0, "pending_expires": [], "unfinished_approvals": 0}
+    assert not view(base, "2030-01-02")["needs_attention"]
+    assert view({**base, "pending_expires": ["2030-01-05"]}, "2030-01-02")["needs_attention"]
+    assert view({**base, "conflicts": 1}, "2030-01-02")["needs_attention"]
+    assert view({**base, "unfinished_approvals": 1}, "2030-01-02")["needs_attention"]

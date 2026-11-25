@@ -58,7 +58,10 @@ def view(summary: dict[str, Any], today: str) -> dict[str, Any]:
     open_dates = sorted(e for e in expires if e and e >= today)
     out.update(pending=pending, expired=len(expires) - pending, unfinished=unfinished,
                next_expiry=open_dates[0] if open_dates else None,
-               needs_attention=bool(pending or summary.get('attention') or summary.get('conflicts') or unfinished))
+               # Listed by default only while a suggestion still waits on the user: a pending proposal,
+               # a several-task choice, or an approval whose write can be retried. Alarm-only runs
+               # (unreadable content and the like) stay under All runs; the digest already reported them.
+               needs_attention=bool(pending or summary.get('conflicts') or unfinished))
     return out
 
 

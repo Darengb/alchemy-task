@@ -171,8 +171,8 @@ def _int(query, key, default, top):
 
 @router.get('/runs')
 async def runs(request: Request):
-    """Saved run summaries. Default: only runs that still need the user (pending, failed writes,
-    conflicts, alarms). ``all=1`` pages every retained run (``limit``, ``offset``). Full detail of
+    """Saved run summaries. Default: only runs with a suggestion still waiting on the user (pending,
+    several-task choices, failed writes to retry). ``all=1`` pages every retained run (``limit``, ``offset``). Full detail of
     one run comes from /runs/{run_id}. Reads never reconcile or write run records."""
     try:
         _query(request, {'stream', 'day_from', 'day_to', 'all', 'limit', 'offset', 'since', 'day'})
