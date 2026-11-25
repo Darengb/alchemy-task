@@ -373,3 +373,17 @@ def test_unfinished_update_finishes_after_the_task_moved_on(settings, data_dir, 
     later = task.path.read_bytes()
     assert integration.conversion.deliver_git(run, unit)["state"] == "complete"
     assert task.path.read_bytes() == later
+
+
+def test_replies_to_a_calendar_invite_are_not_screened_out():
+    """Meeting follow-ups sent as replies to the invite quote its Calendar boilerplate; they are
+    still a conversation. A bare invite is still screened."""
+    from alchemy_task.core.screening import _calendar
+    invite = ("Quick sync\nInvitation from Google Calendar\nYou are receiving this email because you are an attendee"
+              " of the event.\nForwarding this invitation could allow any recipient to send a response.")
+    quoted = "\n".join("> " + line for line in invite.splitlines())
+    reply = {"title": "Re: Invitation: Quick sync", "messages": [
+        {"id": "1", "author": "a@x.com", "text": "Follow up items:\n* Post purchase offers test\n\nOn Wed, Nov 25, 2026 at 11:04 AM Jason <j@x.com>\nwrote:\n\n" + quoted},
+        {"id": "2", "author": "b@x.com", "text": "I'll set it up in Rebuy.\n\nOn Wed, Nov 25 A <a@x.com> wrote:\n" + quoted}]}
+    assert _calendar(reply) is None
+    assert _calendar({"title": "Invitation: Quick sync", "messages": [{"id": "1", "author": "j@x.com", "text": invite}]}) == "calendar notice"
