@@ -101,10 +101,26 @@ def _single_sender(item: dict) -> bool:
 
 # ----------------------------------------------------------------- rules
 
+# Where a reply's quoted history starts: "On <date>, <name> wrote:" (may wrap onto a second line)
+# or an Outlook-style header block. Everything from there on is someone else's earlier message.
+QUOTE_START = re.compile(r'^[ \t]*(?:On [^\n]{0,300}(?:\n[^\n]{0,200})?wrote:[ \t]*$|-{2,}\s*Original Message\s*-{2,}|From:[^\n]{0,300}\n[ \t]*Sent:)',
+                         re.I | re.M)
+
+
+def _own_text(text: str) -> str:
+    """A message's own words: quoted history (after "On ... wrote:", or '>' lines) removed."""
+    match = QUOTE_START.search(text[:200_000])
+    if match:
+        text = text[:match.start()]
+    return '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('>'))
+
+
 def _calendar(item: dict) -> str | None:
-    if _subject(item).lower().startswith(CALENDAR_SUBJECT_PREFIXES):
+    # A thread people replied to is a conversation (meeting follow-ups often reply to the invite).
+    if _subject(item).lower().startswith(CALENDAR_SUBJECT_PREFIXES) and _single_sender(item):
         return 'calendar notice'
-    texts = [_text(m.get('text')) for m in _messages(item)]
+    # Judge each message by its own words, never by the invite a reply quotes underneath.
+    texts = [_own_text(_text(m.get('text'))) for m in _messages(item)]
     if texts and all(any(p.search(t) for p in CALENDAR_BOILERPLATE) for t in texts):
         return 'calendar notice'
     return None
