@@ -51,8 +51,12 @@ If they say no or ignore the offer, do not ask again about the same item.
 - **One date by default.** A task's due date and scheduled (work) date are the same date unless the user asks
   for different ones. Pass just `due`; the tool sets both. Pass `scheduled` too only when the user names a
   separate work day ("due Friday, I'll do it Tuesday").
-- **Area:** infer it from context when it is clear and tell the user what you chose. If unsure, call without
-  `area` to get the list, then ask.
+- **Area:** infer it from context when it is clear and tell the user what you chose. If unsure, ask before
+  calling: a call without `area` creates the task in the default area right away.
+- **One complete call.** `task_create` has no dry run and research starts from what the task holds at
+  creation, so put `summary`, `notes` and `area` in the first call. For a design agreed in chat, put the whole
+  agreement in `notes` (decisions, constraints, what is deferred, related tasks), never a pointer back to the
+  conversation; the user often picks the task up in another chat.
 - **Research** runs automatically. Pass `research: false` only when the user says no research is needed.
 - **Duplicates:** when the tool reports similar open tasks, prefer updating the existing one. Use
   `confirm_new: true` only when the user confirms it is different work. Same brand or wording is not enough;
@@ -72,6 +76,17 @@ If they say no or ignore the offer, do not ask again about the same item.
   `subtask_edits` to `task_update`. Each edit takes `op` (`add`, `remove`, or `rename`) and `title`.
   Use the exact current checkbox text for `remove` and `rename`; `rename` also takes `new_title` and keeps
   the checkbox checked if it was checked. If the title is ambiguous, ask which step the user means.
+- **Keep notes current instead of piling them up.** `notes_append` adds to the end; use it for new facts.
+  When a decision replaces earlier notes (a new plan, approved copy, a corrected finding), read the task with
+  `task_find` `include_body: true` and rewrite rather than append: `notes` replaces the whole Notes section,
+  `notes_edits` replaces exact passages (`find` must appear once; an empty `replace` deletes it), and `plan`
+  replaces the Plan section. Keep facts that still matter, drop or clearly label superseded approaches, and
+  never paste research-managed `<!-- ...:start -->` blocks; the tool keeps them. Say in the `log` what you
+  removed or replaced.
+- To narrow a task's scope, pass a new `title` with `rename_file: true`, rewrite `summary` to the new
+  deliverable and its done condition, and say in the notes what moves to a follow-up.
+- Dates: `task_find` and `task_update` return `today` in the user's timezone. Use it for "overdue" and
+  "tomorrow", and never override a date the tool resolved.
 
 ## Working on a task
 
