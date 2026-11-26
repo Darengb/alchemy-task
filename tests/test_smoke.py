@@ -39,6 +39,24 @@ def test_task_lifecycle(settings, data_dir):
     assert store.find(query="plumber") == []  # closed tasks are hidden by default
 
 
+def test_notes_can_be_rewritten_and_edited(settings, data_dir):
+    store = TaskStore(settings, data_dir)
+    doc = store.create(title="Plan the launch", area="home", due="2026-11-09", research=False,
+                       notes="Old plan: use approach A.\n\nKeep this fact.")
+    body = doc.path.read_text()
+    marked = body.replace("Keep this fact.", "Keep this fact.\n\n## Stray heading from old notes\n\nStale text.\n\n"
+                          "<!-- discovery-context:start x -->\nctx\n<!-- discovery-context:end x -->")
+    doc.path.write_text(marked)
+    doc, _, _ = store.update(doc.task_id, {"notes_edits": [{"find": "approach A", "replace": "approach B"}]})
+    text = doc.path.read_text()
+    assert "approach B" in text and "approach A" not in text
+    doc, _, _ = store.update(doc.task_id, {"notes": "Current plan only.", "plan": "1. Ship it"})
+    text = doc.path.read_text()
+    assert "Current plan only." in text and "Keep this fact." not in text and "1. Ship it" in text
+    assert "Stale text." not in text  # a "## " heading written inside old notes is part of Notes
+    assert "discovery-context:start x" in text  # managed blocks survive a rewrite
+
+
 def test_date_words_and_agenda(settings, data_dir):
     sunday = "2026-11-08"
     assert tf.parse_date_words("Friday", sunday) == "2026-11-13"

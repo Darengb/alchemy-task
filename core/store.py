@@ -499,8 +499,28 @@ class TaskStore:
                 body, subtask_notes = tf.edit_subtasks(body, changes["subtask_edits"])
                 notes.extend(subtask_notes)
 
+            if "notes" in changes and changes.get("notes_edits"):
+                raise NeedsInput("fix_call", "Pass either notes (the whole new Notes text) or notes_edits, not both.")
+            if "notes" in changes and changes["notes"] is not None:
+                new_body = tf.replace_section(body, "Notes", str(changes["notes"]))
+                if new_body != body:
+                    body = new_body
+                    notes.append("notes rewritten")
+            if changes.get("notes_edits"):
+                new_body = tf.edit_section_text(body, "Notes", changes["notes_edits"])
+                if new_body != body:
+                    body = new_body
+                    notes.append(f"notes edited ({len(changes['notes_edits'])} change(s))")
+            if "plan" in changes and changes["plan"] is not None:
+                new_body = tf.replace_section(body, "Plan", str(changes["plan"]), before="Subtasks")
+                if new_body != body:
+                    body = new_body
+                    notes.append("plan rewritten")
+
             if changes.get("notes_append"):
-                body = tf.append_to_section(body, "Notes", str(changes["notes_append"]))
+                added = "\n".join("#" + l if l.startswith("## ") else l
+                                  for l in str(changes["notes_append"]).split("\n"))  # stay inside Notes
+                body = tf.append_to_section(body, "Notes", added)
                 notes.append("notes added")
 
             log_msg = " ".join(str(changes.get("log") or "").split())

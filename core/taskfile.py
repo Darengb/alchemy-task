@@ -471,6 +471,104 @@ def append_log(body: str, message: str, day: str) -> str:
     return out
 
 
+# Sections the plugin itself writes. A ``## Other`` heading right after Notes came from note text
+# (an appended "## ..." line), so it belongs to Notes when Notes is read or rewritten.
+STANDARD_SECTIONS = ("notes", "plan", "subtasks", "log", "current state", "research dossier")
+
+
+def _owned_bounds(lines: list[str], heading: str) -> tuple[int, list[tuple[int, int]]] | None:
+    """Heading line index plus the text ranges a section owns: its own text and, for Notes, any
+    following non-standard ``##`` sections. Managed blocks between ranges are skipped, never owned."""
+    bounds = _section_bounds(lines, heading)
+    if bounds is None:
+        return None
+    start, end = bounds
+    ranges = [(start + 1, end)]
+    if heading.lower() != "notes":
+        return start, ranges
+    i = end
+    while i < len(lines):
+        stripped = lines[i].strip()
+        if MANAGED_START_RE.match(stripped):
+            m = re.match(r"^<!-- ([a-z0-9-]+):start\b", stripped)
+            close = f"<!-- {m.group(1)}:end" if m else "-->"
+            j = i + 1
+            while j < len(lines) and not lines[j].strip().startswith(close):
+                j += 1
+            i = j + 1
+            continue
+        if lines[i].startswith("## "):
+            name = lines[i][3:].strip().lower()
+            if name in STANDARD_SECTIONS:
+                break
+            sub = _section_bounds(lines[i:], lines[i][3:].strip())
+            if sub is None:  # cannot happen: the heading is line 0 of the slice
+                break
+            ranges.append((i, i + sub[1]))
+            i += sub[1]
+            continue
+        if stripped:
+            break
+        i += 1
+    return start, ranges
+
+
+def section_text(body: str, heading: str) -> str | None:
+    """Text a section owns (see ``_owned_bounds``), without managed blocks, or None if missing."""
+    lines = body.split("\n")
+    owned = _owned_bounds(lines, heading)
+    if owned is None:
+        return None
+    parts = ["\n".join(lines[a:b]).strip("\n") for a, b in owned[1]]
+    return "\n\n".join(p for p in parts if p.strip())
+
+
+def replace_section(body: str, heading: str, text: str, *, before: str = "Log") -> str:
+    """Replace the text a section owns; managed blocks inside or after it are kept in place.
+    Creates the section if missing. Empty text empties it. ``## `` lines in the new text become
+    ``### `` so they stay inside the section."""
+    text = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+    out_lines = []
+    for line in text.split("\n"):
+        if MANAGED_START_RE.match(line.strip()):
+            raise TaskFormatError("the new text contains a managed block marker; leave those blocks out")
+        out_lines.append("#" + line if line.startswith("## ") else line)
+    text = "\n".join(out_lines)
+    lines = body.split("\n")
+    owned = _owned_bounds(lines, heading)
+    if owned is None:
+        return append_to_section(body, heading, text, before=before) if text.strip() else body
+    start, ranges = owned
+    middle = ["", *text.split("\n"), ""] if text.strip() else [""]
+    result = lines[:start + 1] + middle
+    for k, (a, b) in enumerate(ranges):
+        nxt = ranges[k + 1][0] if k + 1 < len(ranges) else None
+        kept = lines[b:nxt] if nxt is not None else lines[b:]
+        if nxt is not None:
+            kept = [l for l in kept if l.strip()] and kept  # keep managed blocks between owned ranges
+            kept = kept + [""] if kept and kept[-1].strip() else kept
+        result += kept
+    return "\n".join(result)
+
+
+def edit_section_text(body: str, heading: str, edits: list) -> str:
+    """Apply exact find/replace edits inside ``## heading``. Each ``find`` must occur exactly once."""
+    current = section_text(body, heading)
+    if current is None:
+        raise TaskFormatError(f"the task has no {heading} section to edit")
+    for i, edit in enumerate(edits or [], 1):
+        find = str((edit or {}).get("find") or "")
+        replace = str((edit or {}).get("replace") or "")
+        if not find:
+            raise TaskFormatError(f"edit {i}: find is empty")
+        count = current.count(find)
+        if count != 1:
+            raise TaskFormatError(f"edit {i}: the find text appears {count} times in {heading}; "
+                                  "read the task again and quote text that appears exactly once")
+        current = current.replace(find, replace, 1)
+    return replace_section(body, heading, current)
+
+
 def append_to_section(body: str, heading: str, text: str, *, before: str = "Log") -> str:
     """Append free text at the end of ``## heading``; create the section (before
     ``## before`` when present, else at the end) if missing."""

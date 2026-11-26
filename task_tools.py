@@ -86,6 +86,15 @@ UPDATE_SCHEMA = {
             "tags_add": _LIST,
             "tags_remove": _LIST,
             "notes_append": {"type": "string", "description": "Text to add at the end of the Notes section."},
+            "notes": {"type": "string", "description": "Replace the whole Notes section with this text (read the task "
+                      "first and keep what still matters). Research-managed blocks inside Notes are kept automatically; "
+                      "do not include them. Use to consolidate or remove outdated notes."},
+            "notes_edits": {"type": "array", "maxItems": 50, "minItems": 1,
+                "description": "Targeted edits inside Notes: each replaces one exact passage that appears once.",
+                "items": {"type": "object", "required": ["find", "replace"], "additionalProperties": False,
+                    "properties": {"find": {"type": "string", "description": "Exact current text, appearing once in Notes."},
+                        "replace": {"type": "string", "description": "New text; empty string deletes the passage."}}}},
+            "plan": {"type": "string", "description": "Replace the whole Plan section with this Markdown."},
             "subtask_edits": {"type": "array", "maxItems": 50, "minItems": 1,
                 "description": "Add, remove or rename checkboxes in Subtasks. Read the task body first and use exact current titles for remove/rename. Rename preserves checked state.",
                 "items": {"type": "object", "required": ["op", "title"], "additionalProperties": False,
@@ -211,7 +220,7 @@ def task_create(args: dict[str, Any], session_id: str = "", **_: Any) -> str:
 
 _UPDATE_KEYS = ("status", "reason", "reopen", "completed", "title", "summary", "rename_file", "due", "undated", "scheduled",
                 "keep_separate",
-                "priority", "project", "estimate", "area", "contexts", "tags_add", "tags_remove", "notes_append", "subtask_edits", "log")
+                "priority", "project", "estimate", "area", "contexts", "tags_add", "tags_remove", "notes_append", "notes", "notes_edits", "plan", "subtask_edits", "log")
 
 
 @_guard
